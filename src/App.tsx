@@ -177,7 +177,7 @@ function App() {
                   title: `${name}.yaml`,
                   subtitle: namespace,
                   yamlContent,
-                  onSaveYaml: async (newContent) => {
+                  onSaveYaml: async (newContent: string) => {
                       await window.k8s.updateDeploymentYaml(selectedCluster, namespace, name, newContent);
                       showToast('Deployment YAML updated successfully', 'success');
                       // Optionally refresh deployment list?
