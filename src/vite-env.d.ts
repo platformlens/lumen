@@ -73,6 +73,8 @@ declare global {
             getRole: (contextName: string, namespace: string, name: string) => Promise<any>;
             getReplicaSet: (contextName: string, namespace: string, name: string) => Promise<any>;
             scaleDeployment: (contextName: string, namespace: string, name: string, replicas: number) => Promise<void>;
+            getDeploymentYaml: (contextName: string, namespace: string, name: string) => Promise<string>;
+            updateDeploymentYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => Promise<any>;
             startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number) => Promise<{ id: string, localPort: number }>;
             stopAllPortForwards: () => Promise<void>;
             stopPortForward: (id: string) => Promise<void>;
@@ -90,6 +92,16 @@ declare global {
             // --- Settings ---
             saveApiKey: (key: string) => Promise<boolean>;
             getApiKey: () => Promise<string>;
+
+            // --- Terminal ---
+            terminal: {
+                create: (id: string, cols: number, rows: number) => void;
+                write: (id: string, data: string) => void;
+                resize: (id: string, cols: number, rows: number) => void;
+                dispose: (id: string) => void;
+                onData: (callback: (id: string, data: string) => void) => () => void;
+                onExit: (callback: (id: string, exitCode: number) => void) => () => void;
+            };
         }
     }
 }

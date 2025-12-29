@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('k8s', {
   getDeployments: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getDeployments', contextName, namespaces),
   getDeployment: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getDeployment', contextName, namespace, name),
   scaleDeployment: (contextName: string, namespace: string, name: string, replicas: number) => ipcRenderer.invoke('k8s:scaleDeployment', contextName, namespace, name, replicas),
+  getDeploymentYaml: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getDeploymentYaml', contextName, namespace, name),
+  updateDeploymentYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => ipcRenderer.invoke('k8s:updateDeploymentYaml', contextName, namespace, name, yamlContent),
   getPods: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPods', contextName, namespaces),
   getPod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getPod', contextName, namespace, name),
   getReplicaSets: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getReplicaSets', contextName, namespaces),
@@ -118,4 +120,22 @@ contextBridge.exposeInMainWorld('k8s', {
   // --- Settings ---
   saveApiKey: (key: string) => ipcRenderer.invoke('settings:saveApiKey', key),
   getApiKey: () => ipcRenderer.invoke('settings:getApiKey'),
+
+  // --- Terminal ---
+  terminal: {
+    create: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:create', id, cols, rows),
+    write: (id: string, data: string) => ipcRenderer.send('terminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', id, cols, rows),
+    dispose: (id: string) => ipcRenderer.send('terminal:dispose', id),
+    onData: (callback: (id: string, data: string) => void) => {
+      const listener = (_: any, id: string, data: string) => callback(id, data);
+      ipcRenderer.on('terminal:data', listener);
+      return () => ipcRenderer.off('terminal:data', listener);
+    },
+    onExit: (callback: (id: string, exitCode: number) => void) => {
+      const listener = (_: any, id: string, exitCode: number) => callback(id, exitCode);
+      ipcRenderer.on('terminal:exit', listener);
+      return () => ipcRenderer.off('terminal:exit', listener);
+    }
+  }
 })

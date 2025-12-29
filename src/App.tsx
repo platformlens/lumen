@@ -3,9 +3,11 @@ import { Sidebar } from './components/Sidebar'
 import { SecondarySidebar } from './components/SecondarySidebar'
 import { Dashboard } from './components/Dashboard'
 import { Settings } from './components/Settings'
-import { LogViewer, LogTab } from './components/LogViewer'
+import { LogViewer, PanelTab } from './components/LogViewer'
 import { StatusBar } from './components/StatusBar'
 import { BottomPanel } from './components/BottomPanel'
+import { ToastNotification } from './components/ToastNotification'
+import { AnimatePresence } from 'framer-motion'
 
 function App() {
   const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings'>('clusters')
@@ -15,29 +17,44 @@ function App() {
   const [resourceView, setResourceView] = useState<string>('overview')
 
   // Log Streaming State (Hoisted from Dashboard)
-  const [logTabs, setLogTabs] = useState<LogTab[]>([]);
-  const [activeLogTabId, setActiveLogTabId] = useState<string | null>(null);
+  // Log & Terminal State
+  const [panelTabs, setPanelTabs] = useState<PanelTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   
   // Bottom Panel State
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
-  // We keep minimized state for the LogViewer inside the panel? 
-  // actually BottomPanel IS the container. If it's closed, it's closed.
-  // We might want a "maximize" state for full screen logic later.
-  // For now let's map "isLogViewerVisible" logic to "isBottomPanelOpen"
+
+  // Toast State
+  const [toasts, setToasts] = useState<{id: string; message: string; type?: 'success'|'error'|'info'}[]>([]);
+
+  const showToast = (message: string, type: 'success'|'error'|'info' = 'success') => {
+      const id = Math.random().toString(36).substr(2, 9);
+      setToasts(prev => [...prev, { id, message, type }]);
+  };
+
+  const removeToast = (id: string) => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+  };
 
   useEffect(() => {
     const cleanup = window.k8s.onPodLogChunk((streamId, chunk) => {
-        setLogTabs(prev => prev.map(tab => {
+        setPanelTabs(prev => prev.map(tab => {
+            if (tab.type !== 'log') return tab;
             const currentStreamKey = `${tab.namespace}-${tab.podName}-${tab.containerName}`;
             if (streamId === currentStreamKey) {
                 const lines = chunk.split('\n');
-                return { ...tab, logs: [...tab.logs, ...lines].slice(-1000) };
+                return { ...tab, logs: [...(tab.logs || []), ...lines].slice(-1000) };
             }
             return tab;
         }));
     });
     return cleanup;
   }, []);
+
+  const handleClusterSelect = (clusterName: string) => {
+      setSelectedCluster(clusterName);
+      setResourceView('overview');
+  };
 
   const handleOpenLogs = (pod: any, containerName: string) => {
     const name = pod.metadata?.name || pod.name;
@@ -50,71 +67,129 @@ function App() {
     const initContainers = pod.spec?.initContainers?.map((c: any) => c.name) || [];
     const allContainers = [...containers, ...initContainers];
 
-    if (!logTabs.find(t => t.id === tabId)) {
-        const newTab: LogTab = {
+    if (!panelTabs.find(t => t.id === tabId)) {
+        const newTab: PanelTab = {
             id: tabId,
+            type: 'log',
+            title: name,
+            subtitle: containerName,
             namespace: namespace,
             podName: name,
             containerName,
             allContainers,
             logs: []
         };
-        setLogTabs(prev => [...prev, newTab]);
+        setPanelTabs(prev => [...prev, newTab]);
         window.k8s.streamPodLogs(selectedCluster, namespace, name, containerName);
     } else {
-        const existing = logTabs.find(t => t.id === tabId);
+        const existing = panelTabs.find(t => t.id === tabId);
         if (existing && existing.containerName !== containerName) {
             handleChangeContainer(tabId, containerName);
         }
     }
     
-    setActiveLogTabId(tabId);
+    setActiveTabId(tabId);
     setIsBottomPanelOpen(true); // Open the panel
   };
 
+  const handleOpenTerminal = () => {
+       // Check if we already have a terminal tab or create a new one?
+       // Let's create one if none exists, or focus existing one if active.
+       // User asked for "a terminal tab", implying one.
+       const terminalTabId = 'local-terminal';
+       const existing = panelTabs.find(t => t.id === terminalTabId);
+       
+       if (!existing) {
+           setPanelTabs(prev => [...prev, {
+               id: terminalTabId,
+               type: 'terminal',
+               title: 'Terminal'
+           }]);
+       }
+       
+       setActiveTabId(terminalTabId);
+       setIsBottomPanelOpen(true);
+  };
+
   const handleChangeContainer = (tabId: string, newContainer: string) => {
-      const tab = logTabs.find(t => t.id === tabId);
-      if (!tab || !selectedCluster) return;
+      const tab = panelTabs.find(t => t.id === tabId);
+      if (!tab || !selectedCluster || tab.type !== 'log') return;
 
-      window.k8s.stopStreamPodLogs(tab.namespace, tab.podName, tab.containerName);
+      if (tab.namespace && tab.podName && tab.containerName) {
+           window.k8s.stopStreamPodLogs(tab.namespace, tab.podName, tab.containerName);
+      }
 
-      setLogTabs(prev => prev.map(t => {
+      setPanelTabs(prev => prev.map(t => {
           if (t.id === tabId) {
-              return { ...t, containerName: newContainer, logs: [] };
+              return { ...t, containerName: newContainer, subtitle: newContainer, logs: [] };
           }
           return t;
       }));
 
-      window.k8s.streamPodLogs(selectedCluster, tab.namespace, tab.podName, newContainer);
+      if (tab.namespace && tab.podName) {
+          window.k8s.streamPodLogs(selectedCluster, tab.namespace, tab.podName, newContainer);
+      }
   };
 
   const handleCloseLogTab = (id: string) => {
-    const tab = logTabs.find(t => t.id === id);
-    if (tab) {
+    const tab = panelTabs.find(t => t.id === id);
+    if (tab && tab.type === 'log' && tab.namespace && tab.podName && tab.containerName) {
         window.k8s.stopStreamPodLogs(tab.namespace, tab.podName, tab.containerName);
     }
     
-    setLogTabs(prev => {
+    setPanelTabs(prev => {
         const newTabs = prev.filter(t => t.id !== id);
-        if (activeLogTabId === id) {
-           setActiveLogTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
+        if (activeTabId === id) {
+           setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
+        }
+        if (newTabs.length === 0) {
+            setIsBottomPanelOpen(false); // Close panel if no tabs
         }
         return newTabs;
     });
   };
 
   const handleSwitchTab = (id: string) => {
-    setActiveLogTabId(id);
+    setActiveTabId(id);
   };
 
   const handleClearLogs = (id: string) => {
-    setLogTabs(prev => prev.map(t => t.id === id ? { ...t, logs: [] } : t));
+    setPanelTabs(prev => prev.map(t => t.id === id ? { ...t, logs: [] } : t));
   }
 
-  const handleClusterSelect = (clusterName: string) => {
-    setSelectedCluster(clusterName)
-    setActiveView('dashboard')
-  }
+
+
+  const handleOpenYaml = async (deployment: any) => {
+      if (!selectedCluster) return;
+      const { name, namespace } = deployment.metadata;
+      
+      try {
+          const yamlContent = await window.k8s.getDeploymentYaml(selectedCluster, namespace, name);
+          const tabId = `yaml-${namespace}-${name}`;
+          
+          // Check if tab exists
+          if (!panelTabs.find(t => t.id === tabId)) {
+              setPanelTabs(prev => [...prev, {
+                  id: tabId,
+                  type: 'yaml',
+                  title: `${name}.yaml`,
+                  subtitle: namespace,
+                  yamlContent,
+                  onSaveYaml: async (newContent) => {
+                      await window.k8s.updateDeploymentYaml(selectedCluster, namespace, name, newContent);
+                      showToast('Deployment YAML updated successfully', 'success');
+                      // Optionally refresh deployment list?
+                  }
+              }]);
+          }
+          
+          setActiveTabId(tabId);
+          setIsBottomPanelOpen(true);
+      } catch (err) {
+          console.error("Failed to load YAML", err);
+          showToast('Failed to load YAML', 'error');
+      }
+  };
 
   const handleMainMenuChange = (view: 'clusters' | 'dashboard' | 'settings') => {
       setActiveView(view);
@@ -162,6 +237,8 @@ function App() {
                             clusterName={selectedCluster} 
                             activeView={resourceView}
                             onOpenLogs={handleOpenLogs}
+                            onNavigate={setResourceView}
+                            onOpenYaml={handleOpenYaml}
                         />
                      ) : (
                         <div className="flex items-center justify-center h-full text-gray-500">
@@ -180,14 +257,14 @@ function App() {
         onClose={() => setIsBottomPanelOpen(false)}
       >
          <LogViewer
-             tabs={logTabs}
-             activeTabId={activeLogTabId}
+             tabs={panelTabs}
+             activeTabId={activeTabId}
              onCloseTab={handleCloseLogTab}
              onSwitchTab={handleSwitchTab}
              onClearLogs={handleClearLogs}
-             onCloseViewer={() => setIsBottomPanelOpen(false)} // This button inside LogViewer closes the panel
-             isMinimized={false} // Panel handles minimization/hiding
-             onToggleMinimize={() => setIsBottomPanelOpen(false)} // Mapping minimize to close for now
+             onCloseViewer={() => setIsBottomPanelOpen(false)} 
+             isMinimized={false} 
+             onToggleMinimize={() => setIsBottomPanelOpen(false)} 
              onChangeContainer={handleChangeContainer}
           />
       </BottomPanel>
@@ -195,10 +272,34 @@ function App() {
       {/* Status Bar */}
       <StatusBar 
           activeCluster={selectedCluster} 
-          onTogglePanel={() => setIsBottomPanelOpen(!isBottomPanelOpen)}
+          onTogglePanel={() => {
+              if (isBottomPanelOpen) {
+                  // If panel is open...
+                  const activeTab = panelTabs.find(t => t.id === activeTabId);
+                  if (activeTab?.type === 'terminal') {
+                      setIsBottomPanelOpen(false); // Close if already looking at terminal
+                  } else {
+                      handleOpenTerminal(); // Switch to terminal
+                  }
+              } else {
+                  handleOpenTerminal();
+              }
+          }}
           isPanelOpen={isBottomPanelOpen}
           notificationCount={0}
       />
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+          <AnimatePresence>
+              {toasts.map(toast => (
+                  <ToastNotification 
+                      key={toast.id}
+                      {...toast}
+                      onClose={removeToast}
+                  />
+              ))}
+          </AnimatePresence>
+      </div>
     </div>
   )
 }

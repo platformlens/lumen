@@ -1,26 +1,38 @@
 import React, { useEffect, useRef } from 'react';
-import { X, Terminal, Trash2 } from 'lucide-react';
+import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool } from 'lucide-react';
+import { TerminalComponent } from './TerminalComponent';
+import { YamlEditor } from './YamlEditor';
 
-export interface LogTab {
-    id: string; // namespace-pod-container (This ID changes if container changes, or we keep it stable? Better to keep tab ID stable per pod if we want to switch container IN tab)
-    // Actually, if we switch container in place, ID might need to stay or we update it. Let's say ID is unique per viewing session.
-    namespace: string;
-    podName: string;
-    containerName: string;
-    allContainers: string[];
-    logs: string[];
+export type PanelTabType = 'log' | 'terminal' | 'yaml';
+
+export interface PanelTab {
+    id: string; 
+    type: PanelTabType;
+    title: string;
+    subtitle?: string;
+    
+    // Log Specific
+    namespace?: string;
+    podName?: string;
+    containerName?: string;
+    allContainers?: string[];
+    logs?: string[];
+    
+    // YAML Specific
+    yamlContent?: string;
+    onSaveYaml?: (content: string) => Promise<void>;
 }
 
 interface LogViewerProps {
-    tabs: LogTab[];
+    tabs: PanelTab[];
     activeTabId: string | null;
     onCloseTab: (id: string) => void;
     onSwitchTab: (id: string) => void;
     onClearLogs: (id: string) => void;
     onCloseViewer: () => void;
+    onChangeContainer: (tabId: string, newContainer: string) => void;
     isMinimized: boolean;
     onToggleMinimize: () => void;
-    onChangeContainer: (tabId: string, newContainer: string) => void;
 }
 
 export const LogViewer: React.FC<LogViewerProps> = ({ 
@@ -32,29 +44,20 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     onCloseViewer,
     onChangeContainer,
     isMinimized,
-    // Unused props removed or destructured without usage if needed to keep interface valid for now
-    // isMinimized, onToggleMinimize - used in effect dep array? 
-    // actually they are passed from parent. we should keep them in interface effectively but if unused locally...
-    // Let's modify the component sig to omit unused destructured vars to silence linter if possible,
-    // OR just remove the unused state `isExpanded`.
+    onToggleMinimize
 }) => {
-    // const [isExpanded, setIsExpanded] = useState(false); // Removed unused state
     const logsEndRef = useRef<HTMLDivElement>(null);
     const activeTab = tabs.find(t => t.id === activeTabId);
 
-    // Auto-scroll logic (removed isMinimized dependency as it might be unused or passed as prop)
+    // Auto-scroll logic for logs
     useEffect(() => {
-        if (logsEndRef.current) {
+        if (activeTab?.type === 'log' && logsEndRef.current) {
              logsEndRef.current.scrollIntoView({ behavior: 'auto' });
         }
-    }, [activeTab?.logs]); // Trigger on logs update
-
-    // if (tabs.length === 0) return null; // Logic removed to show empty state
+    }, [activeTab?.logs?.length, activeTab?.id]); 
 
     return (
-        <div 
-            className="flex flex-col h-full w-full bg-[#0d0d0d]"
-        >
+        <div className="flex flex-col h-full w-full bg-[#0d0d0d]">
             {/* Header / Tabs */}
             <div className="flex items-center bg-white/5 border-b border-white/10 pr-2 h-9 flex-none">
                 <div className="flex-1 flex overflow-x-auto no-scrollbar min-w-0">
@@ -72,10 +75,16 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                             `}
                             onClick={(e) => { e.stopPropagation(); onSwitchTab(tab.id); }}
                         >
-                            <Terminal size={14} className={activeTabId === tab.id ? 'text-blue-400' : 'text-gray-500'} />
+                            {tab.type === 'terminal' ? (
+                                <Terminal size={14} className={activeTabId === tab.id ? 'text-green-400' : 'text-gray-500'} />
+                            ) : tab.type === 'yaml' ? (
+                                <PenTool size={14} className={activeTabId === tab.id ? 'text-yellow-400' : 'text-gray-500'} />
+                            ) : (
+                                <FileText size={14} className={activeTabId === tab.id ? 'text-blue-400' : 'text-gray-500'} />
+                            )}
                             <div className="flex flex-col truncate flex-1">
-                                <span className="font-medium truncate">{tab.podName}</span>
-                                <span className="text-[10px] opacity-70 truncate">{tab.containerName}</span>
+                                <span className="font-medium truncate">{tab.title}</span>
+                                {tab.subtitle && <span className="text-[10px] opacity-70 truncate">{tab.subtitle}</span>}
                             </div>
                             <button 
                                 onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
@@ -89,8 +98,8 @@ export const LogViewer: React.FC<LogViewerProps> = ({
 
                 {/* Toolbar */}
                 <div className="flex items-center gap-1 pl-2">
-                    {/* Container Selector */}
-                    {!isMinimized && activeTab && activeTab.allContainers && activeTab.allContainers.length > 1 && (
+                    {/* Container Selector (Logs only) */}
+                    {!isMinimized && activeTab && activeTab.type === 'log' && activeTab.allContainers && activeTab.allContainers.length > 1 && (
                          <div className="flex items-center px-2 mr-2 border-r border-white/10 h-5">
                              <span className="text-[10px] text-gray-500 mr-2 uppercase font-bold tracking-wider">Container</span>
                              <select 
@@ -106,7 +115,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                         </div>
                     )}
 
-                    {!isMinimized && activeTab && (
+                    {!isMinimized && activeTab && activeTab.type === 'log' && (
                          <button 
                             onClick={(e) => { e.stopPropagation(); onClearLogs(activeTab.id); }}
                             className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors"
@@ -115,6 +124,14 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                             <Trash2 size={16} />
                          </button>
                     )}
+
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); onToggleMinimize(); }}
+                        className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors"
+                        title={isMinimized ? "Maximize" : "Minimize"}
+                    >
+                        {isMinimized ? <Maximize2 size={16} /> : <Minimize2 size={16} />}
+                    </button>
                     
                     <button 
                         onClick={(e) => { e.stopPropagation(); onCloseViewer(); }}
@@ -126,24 +143,51 @@ export const LogViewer: React.FC<LogViewerProps> = ({
                 </div>
             </div>
 
-            {/* Logs Body */}
-            <div className="flex-1 overflow-auto bg-[#0d0d0d] p-3 font-mono text-xs text-gray-300 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-                {activeTab ? (
-                    <div className="space-y-0.5">
-                        {activeTab.logs.length === 0 && (
-                            <div className="text-gray-600 italic p-4 text-center">Waiting for logs...</div>
-                        )}
-                        {activeTab.logs.map((log, idx) => (
-                            <div key={idx} className="whitespace-pre-wrap break-all px-2 py-0.5 leading-relaxed hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500/50">
-                                {log}
-                            </div>
-                        ))}
-                        <div ref={logsEndRef} />
+            {/* Content Body */}
+            <div className="flex-1 overflow-hidden bg-[#0d0d0d] font-mono text-xs relative">
+                {/* 1. Always render ALL terminal tabs, hidden if inactive */}
+                {tabs.filter(t => t.type === 'terminal').map(tab => (
+                    <div 
+                        key={tab.id} 
+                        className="w-full h-full p-2"
+                        style={{ display: activeTabId === tab.id ? 'block' : 'none' }}
+                    >
+                        <TerminalComponent id={tab.id} />
                     </div>
-                ) : (
+                ))}
+
+                {/* 2. Render Log Content */}
+                {activeTab && activeTab.type === 'log' && (
+                     <div className="absolute inset-0 overflow-auto p-3 text-gray-300 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                        <div className="space-y-0.5">
+                            {(!activeTab.logs || activeTab.logs.length === 0) && (
+                                <div className="text-gray-600 italic p-4 text-center">Waiting for logs...</div>
+                            )}
+                            {activeTab.logs?.map((log, idx) => (
+                                <div key={idx} className="whitespace-pre-wrap break-all px-2 py-0.5 leading-relaxed hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500/50">
+                                    {log}
+                                </div>
+                            ))}
+                            <div ref={logsEndRef} />
+                        </div>
+                    </div>
+                )}
+                
+                {/* 3. Render YAML Editor */}
+                {activeTab && activeTab.type === 'yaml' && activeTab.yamlContent && activeTab.onSaveYaml && (
+                    <div className="absolute inset-0 z-10 bg-[#1e1e1e]">
+                        <YamlEditor 
+                            initialYaml={activeTab.yamlContent}
+                            onSave={activeTab.onSaveYaml} 
+                        />
+                    </div>
+                )}
+
+                {/* 4. Empty State */}
+                {!activeTab && (
                     <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-2">
                         <Terminal size={32} className="opacity-20" />
-                        <p>Select a pod to view logs</p>
+                        <p>Select a pod to view logs or open a terminal</p>
                     </div>
                 )}
             </div>

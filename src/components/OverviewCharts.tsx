@@ -6,6 +6,7 @@ interface OverviewChartsProps {
   pods: any[];
   deployments: any[];
   nodes?: any[];
+  onViewDetails?: () => void;
 }
 
 const COLORS = {
@@ -16,7 +17,7 @@ const COLORS = {
   unknown: '#6b7280', // gray-500
 };
 
-export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deployments = [] }) => {
+export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deployments = [], onViewDetails }) => {
   
   const podStats = useMemo(() => {
     const stats: Record<string, number> = {
@@ -61,9 +62,23 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deplo
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
       {/* Pod Status Chart */}
       <div className="bg-white/5 border border-white/10 rounded-xl p-6 relative overflow-hidden group hover:border-white/20 transition-colors">
-        <h3 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
-            <Box size={20} className="text-green-400"/> Pod Status
-        </h3>
+        <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Box size={20} className="text-green-400"/> Pod Status
+            </h3>
+            {onViewDetails && (
+                <button 
+                    onClick={onViewDetails}
+                    className="p-1.5 rounded-lg bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition-colors group-hover:bg-white/10"
+                    title="View Detailed Visualization"
+                >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12h14" />
+                        <path d="M12 5l7 7-7 7" />
+                    </svg>
+                </button>
+            )}
+        </div>
         <div className="h-64 w-full">
             {podStats.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">

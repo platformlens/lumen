@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { K8sService } from './k8s'
+import { TerminalService } from './terminal'
 import dotenv from 'dotenv'
 
 dotenv.config()
@@ -30,6 +31,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 let win: BrowserWindow | null
 
 const k8sService = new K8sService()
+const terminalService = new TerminalService()
 
 function registerIpcHandlers() {
   ipcMain.handle('k8s:getClusters', () => {
@@ -298,6 +300,31 @@ function registerIpcHandlers() {
 
   ipcMain.handle('k8s:deleteCronJob', (_, contextName, namespace, name) => {
     return k8sService.deleteCronJob(contextName, namespace, name);
+  })
+
+  ipcMain.handle('k8s:getDeploymentYaml', (_, contextName, namespace, name) => {
+    return k8sService.getDeploymentYaml(contextName, namespace, name);
+  })
+
+  ipcMain.handle('k8s:updateDeploymentYaml', (_, contextName, namespace, name, yaml) => {
+    return k8sService.updateDeploymentYaml(contextName, namespace, name, yaml);
+  })
+
+  // --- Terminal ---
+  ipcMain.on('terminal:create', (event, id, cols, rows) => {
+    terminalService.createTerminal(event.sender, id, cols, rows);
+  })
+
+  ipcMain.on('terminal:write', (_, id, data) => {
+    terminalService.write(id, data);
+  })
+
+  ipcMain.on('terminal:resize', (_, id, cols, rows) => {
+    terminalService.resize(id, cols, rows);
+  })
+
+  ipcMain.on('terminal:dispose', (_, id) => {
+    terminalService.dispose(id);
   })
 
   // --- Network ---

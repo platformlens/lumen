@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Layers, Network, Square, Trash, ArrowUp, ArrowDown, Activity } from 'lucide-react';
+import { Layers, Network, Square, Trash, ArrowUp, ArrowDown, Activity, PenTool } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NamespaceSelector } from './NamespaceSelector';
 import { Drawer } from './Drawer';
@@ -24,15 +24,18 @@ import { DaemonSetDetails } from './DaemonSetDetails';
 import { StatefulSetDetails } from './StatefulSetDetails';
 import { JobDetails } from './JobDetails';
 import { CronJobDetails } from './CronJobDetails';
+import { PodVisualizer } from './PodVisualizer';
 
 
 interface DashboardProps {
-  clusterName: string;
-  activeView: string;
-  onOpenLogs: (pod: any, containerName: string) => void;
+    clusterName: string;
+    activeView: string;
+    onOpenLogs: (pod: any, containerName: string) => void;
+    onNavigate?: (view: string) => void;
+    onOpenYaml?: (deployment: any) => void;
 }
-
-export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs }) => {
+  
+export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml }) => {
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(['all']);
   
@@ -81,6 +84,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
   const [isExplaining, setIsExplaining] = useState(false);
   const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<'details' | 'topology'>('details');
+  const [podViewMode, setPodViewMode] = useState<'list' | 'visual'>('list');
   
   // Sorting State
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
@@ -190,7 +194,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
           promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
           promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
           promises.push(window.k8s.getEvents(clusterName, nsFilter).then(setEvents));
+          // Pre-fetch nodes for visualizer if user clicks it, or just fetch on demand? 
+          // Fetching Nodes is cheap. Let's include it or fetch on transition.
+          // Better: check isPodVisualizerOpen in effect or here.
+          // Since loadResources runs on activeView change, and isPodVisualizerOpen is local,
+          // we need a separate effect or check.
+          // Let's add it to the 'nodes' check or just always fetch if we are in overview to be safe?
+          // No, let's add a specific check.
       }
+      
+
 
       // Individual Views
       if (activeView === 'nodes') {
@@ -201,6 +214,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
       }
       if (activeView === 'pods') {
           promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
+          promises.push(window.k8s.getNodes(clusterName).then(setNodes));
       }
       if (activeView === 'replicasets') {
           promises.push(window.k8s.getReplicaSets(clusterName, nsFilter).then(setReplicaSets));
@@ -523,6 +537,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             </div>
 
             <div className="flex items-center gap-3">
+                 {/* Pod View Toggle */}
+                 {activeView === 'pods' && (
+                     <div className="flex bg-black/40 p-1 rounded-lg border border-white/10 mr-2">
+                         <button
+                             onClick={() => setPodViewMode('list')}
+                             className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all border ${
+                                 podViewMode === 'list' 
+                                 ? 'bg-blue-600/20 text-blue-400 border-blue-600/30 shadow-lg' 
+                                 : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'
+                             }`}
+                         >
+                             <Layers size={14} /> List
+                         </button>
+                         <button
+                             onClick={() => setPodViewMode('visual')}
+                             className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all border ${
+                                 podViewMode === 'visual' 
+                                 ? 'bg-blue-600/20 text-blue-400 border-blue-600/30 shadow-lg' 
+                                 : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'
+                             }`}
+                         >
+                             <Square size={14} /> Visual
+                         </button>
+                     </div>
+                 )}
+
                  <NamespaceSelector 
                     namespaces={namespaces} 
                     selected={selectedNamespaces} 
@@ -645,26 +685,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             )}
 
              <AnimatePresence mode="wait">
-             {/* OVERVIEW DASHBOARD */}
-             {activeView === 'overview' && (
-                <motion.div 
-                    key="overview-dashboard"
-                    initial="initial"
-                    animate="in"
-                    exit="out"
-                    variants={pageVariants}
-                    transition={pageTransition}
-                    className="mb-8"
-                >
-                    <p className="text-sm text-gray-400 mb-6">
-                        Real-time health status and activities of your cluster.
-                    </p>
-                    
-                    <OverviewCharts pods={pods} deployments={deployments} />
-                    
-                    <EventsTable events={events} />
-                </motion.div>
-             )}
+              {/* OVERVIEW DASHBOARD */}
+              {activeView === 'overview' && (
+                 <motion.div 
+                     key="overview-dashboard"
+                     initial="initial"
+                     animate="in"
+                     exit="out"
+                     variants={pageVariants}
+                     transition={pageTransition}
+                     className="mb-8"
+                 >
+                     <p className="text-sm text-gray-400 mb-6">
+                         Real-time health status and activities of your cluster.
+                     </p>
+                     
+                     <OverviewCharts 
+                         pods={pods} 
+                         deployments={deployments} 
+                         onViewDetails={() => {
+                             if (onNavigate) {
+                                 onNavigate('pods');
+                                 setPodViewMode('visual');
+                             }
+                         }}
+                     />
+                     
+                     <EventsTable events={events} />
+                 </motion.div>
+              )}
 
              {/* DEPLOYMENTS TABLE */}
              {(activeView === 'deployments') && (
@@ -709,62 +758,71 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     transition={pageTransition}
                     className="mb-8"
                 >
-                    <p className="text-sm text-gray-400 mb-4">
-                        The smallest deployable units of computing that you can create and manage.
-                    </p>
-                    <ResourceTable 
-                        headers={[
-                            { label: 'Name', key: 'name', sortable: true },
-                            { label: 'Namespace', key: 'namespace', sortable: true },
-                            { label: 'Restarts', key: 'restarts', sortable: true },
-                            { label: 'Status', key: 'status', sortable: true },
-                            { label: 'Containers' }, // Not sortable
-                            { label: 'Age', key: 'age', sortable: true }
-                        ]}
-                        data={getSortedData(pods)}
-                        sortConfig={sortConfig}
-                        onSort={handleSort}
-                        onRowClick={(pod: any) => handleResourceClick(pod, 'pod')}
-                        renderRow={(pod: any) => (
-                            <>
-                                <td className="px-6 py-3 font-medium text-gray-200">{pod.name}</td>
-                                <td className="px-6 py-3 text-gray-400">{pod.namespace}</td>
-                                <td className="px-6 py-3 text-gray-400">{pod.restarts}</td>
-                                <td className="px-6 py-3">
-                                    <span className={`px-2 py-0.5 rounded text-xs border ${
-                                        pod.status === 'Running' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                                        pod.status === 'Pending' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
-                                        pod.status === 'Succeeded' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                                        pod.status === 'Failed' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                        'bg-gray-500/10 text-gray-400 border-gray-500/20'
-                                    }`}>
-                                        {pod.status}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-3">
-                                    <div className="flex gap-1 items-center">
-                                       {pod.containers?.map((c: any, idx: number) => {
-                                           let color = 'bg-gray-500';
-                                           if (c.state === 'running' && c.ready) color = 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]';
-                                           else if (c.state === 'running' && !c.ready) color = 'bg-yellow-500';
-                                           else if (c.state === 'waiting') color = 'bg-yellow-500 animate-pulse';
-                                           else if (c.state === 'terminated' && c.restartCount > 0) color = 'bg-red-500'; 
-                                           else if (c.state === 'terminated') color = 'bg-gray-500';
-
-                                           return (
-                                               <div 
-                                                    key={idx} 
-                                                    className={`w-2 h-2 rounded-full ${color}`} 
-                                                    title={`${c.name}: ${c.state} (Restarts: ${c.restartCount})`}
-                                                />
-                                           );
-                                       })}
-                                    </div>
-                                </td>
-                                <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={pod.age} /></td>
-                            </>
-                        )}
-                    />
+                    {podViewMode === 'list' ? (
+                        <>
+                            <p className="text-sm text-gray-400 mb-4">
+                                The smallest deployable units of computing that you can create and manage.
+                            </p>
+                            <ResourceTable 
+                                headers={[
+                                    { label: 'Name', key: 'name', sortable: true },
+                                    { label: 'Namespace', key: 'namespace', sortable: true },
+                                    { label: 'Restarts', key: 'restarts', sortable: true },
+                                    { label: 'Status', key: 'status', sortable: true },
+                                    { label: 'Containers' }, // Not sortable
+                                    { label: 'Age', key: 'age', sortable: true }
+                                ]}
+                                data={getSortedData(pods)}
+                                sortConfig={sortConfig}
+                                onSort={handleSort}
+                                onRowClick={(pod: any) => handleResourceClick(pod, 'pod')}
+                                renderRow={(pod: any) => (
+                                    <>
+                                        <td className="px-6 py-3 font-medium text-gray-200">{pod.name}</td>
+                                        <td className="px-6 py-3 text-gray-400">{pod.namespace}</td>
+                                        <td className="px-6 py-3 text-gray-400">{pod.restarts}</td>
+                                        <td className="px-6 py-3">
+                                            <span className={`px-2 py-0.5 rounded text-xs border ${
+                                                pod.status === 'Running' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                                                pod.status === 'Pending' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
+                                                pod.status === 'Succeeded' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                                pod.status === 'Failed' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                                                'bg-gray-500/10 text-gray-400 border-gray-500/20'
+                                            }`}>
+                                                {pod.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-3">
+                                            <div className="flex gap-1 items-center">
+                                               {pod.containers?.map((c: any, idx: number) => {
+                                                   let color = 'bg-gray-500';
+                                                   if (c.state === 'running' && c.ready) color = 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]';
+                                                   else if (c.state === 'running' && !c.ready) color = 'bg-yellow-500';
+                                                   else if (c.state === 'waiting') color = 'bg-yellow-500 animate-pulse';
+                                                   else if (c.state === 'terminated' && c.restartCount > 0) color = 'bg-red-500'; 
+                                                   else if (c.state === 'terminated') color = 'bg-gray-500';
+         
+                                                   return (
+                                                       <div 
+                                                            key={idx} 
+                                                            className={`w-2 h-2 rounded-full ${color}`} 
+                                                            title={`${c.name}: ${c.state} (Restarts: ${c.restartCount})`}
+                                                        />
+                                                   );
+                                               })}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={pod.age} /></td>
+                                    </>
+                                )}
+                            />
+                        </>
+                    ) : (
+                        <PodVisualizer 
+                            pods={pods}
+                            nodes={nodes}
+                        />
+                    )}
                 </motion.div>
              )}
              
@@ -1347,7 +1405,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
          }} 
          title={selectedResource?.name || 'Details'}
          headerActions={
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+                 {selectedResource?.type === 'deployment' && onOpenYaml && (
+                    <button 
+                        onClick={() => {
+                            onOpenYaml(selectedResource);
+                            setIsDrawerOpen(false);
+                        }}
+                        className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-blue-400 rounded transition-colors"
+                        title="Edit YAML"
+                    >
+                        <PenTool size={18} />
+                    </button>
+                )}
                 {/* Tabs for Supported Types */}
                 {(['deployment', 'pod', 'service', 'replicaset', 'daemonset', 'statefulset', 'job', 'cronjob'].includes(selectedResource?.type)) && (
                     <div className="flex items-center bg-black/40 rounded-lg p-1 border border-white/10 mr-4">

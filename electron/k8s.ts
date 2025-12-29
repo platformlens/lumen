@@ -1,5 +1,6 @@
 import { KubeConfig, AppsV1Api, CoreV1Api, RbacAuthorizationV1Api, ApiextensionsV1Api, CustomObjectsApi, BatchV1Api, NetworkingV1Api, StorageV1Api, DiscoveryV1Api, PortForward, Watch, Log } from '@kubernetes/client-node';
 import * as net from 'net';
+import * as yaml from 'js-yaml';
 
 interface ActiveForward {
     id: string;
@@ -251,6 +252,49 @@ export class K8sService {
         } catch (error) {
             console.error("Error fetching deployment:", error);
             return null;
+        }
+    }
+
+    async getDeploymentYaml(contextName: string, namespace: string, name: string) {
+        console.log(`[k8s] getDeploymentYaml for ${namespace}/${name}`);
+        const dep = await this.getDeployment(contextName, namespace, name);
+        if (!dep) return null;
+
+        // Clean up metadata that shouldn't be edited usually
+        // But for full edit, we send it all.
+        // Actually, users might want to edit spec.
+
+        try {
+            return yaml.dump(dep);
+        } catch (e) {
+            console.error('Error dumping yaml:', e);
+            throw e;
+        }
+    }
+
+    async updateDeploymentYaml(contextName: string, namespace: string, name: string, yamlContent: string) {
+        console.log(`[k8s] updateDeploymentYaml for ${namespace}/${name}`);
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AppsV1Api);
+
+        let newObj: any;
+        try {
+            newObj = yaml.load(yamlContent);
+        } catch (e) {
+            throw new Error(`Invalid YAML: ${e}`);
+        }
+
+        try {
+            // Use replace (PUT)
+            const res = await k8sApi.replaceNamespacedDeployment({
+                name,
+                namespace,
+                body: newObj
+            });
+            return (res as any).body ? (res as any).body : res;
+        } catch (error) {
+            console.error("Error updating deployment:", error);
+            throw error;
         }
     }
 
