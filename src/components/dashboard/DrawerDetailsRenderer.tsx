@@ -14,6 +14,8 @@ import { DaemonSetDetails } from '../resources/details/DaemonSetDetails';
 import { StatefulSetDetails } from '../resources/details/StatefulSetDetails';
 import { JobDetails } from '../resources/details/JobDetails';
 import { CronJobDetails } from '../resources/details/CronJobDetails';
+import { PriorityClassDetails } from '../resources/details/PriorityClassDetails';
+import { PodDisruptionBudgetDetails } from '../resources/details/PodDisruptionBudgetDetails';
 
 interface DrawerDetailsRendererProps {
     selectedResource: any;
@@ -160,9 +162,33 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
         case 'persistentvolumeclaim':
         case 'persistentvolume':
         case 'storageclass':
+        case 'configmap':
+        case 'secret':
+        case 'horizontalpodautoscaler':
+        case 'mutatingwebhookconfiguration':
+        case 'validatingwebhookconfiguration':
+        case 'runtimeclass':
             return (
                 <GenericResourceDetails 
                     resource={detailedResource} 
+                    explanation={explanation}
+                    onExplain={handleExplain}
+                    isExplaining={isExplaining}
+                />
+            );
+        case 'poddisruptionbudget':
+            return (
+                <PodDisruptionBudgetDetails 
+                    podDisruptionBudget={detailedResource} 
+                    explanation={explanation}
+                    onExplain={handleExplain}
+                    isExplaining={isExplaining}
+                />
+            );
+        case 'priorityclass':
+            return (
+                <PriorityClassDetails 
+                    priorityClass={detailedResource} 
                     explanation={explanation}
                     onExplain={handleExplain}
                     isExplaining={isExplaining}

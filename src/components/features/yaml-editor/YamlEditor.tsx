@@ -153,10 +153,10 @@ export const YamlEditor: React.FC<YamlEditorProps> = ({ initialYaml, onSave }) =
             
             {/* Status Bar - Extended height to be visible above app StatusBar (24px) */}
              <div 
-                className="flex-none px-4 pt-2 pb-6 bg-[#007acc] text-white text-xs flex justify-between items-start select-none"
+                className="flex-none px-4 bg-[#007acc] text-white text-xs flex justify-between items-center select-none"
                 style={{
-                    height: '48px',
-                    minHeight: '48px'
+                    height: '24px',
+                    minHeight: '24px'
                 }}
              >
                 <div className="flex gap-4">

@@ -1,4 +1,4 @@
-import { KubeConfig, AppsV1Api, CoreV1Api, RbacAuthorizationV1Api, ApiextensionsV1Api, CustomObjectsApi, BatchV1Api, NetworkingV1Api, StorageV1Api, DiscoveryV1Api, PortForward, Watch, Log } from '@kubernetes/client-node';
+import { KubeConfig, AppsV1Api, CoreV1Api, RbacAuthorizationV1Api, ApiextensionsV1Api, CustomObjectsApi, BatchV1Api, NetworkingV1Api, StorageV1Api, DiscoveryV1Api, PortForward, Watch, Log, AutoscalingV2Api, PolicyV1Api, AdmissionregistrationV1Api, SchedulingV1Api, NodeV1Api } from '@kubernetes/client-node';
 import * as net from 'net';
 import * as yaml from 'js-yaml';
 
@@ -1599,6 +1599,348 @@ export class K8sService {
         } catch (err) {
             console.error(`Error deleting StorageClass ${name}:`, err);
             throw err;
+        }
+    }
+
+    // --- Config Resources ---
+
+    public async getConfigMaps(contextName: string, namespaces: string[] = []) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+
+        try {
+            let items: any[] = [];
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sCoreApi.listConfigMapForAllNamespaces();
+                items = (res as any).body ? (res as any).body.items : (res as any).items;
+            } else {
+                const promises = namespaces.map(ns => k8sCoreApi.listNamespacedConfigMap({ namespace: ns }));
+                const results = await Promise.all(promises);
+                items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
+            }
+            console.log('ConfigMaps found:', items.length);
+            return items.map((cm: any) => ({
+                name: cm.metadata?.name,
+                namespace: cm.metadata?.namespace,
+                data: Object.keys(cm.data || {}).length,
+                age: cm.metadata?.creationTimestamp,
+                metadata: cm.metadata,
+                dataRaw: cm.data
+            }));
+        } catch (err: any) {
+            console.error('Error fetching ConfigMaps:', err);
+            return [];
+        }
+    }
+
+    public async getConfigMap(contextName: string, namespace: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+        try {
+            const res = await k8sCoreApi.readNamespacedConfigMap({ name, namespace });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching ConfigMap ${namespace}/${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getSecrets(contextName: string, namespaces: string[] = []) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+
+        try {
+            let items: any[] = [];
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sCoreApi.listSecretForAllNamespaces();
+                items = (res as any).body ? (res as any).body.items : (res as any).items;
+            } else {
+                const promises = namespaces.map(ns => k8sCoreApi.listNamespacedSecret({ namespace: ns }));
+                const results = await Promise.all(promises);
+                items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
+            }
+            console.log('Secrets found:', items.length);
+            return items.map((secret: any) => ({
+                name: secret.metadata?.name,
+                namespace: secret.metadata?.namespace,
+                type: secret.type,
+                data: Object.keys(secret.data || {}).length,
+                age: secret.metadata?.creationTimestamp,
+                metadata: secret.metadata
+            }));
+        } catch (err: any) {
+            console.error('Error fetching Secrets:', err);
+            return [];
+        }
+    }
+
+    public async getSecret(contextName: string, namespace: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+        try {
+            const res = await k8sCoreApi.readNamespacedSecret({ name, namespace });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching Secret ${namespace}/${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getHorizontalPodAutoscalers(contextName: string, namespaces: string[] = []) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AutoscalingV2Api);
+
+        try {
+            let items: any[] = [];
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sApi.listHorizontalPodAutoscalerForAllNamespaces();
+                items = (res as any).body ? (res as any).body.items : (res as any).items;
+            } else {
+                const promises = namespaces.map(ns => k8sApi.listNamespacedHorizontalPodAutoscaler({ namespace: ns }));
+                const results = await Promise.all(promises);
+                items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
+            }
+            console.log('HPAs found:', items.length);
+            return items.map((hpa: any) => ({
+                name: hpa.metadata?.name,
+                namespace: hpa.metadata?.namespace,
+                reference: `${hpa.spec?.scaleTargetRef?.kind}/${hpa.spec?.scaleTargetRef?.name}`,
+                minPods: hpa.spec?.minReplicas,
+                maxPods: hpa.spec?.maxReplicas,
+                replicas: hpa.status?.currentReplicas,
+                age: hpa.metadata?.creationTimestamp,
+                metadata: hpa.metadata,
+                spec: hpa.spec,
+                status: hpa.status
+            }));
+        } catch (err: any) {
+            console.error('Error fetching HPAs:', err);
+            return [];
+        }
+    }
+
+    public async getHorizontalPodAutoscaler(contextName: string, namespace: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AutoscalingV2Api);
+        try {
+            const res = await k8sApi.readNamespacedHorizontalPodAutoscaler({ name, namespace });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching HPA ${namespace}/${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getPodDisruptionBudgets(contextName: string, namespaces: string[] = []) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(PolicyV1Api);
+
+        try {
+            let items: any[] = [];
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sApi.listPodDisruptionBudgetForAllNamespaces();
+                items = (res as any).body ? (res as any).body.items : (res as any).items;
+            } else {
+                const promises = namespaces.map(ns => k8sApi.listNamespacedPodDisruptionBudget({ namespace: ns }));
+                const results = await Promise.all(promises);
+                items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
+            }
+            console.log('PDBs found:', items.length);
+            return items.map((pdb: any) => ({
+                name: pdb.metadata?.name,
+                namespace: pdb.metadata?.namespace,
+                minAvailable: pdb.spec?.minAvailable,
+                maxUnavailable: pdb.spec?.maxUnavailable,
+                allowed: pdb.status?.disruptionsAllowed,
+                current: pdb.status?.currentHealthy,
+                desired: pdb.status?.desiredHealthy,
+                age: pdb.metadata?.creationTimestamp,
+                metadata: pdb.metadata,
+                spec: pdb.spec,
+                status: pdb.status
+            }));
+        } catch (err: any) {
+            console.error('Error fetching PDBs:', err);
+            return [];
+        }
+    }
+
+    public async getPodDisruptionBudget(contextName: string, namespace: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(PolicyV1Api);
+        try {
+            const res = await k8sApi.readNamespacedPodDisruptionBudget({ name, namespace });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching PDB ${namespace}/${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getMutatingWebhookConfigurations(contextName: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AdmissionregistrationV1Api);
+
+        try {
+            const res = await k8sApi.listMutatingWebhookConfiguration();
+            const items = (res as any).body ? (res as any).body.items : (res as any).items;
+            console.log('MutatingWebhookConfigurations found:', items.length);
+            return items.map((mwc: any) => ({
+                name: mwc.metadata?.name,
+                webhooks: mwc.webhooks?.length || 0,
+                age: mwc.metadata?.creationTimestamp,
+                metadata: mwc.metadata,
+                webhooksRaw: mwc.webhooks
+            }));
+        } catch (err: any) {
+            console.error('Error fetching MutatingWebhookConfigurations:', err);
+            return [];
+        }
+    }
+
+    public async getMutatingWebhookConfiguration(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AdmissionregistrationV1Api);
+        try {
+            const res = await k8sApi.readMutatingWebhookConfiguration({ name });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching MutatingWebhookConfiguration ${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getValidatingWebhookConfigurations(contextName: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AdmissionregistrationV1Api);
+
+        try {
+            const res = await k8sApi.listValidatingWebhookConfiguration();
+            const items = (res as any).body ? (res as any).body.items : (res as any).items;
+            console.log('ValidatingWebhookConfigurations found:', items.length);
+            return items.map((vwc: any) => ({
+                name: vwc.metadata?.name,
+                webhooks: vwc.webhooks?.length || 0,
+                age: vwc.metadata?.creationTimestamp,
+                metadata: vwc.metadata,
+                webhooksRaw: vwc.webhooks
+            }));
+        } catch (err: any) {
+            console.error('Error fetching ValidatingWebhookConfigurations:', err);
+            return [];
+        }
+    }
+
+    public async getValidatingWebhookConfiguration(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AdmissionregistrationV1Api);
+        try {
+            const res = await k8sApi.readValidatingWebhookConfiguration({ name });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching ValidatingWebhookConfiguration ${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getPriorityClasses(contextName: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(SchedulingV1Api);
+
+        try {
+            const res = await k8sApi.listPriorityClass();
+            const items = (res as any).body ? (res as any).body.items : (res as any).items;
+            console.log('PriorityClasses found:', items.length);
+            return items.map((pc: any) => ({
+                name: pc.metadata?.name,
+                value: pc.value,
+                globalDefault: pc.globalDefault,
+                description: pc.description,
+                age: pc.metadata?.creationTimestamp,
+                metadata: pc.metadata
+            }));
+        } catch (err: any) {
+            console.error('Error fetching PriorityClasses:', err);
+            return [];
+        }
+    }
+
+    public async getPriorityClass(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(SchedulingV1Api);
+        try {
+            const res = await k8sApi.readPriorityClass({ name });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching PriorityClass ${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getRuntimeClasses(contextName: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(NodeV1Api);
+
+        try {
+            const res = await k8sApi.listRuntimeClass();
+            const items = (res as any).body ? (res as any).body.items : (res as any).items;
+            console.log('RuntimeClasses found:', items.length);
+            return items.map((rc: any) => ({
+                name: rc.metadata?.name,
+                handler: rc.handler,
+                age: rc.metadata?.creationTimestamp,
+                metadata: rc.metadata
+            }));
+        } catch (err: any) {
+            console.error('Error fetching RuntimeClasses:', err);
+            return [];
+        }
+    }
+
+    public async getRuntimeClass(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(NodeV1Api);
+        try {
+            const res = await k8sApi.readRuntimeClass({ name });
+            return (res as any).body ? (res as any).body : res;
+        } catch (err) {
+            console.error(`Error fetching RuntimeClass ${name}:`, err);
+            return null;
+        }
+    }
+
+    public async getPdbYaml(contextName: string, namespace: string, name: string) {
+        const pdb = await this.getPodDisruptionBudget(contextName, namespace, name);
+        if (!pdb) return null;
+        try {
+            return yaml.dump(pdb);
+        } catch (e) {
+            console.error('Error dumping pdb yaml:', e);
+            throw e;
+        }
+    }
+
+    public async updatePdbYaml(contextName: string, namespace: string, name: string, yamlContent: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(PolicyV1Api);
+
+        let newObj: any;
+        try {
+            newObj = yaml.load(yamlContent);
+        } catch (e) {
+            throw new Error(`Invalid YAML: ${e}`);
+        }
+
+        try {
+            const res = await k8sApi.replaceNamespacedPodDisruptionBudget({
+                name,
+                namespace,
+                body: newObj
+            });
+            return (res as any).body ? (res as any).body : res;
+        } catch (error) {
+            console.error("Error updating PDB:", error);
+            throw error;
         }
     }
 }

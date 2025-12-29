@@ -32,7 +32,8 @@ export class TerminalService {
             // Test spawn
             // const ptyProcess = pty.spawn('/bin/echo', ['hello'], { ... }); 
 
-            const ptyProcess = pty.spawn(shell, [], {
+            const args = os.platform() === 'win32' ? [] : ['--login'];
+            const ptyProcess = pty.spawn(shell, args, {
                 name: 'xterm-256color',
                 cols: cols || 80,
                 rows: rows || 24,

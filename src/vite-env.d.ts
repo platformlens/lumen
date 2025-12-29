@@ -69,6 +69,35 @@ declare global {
             getStorageClasses: (contextName: string) => Promise<any[]>;
             getStorageClass: (contextName: string, name: string) => Promise<any>;
             deleteStorageClass: (contextName: string, name: string) => Promise<boolean>;
+
+            // --- Config ---
+            getConfigMaps: (contextName: string, namespaces?: string[]) => Promise<any[]>;
+            getConfigMap: (contextName: string, namespace: string, name: string) => Promise<any>;
+
+            getSecrets: (contextName: string, namespaces?: string[]) => Promise<any[]>;
+            getSecret: (contextName: string, namespace: string, name: string) => Promise<any>;
+
+            getHorizontalPodAutoscalers: (contextName: string, namespaces?: string[]) => Promise<any[]>;
+            getHorizontalPodAutoscaler: (contextName: string, namespace: string, name: string) => Promise<any>;
+
+            getPodDisruptionBudgets: (contextName: string, namespaces?: string[]) => Promise<any[]>;
+            getPodDisruptionBudget: (contextName: string, namespace: string, name: string) => Promise<any>;
+            getPdbYaml: (contextName: string, namespace: string, name: string) => Promise<string>;
+            updatePdbYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => Promise<any>;
+
+            getMutatingWebhookConfigurations: (contextName: string) => Promise<any[]>;
+            getMutatingWebhookConfiguration: (contextName: string, name: string) => Promise<any>;
+
+            getValidatingWebhookConfigurations: (contextName: string) => Promise<any[]>;
+            getValidatingWebhookConfiguration: (contextName: string, name: string) => Promise<any>;
+
+            getPriorityClasses: (contextName: string) => Promise<any[]>;
+            getPriorityClass: (contextName: string, name: string) => Promise<any>;
+
+            getRuntimeClasses: (contextName: string) => Promise<any[]>;
+            getRuntimeClass: (contextName: string, name: string) => Promise<any>;
+
+            // --- Access Control ---
             getServiceAccount: (contextName: string, namespace: string, name: string) => Promise<any>;
             getRole: (contextName: string, namespace: string, name: string) => Promise<any>;
             getReplicaSet: (contextName: string, namespace: string, name: string) => Promise<any>;

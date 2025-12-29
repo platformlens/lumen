@@ -60,6 +60,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
   const [pvs, setPvs] = useState<any[]>([]);
   const [storageClasses, setStorageClasses] = useState<any[]>([]);
 
+  // Config State
+  const [configMaps, setConfigMaps] = useState<any[]>([]);
+  const [secrets, setSecrets] = useState<any[]>([]);
+  const [horizontalPodAutoscalers, setHorizontalPodAutoscalers] = useState<any[]>([]);
+  const [podDisruptionBudgets, setPodDisruptionBudgets] = useState<any[]>([]);
+  const [mutatingWebhookConfigurations, setMutatingWebhookConfigurations] = useState<any[]>([]);
+  const [validatingWebhookConfigurations, setValidatingWebhookConfigurations] = useState<any[]>([]);
+  const [priorityClasses, setPriorityClasses] = useState<any[]>([]);
+  const [runtimeClasses, setRuntimeClasses] = useState<any[]>([]);
+
   const [nodes, setNodes] = useState<any[]>([]);
   const [customObjects, setCustomObjects] = useState<any[]>([]);
   const [currentCrdKind, setCurrentCrdKind] = useState<string>('');
@@ -289,6 +299,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
          window.k8s.getStorageClasses(clusterName).then(data => { console.log('StorageClasses:', data); setStorageClasses(data); });
       }
 
+      // Config
+      if (activeView === 'configmaps') {
+         window.k8s.getConfigMaps(clusterName, nsFilter).then(data => setConfigMaps(data));
+      }
+      if (activeView === 'secrets') {
+         window.k8s.getSecrets(clusterName, nsFilter).then(data => setSecrets(data));
+      }
+      if (activeView === 'horizontalpodautoscalers') {
+         window.k8s.getHorizontalPodAutoscalers(clusterName, nsFilter).then(data => setHorizontalPodAutoscalers(data));
+      }
+      if (activeView === 'poddisruptionbudgets') {
+         window.k8s.getPodDisruptionBudgets(clusterName, nsFilter).then(data => setPodDisruptionBudgets(data));
+      }
+      if (activeView === 'mutatingwebhookconfigurations') {
+         window.k8s.getMutatingWebhookConfigurations(clusterName).then(data => setMutatingWebhookConfigurations(data));
+      }
+      if (activeView === 'validatingwebhookconfigurations') {
+         window.k8s.getValidatingWebhookConfigurations(clusterName).then(data => setValidatingWebhookConfigurations(data));
+      }
+      if (activeView === 'priorityclasses') {
+         window.k8s.getPriorityClasses(clusterName).then(data => setPriorityClasses(data));
+      }
+      if (activeView === 'runtimeclasses') {
+         window.k8s.getRuntimeClasses(clusterName).then(data => setRuntimeClasses(data));
+      }
+
       await Promise.all(promises);
 
     } catch (e) {
@@ -302,14 +338,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     loadResources();
   }, [clusterName, selectedNamespaces, activeView]);
 
-  const handleResourceClick = async (resource: any, type: 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'other') => {
+  const handleResourceClick = async (resource: any, type: 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'other') => {
       setSelectedResource({ ...resource, type });
       setIsDrawerOpen(true);
       setDetailedResource(null); // Clear previous details while loading
       setDrawerTab('details'); // Reset tab on new selection
 
       // Only fetch details for types we have specific detail fetching logic for
-      if (['deployment', 'service', 'pod', 'replicaset', 'clusterrolebinding', 'rolebinding', 'serviceaccount', 'role', 'node', 'crd-definition', 'custom-resource', 'daemonset', 'statefulset', 'job', 'cronjob', 'endpointslice', 'endpoint', 'ingress', 'ingressclass', 'networkpolicy', 'persistentvolumeclaim', 'persistentvolume', 'storageclass'].includes(type)) {
+      // Config resources will use generic details component
+      if (['deployment', 'service', 'pod', 'replicaset', 'clusterrolebinding', 'rolebinding', 'serviceaccount', 'role', 'node', 'crd-definition', 'custom-resource', 'daemonset', 'statefulset', 'job', 'cronjob', 'endpointslice', 'endpoint', 'ingress', 'ingressclass', 'networkpolicy', 'persistentvolumeclaim', 'persistentvolume', 'storageclass', 'configmap', 'secret', 'horizontalpodautoscaler', 'poddisruptionbudget', 'mutatingwebhookconfiguration', 'validatingwebhookconfiguration', 'priorityclass', 'runtimeclass'].includes(type)) {
           try {
             if (type === 'deployment') {
                 const details = await window.k8s.getDeployment(clusterName, resource.namespace, resource.name);
@@ -391,6 +428,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                   setDetailedResource(details);
               } else if (type === 'storageclass') {
                   const details = await window.k8s.getStorageClass(clusterName, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'configmap') {
+                  const details = await window.k8s.getConfigMap(clusterName, resource.namespace, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'secret') {
+                  const details = await window.k8s.getSecret(clusterName, resource.namespace, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'horizontalpodautoscaler') {
+                  const details = await window.k8s.getHorizontalPodAutoscaler(clusterName, resource.namespace, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'poddisruptionbudget') {
+                  const details = await window.k8s.getPodDisruptionBudget(clusterName, resource.namespace, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'mutatingwebhookconfiguration') {
+                  const details = await window.k8s.getMutatingWebhookConfiguration(clusterName, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'validatingwebhookconfiguration') {
+                  const details = await window.k8s.getValidatingWebhookConfiguration(clusterName, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'priorityclass') {
+                  const details = await window.k8s.getPriorityClass(clusterName, resource.name);
+                  setDetailedResource(details);
+              } else if (type === 'runtimeclass') {
+                  const details = await window.k8s.getRuntimeClass(clusterName, resource.name);
                   setDetailedResource(details);
               }
              // For generic 'other' (CRDs), we might just show raw JSON or limited details if we don't have a specific parser
@@ -1086,6 +1147,155 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     )}
                 />
              )}
+
+             {/* CONFIG RESOURCES */}
+             {(activeView === 'configmaps') && (
+                <GenericResourceView 
+                    viewKey="configmaps"
+                    description="ConfigMaps allow you to decouple configuration artifacts from image content."
+                    headers={['Name', 'Namespace', 'Data Keys', 'Age']}
+                    data={configMaps}
+                    onRowClick={(cm: any) => handleResourceClick(cm, 'configmap')}
+                    renderRow={(cm: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{cm.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{cm.namespace}</td>
+                            <td className="px-6 py-3 text-gray-400">{cm.data}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={cm.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'secrets') && (
+                <GenericResourceView 
+                    viewKey="secrets"
+                    description="Secrets let you store and manage sensitive information."
+                    headers={['Name', 'Namespace', 'Type', 'Data Keys', 'Age']}
+                    data={secrets}
+                    onRowClick={(secret: any) => handleResourceClick(secret, 'secret')}
+                    renderRow={(secret: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{secret.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{secret.namespace}</td>
+                            <td className="px-6 py-3 text-gray-400 text-xs">{secret.type}</td>
+                            <td className="px-6 py-3 text-gray-400">{secret.data}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={secret.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'horizontalpodautoscalers') && (
+                <GenericResourceView 
+                    viewKey="horizontalpodautoscalers"
+                    description="Automatically scales the number of pods based on observed metrics."
+                    headers={['Name', 'Namespace', 'Reference', 'Min Pods', 'Max Pods', 'Replicas', 'Age']}
+                    data={horizontalPodAutoscalers}
+                    onRowClick={(hpa: any) => handleResourceClick(hpa, 'horizontalpodautoscaler')}
+                    renderRow={(hpa: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{hpa.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{hpa.namespace}</td>
+                            <td className="px-6 py-3 text-blue-400 text-sm">{hpa.reference}</td>
+                            <td className="px-6 py-3 text-gray-400">{hpa.minPods}</td>
+                            <td className="px-6 py-3 text-gray-400">{hpa.maxPods}</td>
+                            <td className="px-6 py-3 text-gray-400">{hpa.replicas}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={hpa.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'poddisruptionbudgets') && (
+                <GenericResourceView 
+                    viewKey="poddisruptionbudgets"
+                    description="Limits the number of pods that can be down simultaneously from voluntary disruptions."
+                    headers={['Name', 'Namespace', 'Min Available', 'Max Unavailable', 'Allowed Disruptions', 'Age']}
+                    data={podDisruptionBudgets}
+                    onRowClick={(pdb: any) => handleResourceClick(pdb, 'poddisruptionbudget')}
+                    renderRow={(pdb: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{pdb.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{pdb.namespace}</td>
+                            <td className="px-6 py-3 text-gray-400">{pdb.minAvailable || '-'}</td>
+                            <td className="px-6 py-3 text-gray-400">{pdb.maxUnavailable || '-'}</td>
+                            <td className="px-6 py-3 text-gray-400">{pdb.allowed}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={pdb.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'mutatingwebhookconfigurations') && (
+                <GenericResourceView 
+                    viewKey="mutatingwebhookconfigurations"
+                    description="Defines admission webhooks that can mutate objects before they are stored."
+                    headers={['Name', 'Webhooks', 'Age']}
+                    data={mutatingWebhookConfigurations}
+                    onRowClick={(mwc: any) => handleResourceClick(mwc, 'mutatingwebhookconfiguration')}
+                    renderRow={(mwc: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{mwc.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{mwc.webhooks}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={mwc.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'validatingwebhookconfigurations') && (
+                <GenericResourceView 
+                    viewKey="validatingwebhookconfigurations"
+                    description="Defines admission webhooks that can validate objects before they are stored."
+                    headers={['Name', 'Webhooks', 'Age']}
+                    data={validatingWebhookConfigurations}
+                    onRowClick={(vwc: any) => handleResourceClick(vwc, 'validatingwebhookconfiguration')}
+                    renderRow={(vwc: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{vwc.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{vwc.webhooks}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={vwc.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'priorityclasses') && (
+                <GenericResourceView 
+                    viewKey="priorityclasses"
+                    description="Defines the priority of pods relative to other pods."
+                    headers={['Name', 'Value', 'Global Default', 'Description', 'Age']}
+                    data={priorityClasses}
+                    onRowClick={(pc: any) => handleResourceClick(pc, 'priorityclass')}
+                    renderRow={(pc: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{pc.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{pc.value}</td>
+                            <td className="px-6 py-3 text-gray-400">{pc.globalDefault ? 'Yes' : 'No'}</td>
+                            <td className="px-6 py-3 text-gray-400 text-sm max-w-xs truncate">{pc.description || '-'}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={pc.age} /></td>
+                        </>
+                    )}
+                />
+             )}
+
+             {(activeView === 'runtimeclasses') && (
+                <GenericResourceView 
+                    viewKey="runtimeclasses"
+                    description="Defines different classes of runtimes that may be used to run containers."
+                    headers={['Name', 'Handler', 'Age']}
+                    data={runtimeClasses}
+                    onRowClick={(rc: any) => handleResourceClick(rc, 'runtimeclass')}
+                    renderRow={(rc: any) => (
+                        <>
+                            <td className="px-6 py-3 font-medium text-gray-200">{rc.name}</td>
+                            <td className="px-6 py-3 text-gray-400">{rc.handler}</td>
+                            <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={rc.age} /></td>
+                        </>
+                    )}
+                />
+             )}
          </AnimatePresence>
 
 
@@ -1102,7 +1312,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
          title={selectedResource?.name || 'Details'}
          headerActions={
             <div className="flex items-center gap-2">
-                 {selectedResource?.type === 'deployment' && onOpenYaml && (
+                 {(selectedResource?.type === 'deployment' || selectedResource?.type === 'poddisruptionbudget') && onOpenYaml && (
                     <button 
                         onClick={() => {
                             onOpenYaml(selectedResource);

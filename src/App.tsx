@@ -161,13 +161,41 @@ function App() {
 
 
 
-  const handleOpenYaml = async (deployment: any) => {
+  const handleOpenYaml = async (resource: any) => {
       if (!selectedCluster) return;
-      const { name, namespace } = deployment.metadata;
+      const { name, namespace } = resource.metadata || resource;
+      const type = resource.type;
       
       try {
-          const yamlContent = await window.k8s.getDeploymentYaml(selectedCluster, namespace, name);
-          const tabId = `yaml-${namespace}-${name}`;
+          let yamlContent: string;
+          let onSaveYaml: (newContent: string) => Promise<void>;
+
+          if (type === 'deployment') {
+              yamlContent = await window.k8s.getDeploymentYaml(selectedCluster, namespace, name);
+              onSaveYaml = async (newContent: string) => {
+                  try {
+                      await window.k8s.updateDeploymentYaml(selectedCluster, namespace, name, newContent);
+                      showToast('Deployment YAML updated successfully', 'success');
+                  } catch (err: any) {
+                      showToast(`Update failed: ${err.message || err}`, 'error');
+                  }
+              };
+          } else if (type === 'poddisruptionbudget') {
+              yamlContent = await window.k8s.getPdbYaml(selectedCluster, namespace, name);
+              onSaveYaml = async (newContent: string) => {
+                  try {
+                      await window.k8s.updatePdbYaml(selectedCluster, namespace, name, newContent);
+                      showToast('PDB YAML updated successfully', 'success');
+                  } catch (err: any) {
+                      showToast(`Update failed: ${err.message || err}`, 'error');
+                  }
+              };
+          } else {
+              showToast(`YAML editing not yet supported for ${type}`, 'info');
+              return;
+          }
+          
+          const tabId = `yaml-${type}-${namespace || 'global'}-${name}`;
           
           // Check if tab exists
           if (!panelTabs.find(t => t.id === tabId)) {
@@ -175,13 +203,9 @@ function App() {
                   id: tabId,
                   type: 'yaml',
                   title: `${name}.yaml`,
-                  subtitle: namespace,
+                  subtitle: namespace || 'Global',
                   yamlContent,
-                  onSaveYaml: async (newContent: string) => {
-                      await window.k8s.updateDeploymentYaml(selectedCluster, namespace, name, newContent);
-                      showToast('Deployment YAML updated successfully', 'success');
-                      // Optionally refresh deployment list?
-                  }
+                  onSaveYaml
               }]);
           }
           
@@ -212,7 +236,7 @@ function App() {
           {/* Main Sidebar & Content Container */}
           <div 
             className="flex flex-1 overflow-hidden gap-4 pb-4 transition-[padding] duration-100 ease-out"
-            style={{ paddingBottom: isBottomPanelOpen ? bottomPanelHeight : 16 }} // 16px is pb-4 equivalent
+            style={{ paddingBottom: isBottomPanelOpen ? (bottomPanelHeight + 6) : 16 }} // Add extra buffer when panel is open
           >
               {/* Floating Glass Sidebar Container */}
               <div className="flex rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-white/5 backdrop-blur-xl h-full flex-shrink-0">

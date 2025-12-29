@@ -21,7 +21,13 @@ import {
     Globe,
     Share2,
     HardDrive,
-    ShieldCheck
+    ShieldCheck,
+    File,
+    Key,
+    TrendingUp,
+    Webhook,
+    Star,
+    Cpu
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -163,6 +169,20 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                 { label: 'Persistent Volume Claims', view: 'persistentvolumeclaims', icon: <HardDrive size={18} /> },
                 { label: 'Persistent Volumes', view: 'persistentvolumes', icon: <HardDrive size={18} /> },
                 { label: 'Storage Classes', view: 'storageclasses', icon: <Database size={18} /> },
+            ]
+        },
+        {
+            id: 'config',
+            title: 'Config',
+            items: [
+                { label: 'ConfigMaps', view: 'configmaps', icon: <File size={18} /> },
+                { label: 'Secrets', view: 'secrets', icon: <Key size={18} /> },
+                { label: 'Horizontal Pod Autoscalers', view: 'horizontalpodautoscalers', icon: <TrendingUp size={18} /> },
+                { label: 'Pod Disruption Budgets', view: 'poddisruptionbudgets', icon: <Shield size={18} /> },
+                { label: 'Mutating Webhook Configs', view: 'mutatingwebhookconfigurations', icon: <Webhook size={18} /> },
+                { label: 'Validating Webhook Configs', view: 'validatingwebhookconfigurations', icon: <ShieldCheck size={18} /> },
+                { label: 'Priority Classes', view: 'priorityclasses', icon: <Star size={18} /> },
+                { label: 'Runtime Classes', view: 'runtimeclasses', icon: <Cpu size={18} /> },
             ]
         },
         {

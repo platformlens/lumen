@@ -58,7 +58,7 @@ export const BottomPanel: React.FC<BottomPanelProps> = ({
                 opacity: isVisible ? 1 : 0 
             }}
             transition={isDragging ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 30 }}
-            className="flex flex-col border-t border-white/10 bg-[#1e1e1e] shadow-[0_-4px_20px_rgba(0,0,0,0.5)] z-40 overflow-hidden absolute bottom-0 left-0 right-0 w-full"
+            className="flex flex-col border-t border-white/10 bg-[#1e1e1e] shadow-[0_-4px_20px_rgba(0,0,0,0.5)] z-40 overflow-hidden absolute bottom-6 left-0 right-0 w-full"
         >
            {/* Drag Handle */}
            <div 

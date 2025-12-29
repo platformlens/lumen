@@ -1,9 +1,35 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import fixPath from 'fix-path';
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { K8sService } from './k8s'
 import { TerminalService } from './terminal'
 import dotenv from 'dotenv'
+
+// Fix PATH for MacOS to find aws/kubectl etc
+fixPath();
+
+// Manually ensure common paths are present (fix-path sometimes misses these in certain shell setups)
+if (process.platform === 'darwin') {
+  const commonPaths = [
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  ];
+
+  const currentPath = process.env.PATH || '';
+  const newPath = commonPaths.reduce((path, p) => {
+    if (!path.includes(p)) {
+      return `${path}:${p}`;
+    }
+    return path;
+  }, currentPath);
+
+  process.env.PATH = newPath;
+}
 
 dotenv.config()
 
@@ -360,6 +386,33 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getStorageClasses', (_, contextName) => { return k8sService.getStorageClasses(contextName); });
   ipcMain.handle('k8s:getStorageClass', (_, contextName, name) => { return k8sService.getStorageClass(contextName, name); });
   ipcMain.handle('k8s:deleteStorageClass', (_, contextName, name) => { return k8sService.deleteStorageClass(contextName, name); });
+
+  // --- Config ---
+  ipcMain.handle('k8s:getConfigMaps', (_, contextName, namespaces) => { return k8sService.getConfigMaps(contextName, namespaces); });
+  ipcMain.handle('k8s:getConfigMap', (_, contextName, namespace, name) => { return k8sService.getConfigMap(contextName, namespace, name); });
+
+  ipcMain.handle('k8s:getSecrets', (_, contextName, namespaces) => { return k8sService.getSecrets(contextName, namespaces); });
+  ipcMain.handle('k8s:getSecret', (_, contextName, namespace, name) => { return k8sService.getSecret(contextName, namespace, name); });
+
+  ipcMain.handle('k8s:getHorizontalPodAutoscalers', (_, contextName, namespaces) => { return k8sService.getHorizontalPodAutoscalers(contextName, namespaces); });
+  ipcMain.handle('k8s:getHorizontalPodAutoscaler', (_, contextName, namespace, name) => { return k8sService.getHorizontalPodAutoscaler(contextName, namespace, name); });
+
+  ipcMain.handle('k8s:getPodDisruptionBudgets', (_, contextName, namespaces) => { return k8sService.getPodDisruptionBudgets(contextName, namespaces); });
+  ipcMain.handle('k8s:getPodDisruptionBudget', (_, contextName, namespace, name) => { return k8sService.getPodDisruptionBudget(contextName, namespace, name); });
+  ipcMain.handle('k8s:getPdbYaml', (_, contextName, namespace, name) => { return k8sService.getPdbYaml(contextName, namespace, name); });
+  ipcMain.handle('k8s:updatePdbYaml', (_, contextName, namespace, name, yamlContent) => { return k8sService.updatePdbYaml(contextName, namespace, name, yamlContent); });
+
+  ipcMain.handle('k8s:getMutatingWebhookConfigurations', (_, contextName) => { return k8sService.getMutatingWebhookConfigurations(contextName); });
+  ipcMain.handle('k8s:getMutatingWebhookConfiguration', (_, contextName, name) => { return k8sService.getMutatingWebhookConfiguration(contextName, name); });
+
+  ipcMain.handle('k8s:getValidatingWebhookConfigurations', (_, contextName) => { return k8sService.getValidatingWebhookConfigurations(contextName); });
+  ipcMain.handle('k8s:getValidatingWebhookConfiguration', (_, contextName, name) => { return k8sService.getValidatingWebhookConfiguration(contextName, name); });
+
+  ipcMain.handle('k8s:getPriorityClasses', (_, contextName) => { return k8sService.getPriorityClasses(contextName); });
+  ipcMain.handle('k8s:getPriorityClass', (_, contextName, name) => { return k8sService.getPriorityClass(contextName, name); });
+
+  ipcMain.handle('k8s:getRuntimeClasses', (_, contextName) => { return k8sService.getRuntimeClasses(contextName); });
+  ipcMain.handle('k8s:getRuntimeClass', (_, contextName, name) => { return k8sService.getRuntimeClass(contextName, name); });
 
   // --- Settings / Config ---
   // Using electron-store for persistence

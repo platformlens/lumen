@@ -126,8 +126,8 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({ node }) => {
                 </h4>
                 <div className="flex flex-wrap gap-2">
                     {Object.entries(metadata.labels || {}).map(([k, v]) => (
-                        <span key={k} className="px-2 py-1 rounded bg-black/30 border border-white/10 text-xs text-gray-300 break-all">
-                            <span className="text-gray-500">{k}:</span> {String(v)}
+                        <span key={k} className="px-2 py-1 bg-blue-500/10 border border-blue-500/20 rounded text-xs text-blue-400 font-mono">
+                            {k}: {String(v)}
                         </span>
                     ))}
                 </div>

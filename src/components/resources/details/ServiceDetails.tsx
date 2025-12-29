@@ -196,7 +196,7 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
                             <div className="text-gray-400">Selector</div>
                             <div className="col-span-2 flex flex-wrap gap-2">
                                 {Object.entries(resource.spec.selector).map(([k, v]) => (
-                                    <span key={k} className="px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 text-xs border border-blue-900/50">
+                                    <span key={k} className="px-2 py-1 bg-blue-500/10 border border-blue-500/20 rounded text-xs text-blue-400 font-mono">
                                         {k}: {String(v)}
                                     </span>
                                 ))}
