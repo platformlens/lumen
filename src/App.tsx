@@ -248,6 +248,17 @@ function App() {
                     onSelectView={setResourceView}
                     selectedCluster={selectedCluster}
                     onSelectCluster={handleClusterSelect}
+                    onBack={() => {
+                        setActiveView('clusters');
+                        setSelectedCluster(null); // Optional: clear selection or keep it?
+                        // User request implies "back appended before text that takes the user to the cluster"
+                        // This usually means going back to the cluster LIST.
+                        // If we clear selectedCluster, the right pane shows "Select a cluster".
+                        // If we don't, it might still show the dashboard.
+                        // Let's clear it to be consistent with 'clusters' mode.
+                        // Actually, if we keep it, we can re-select it easily.
+                        // But the prompt says "takes the user to the cluster" - well, if we are IN the cluster view, back takes us OUT.
+                    }}
                 />
               </div>
 

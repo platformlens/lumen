@@ -27,7 +27,9 @@ import {
     TrendingUp,
     Webhook,
     Star,
-    Cpu
+    Cpu,
+    ChevronLeft,
+    Loader2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -38,6 +40,7 @@ interface SecondarySidebarProps {
   // For cluster mode
   selectedCluster?: string | null;
   onSelectCluster?: (clusterName: string) => void;
+  onBack?: () => void;
 }
 
 export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({ 
@@ -45,7 +48,8 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     onSelectView, 
     activeView,
     selectedCluster,
-    onSelectCluster
+    onSelectCluster,
+    onBack
 }) => {
     const [openGroups, setOpenGroups] = useState<{[key: string]: boolean}>({
         'workloads': true,
@@ -60,6 +64,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     const [loadingCrds, setLoadingCrds] = useState(false);
     const [expandedApiGroups, setExpandedApiGroups] = useState<{[key: string]: boolean}>({});
     const [searchQuery, setSearchQuery] = useState('');
+    const [connectingCluster, setConnectingCluster] = useState<string | null>(null);
 
     const toggleApiGroup = (group: string) => {
         setExpandedApiGroups(prev => ({
@@ -242,7 +247,23 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                     icon={<Server size={18} />} 
                                     label={c.name} 
                                     active={selectedCluster === c.name}
-                                    onClick={() => onSelectCluster && onSelectCluster(c.name)}
+                                    isLoading={connectingCluster === c.name}
+                                    loadingText="Logging in..."
+                                    onClick={async () => {
+                                        if (onSelectCluster) {
+                                            setConnectingCluster(c.name);
+                                            try {
+                                                // Verify connection / warm up
+                                                await window.k8s.getNamespaces(c.name);
+                                            } catch (e) {
+                                                console.error("Connection check failed", e);
+                                                // Proceed anyway, error will be shown in Dashboard
+                                            }
+                                            setSearchQuery(''); // Clear search on select
+                                            onSelectCluster(c.name);
+                                            setConnectingCluster(null);
+                                        }
+                                    }}
                                 />
                             ))}
                             {filteredClusters.length === 0 && (
@@ -256,6 +277,23 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                     <>
                         {/* Top Level Items */}
                         <div className="px-3 mb-2">
+                            {/* Back / Cluster Info */}
+                            {selectedCluster && (
+                                <div className="mb-4">
+                                    <div 
+                                        onClick={onBack}
+                                        className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer group mb-1 px-2"
+                                    >
+                                        <ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" />
+                                        <span className="text-xs font-medium uppercase tracking-wider">Back to Clusters</span>
+                                    </div>
+                                    <div className="px-2 flex items-center gap-2 text-white font-bold text-lg truncate">
+                                        <Server size={16} className="text-blue-400" />
+                                        <span className="truncate">{selectedCluster}</span>
+                                    </div>
+                                </div>
+                            )}
+
                             {(!searchQuery || filterMatches('Overview')) && (
                                 <>
                                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Cluster</h3>
@@ -404,17 +442,20 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     );
 };
 
-const NavItem = ({ icon, label, active, onClick, hasSub = false, comingSoon = false }: any) => (
+
+
+const NavItem = ({ icon, label, active, onClick, hasSub = false, comingSoon = false, isLoading = false, loadingText }: any) => (
     <div
-        onClick={onClick}
+        onClick={isLoading ? undefined : onClick}
         className={clsx(
             "flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors text-sm",
             active ? "bg-[#2a2a2a] text-blue-400 font-medium" : "text-gray-400 hover:bg-[#2a2a2a] hover:text-gray-200",
-            comingSoon && "opacity-50 cursor-not-allowed"
+            comingSoon && "opacity-50 cursor-not-allowed",
+            isLoading && "opacity-80 cursor-wait"
         )}
     >
-        {icon}
-        <span className="flex-1 truncate">{label}</span>
+        {isLoading ? <Loader2 size={18} className="animate-spin text-blue-400" /> : icon}
+        <span className="flex-1 truncate">{isLoading && loadingText ? loadingText : label}</span>
         {hasSub && <ChevronRight size={14} className="text-gray-600" />}
         {comingSoon && <span className="text-[10px] bg-gray-800 text-gray-400 px-1 py-0.5 rounded">Soon</span>}
     </div>

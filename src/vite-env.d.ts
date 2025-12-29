@@ -98,7 +98,9 @@ declare global {
             getRuntimeClass: (contextName: string, name: string) => Promise<any>;
 
             // --- Access Control ---
+            getServiceAccounts: (contextName: string, namespaces?: string[]) => Promise<any[]>;
             getServiceAccount: (contextName: string, namespace: string, name: string) => Promise<any>;
+            getRoles: (contextName: string, namespaces?: string[]) => Promise<any[]>;
             getRole: (contextName: string, namespace: string, name: string) => Promise<any>;
             getReplicaSet: (contextName: string, namespace: string, name: string) => Promise<any>;
             scaleDeployment: (contextName: string, namespace: string, name: string, replicas: number) => Promise<void>;
