@@ -431,6 +431,12 @@ export class K8sService {
             {},
             (type, apiObj, _watchObj) => {
                 if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
+                    // Safety check for malformed events (e.g. BOOKMARK or ERROR type disguised or missing metadata)
+                    if (!apiObj || !apiObj.metadata) {
+                        // console.warn('[k8s] Watch received event without metadata', type, apiObj);
+                        return;
+                    }
+
                     // Check if namespace matches if we are in 'all' mode but filtering locally?
                     // Actually server side filtering is better but global watch returns all.
 

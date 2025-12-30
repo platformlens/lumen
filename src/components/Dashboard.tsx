@@ -177,8 +177,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
                     updates.forEach(({ type, pod }) => {
                         const key = `${pod.namespace}/${pod.name}`;
+
+                        // Strict Filtering: If not viewing 'all' namespaces, check if pod belongs to selected namespaces
+                        const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(pod.namespace);
+
                         if (type === 'ADDED' || type === 'MODIFIED') {
-                            podMap.set(key, pod);
+                            if (isSelected) {
+                                podMap.set(key, pod);
+                            } else {
+                                // Important: If a pod was previously in our list but now its namespace is not selected (unlikely for MODIFIED but possible if we switch views rapidly), remove it.
+                                // Actually, if we are here, we might have received an event for a pod that we shouldn't show.
+                                // If it is in the map, we should remove it? 
+                                // No, if it's not selected, we just don't add it. But if it WAS there, we should delete it to be safe (e.g. namespace change? unlikely for pods).
+                                // More common: we just don't add it.
+                                // But if we have 'all' selected initially, then switch to 'default', watcher might still send events for 'kube-system' briefly.
+                                // If podMap has it, we should remove it if it doesn't match current filter? 
+                                // Yes, let's enforce filter on the whole map or just incoming? 
+                                // Enforcing on incoming actions:
+                                if (podMap.has(key)) podMap.delete(key);
+                            }
                         } else if (type === 'DELETED') {
                             podMap.delete(key);
                         }
@@ -228,8 +245,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
             // Overview needs Pods (pie chart), Deployments (bar chart), and Events
             if (activeView === 'overview') {
-                if (pods.length === 0) promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
-                if (deployments.length === 0) promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
+                promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
+                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
                 promises.push(window.k8s.getEvents(clusterName, nsFilter).then(setEvents));
             }
 
@@ -241,7 +258,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
             }
             if (activeView === 'pods') {
-                if (pods.length === 0) promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
+                promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
                 promises.push(window.k8s.getNodes(clusterName).then(setNodes));
             }
             if (activeView === 'replicasets') {
