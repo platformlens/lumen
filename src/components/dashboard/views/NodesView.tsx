@@ -1,10 +1,14 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { VirtualizedTable, IColumn } from '../../shared/VirtualizedTable';
-import { Server, Zap, AlertCircle, CheckCircle } from 'lucide-react';
+import { Server, Zap, AlertCircle, CheckCircle, BarChart2 } from 'lucide-react';
 import { getNodeProviderInfo } from '../../../utils/cluster-utils';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { StatusBadge } from '../../shared/StatusBadge';
+import {
+    BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
+    PieChart, Pie, Cell
+} from 'recharts';
 
 interface NodesViewProps {
     nodes: any[];
@@ -12,24 +16,54 @@ interface NodesViewProps {
 }
 
 export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick }) => {
+    const [showStats, setShowStats] = React.useState(false);
+
     // Calculate Stats
-    const stats = useMemo(() => {
+    const { stats, chartData } = useMemo(() => {
         let onDemand = 0;
         let spot = 0;
         let ready = 0;
         let notReady = 0;
+
+        const zoneMap = new Map<string, number>();
+        const typeMap = new Map<string, number>();
 
         nodes.forEach(node => {
             const info = getNodeProviderInfo(node);
             if (info.isSpot) spot++;
             else onDemand++;
 
-            const isReady = node.status === 'Ready'; // node.status comes from getNodes which computes it
+            const isReady = node.status === 'Ready';
             if (isReady) ready++;
             else notReady++;
+
+            // Zone Aggregation
+            const zone = info.zone || 'Unknown';
+            zoneMap.set(zone, (zoneMap.get(zone) || 0) + 1);
+
+            // Type Aggregation
+            const type = info.instanceType || 'Unknown';
+            typeMap.set(type, (typeMap.get(type) || 0) + 1);
         });
 
-        return { onDemand, spot, ready, notReady };
+        const capacityData = [
+            { name: 'On-Demand', value: onDemand },
+            { name: 'Spot', value: spot }
+        ];
+
+        const zoneData = Array.from(zoneMap.entries())
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count);
+
+        const typeData = Array.from(typeMap.entries())
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 10); // Top 10
+
+        return {
+            stats: { onDemand, spot, ready, notReady },
+            chartData: { capacity: capacityData, zones: zoneData, types: typeData }
+        };
     }, [nodes]);
 
     const columns: IColumn[] = [
@@ -99,6 +133,21 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick }) => {
             animate={{ opacity: 1 }}
             className="flex flex-col h-full overflow-hidden"
         >
+            <div className="flex items-center justify-between mb-4 flex-none">
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowStats(!showStats)}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${showStats
+                            ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                            : 'bg-white/5 text-gray-400 border-white/10 hover:text-white'
+                            }`}
+                    >
+                        <BarChart2 size={14} />
+                        {showStats ? 'Hide Stats' : 'Show Stats'}
+                    </button>
+                </div>
+            </div>
+
             {/* Stats Cards */}
             <div className="grid grid-cols-4 gap-4 mb-6 flex-none">
                 <div className={cardStyles}>
@@ -141,6 +190,83 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick }) => {
                     </div>
                 )}
             </div>
+
+            {/* Expanded Stats View */}
+            {showStats && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="grid grid-cols-3 gap-4 mb-6 flex-none"
+                >
+                    {/* Capacity Distribution */}
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Capacity Distribution</h4>
+                        <div className="flex-1 w-full min-h-0">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={chartData.capacity}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={40}
+                                        outerRadius={70}
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                    >
+                                        {chartData.capacity.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.name === 'Spot' ? '#a855f7' : '#3b82f6'} stroke="rgba(0,0,0,0.2)" />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                        itemStyle={{ color: '#E5E7EB' }}
+                                    />
+                                    <Legend />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    {/* Zone Distribution */}
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Zone Distribution</h4>
+                        <div className="flex-1 w-full min-h-0">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartData.zones} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                    <XAxis type="number" hide />
+                                    <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 10, fill: '#9ca3af' }} interval={0} />
+                                    <Tooltip
+                                        cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                        itemStyle={{ color: '#E5E7EB' }}
+                                    />
+                                    <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    {/* Instance Types */}
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Top Instance Types</h4>
+                        <div className="flex-1 w-full min-h-0">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartData.types} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
+                                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} interval={0} />
+                                    <YAxis hide />
+                                    <Tooltip
+                                        cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                        itemStyle={{ color: '#E5E7EB' }}
+                                    />
+                                    <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
 
             {/* Table */}
             <div className="flex-1 min-h-0">
