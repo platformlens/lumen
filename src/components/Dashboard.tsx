@@ -716,8 +716,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     <GenericResourceView
                         viewKey={`crd-${currentCrdKind}`}
                         description={currentCrdKind || 'Custom Resources'}
-                        headers={['Name', 'Namespace', 'Age']} // This one actually uses headers in original, wait no I am replacing GenericResourceView props.
-                        // Wait, GenericResourceView NO LONGER accepts headers. I MUST replace it with columns.
+
                         columns={[
                             { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
                             { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns || '-'}</span> },
@@ -777,7 +776,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             columns={[
                                 { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
                                 { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Replicas', dataKey: 'replicas', width: 100, flexGrow: 0, cellRenderer: (r, dep) => <span className="text-gray-400">{dep.availableReplicas || 0} / {dep.replicas || 0}</span> },
+                                { label: 'Replicas', dataKey: 'replicas', width: 100, flexGrow: 0, cellRenderer: (_, dep) => <span className="text-gray-400">{dep.availableReplicas || 0} / {dep.replicas || 0}</span> },
                                 { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (_, dep) => <StatusBadge condition={dep.availableReplicas === dep.replicas && dep.replicas > 0} /> }
                             ]}
                             data={deployments}
@@ -1003,17 +1002,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         <GenericResourceView
                             viewKey="endpoints"
                             description="A list of IP addresses and ports for a Service."
-                            headers={['Name', 'Namespace', 'Subsets', 'Age']}
+                            columns={[
+                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                                { label: 'Subsets', dataKey: 'subsets', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
+                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                            ]}
                             data={endpoints}
                             onRowClick={(ep: any) => handleResourceClick(ep, 'endpoint')}
-                            renderRow={(ep: any) => (
-                                <>
-                                    <td className="px-6 py-3 font-medium text-gray-200">{ep.name}</td>
-                                    <td className="px-6 py-3 text-gray-400">{ep.namespace}</td>
-                                    <td className="px-6 py-3 text-gray-400">{ep.subsets}</td>
-                                    <td className="px-6 py-3 text-gray-400"><TimeAgo timestamp={ep.age} /></td>
-                                </>
-                            )}
                         />
                     )}
 
