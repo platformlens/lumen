@@ -860,7 +860,8 @@ export class K8sService {
                 version: node.status.nodeInfo.kubeletVersion,
                 age: node.metadata.creationTimestamp,
                 cpu: node.status.capacity?.cpu,
-                memory: node.status.capacity?.memory
+                memory: node.status.capacity?.memory,
+                metadata: node.metadata
             }));
         } catch (error) {
             console.error('Error fetching Nodes:', error);

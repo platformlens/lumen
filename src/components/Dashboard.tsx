@@ -19,6 +19,7 @@ import { OverviewView } from './dashboard/views/OverviewView';
 import { ResourceTopology } from './resources/visualizers/ResourceTopology';
 import { ScaleModal } from './shared/ScaleModal';
 import { StatusBadge } from './shared/StatusBadge';
+import { NodesView } from './dashboard/views/NodesView';
 
 
 interface DashboardProps {
@@ -695,17 +696,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 {/* NODES TABLE */}
                 {/* NODES TABLE */}
                 {(activeView === 'nodes') && (
-                    <GenericResourceView
-                        viewKey="nodes"
-                        description="The physical or virtual machines that make up the cluster."
-                        columns={[
-                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                            { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (status) => <span className={`px-2 py-0.5 rounded text-xs ${status === 'Ready' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{status}</span> },
-                            { label: 'Roles', dataKey: 'roles', flexGrow: 1, cellRenderer: (roles) => <span className="text-gray-400">{roles}</span> },
-                            { label: 'Version', dataKey: 'version', width: 120, flexGrow: 0, cellRenderer: (version) => <span className="text-gray-400">{version}</span> },
-                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                        ]}
-                        data={nodes}
+                    <NodesView
+                        nodes={nodes}
                         onRowClick={(node: any) => handleResourceClick(node, 'node')}
                     />
                 )}

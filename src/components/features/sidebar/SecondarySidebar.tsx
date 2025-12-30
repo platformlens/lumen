@@ -44,6 +44,7 @@ interface SecondarySidebarProps {
     // Connection State
     connectionStatus?: 'idle' | 'connecting' | 'connected' | 'error';
     attemptedCluster?: string | null;
+    isEks?: boolean;
 }
 
 export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
@@ -54,7 +55,8 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     onSelectCluster,
     onBack,
     connectionStatus,
-    attemptedCluster
+    attemptedCluster,
+    isEks
 }) => {
     const [openGroups, setOpenGroups] = useState<{ [key: string]: boolean }>({
         'workloads': true,
@@ -284,7 +286,12 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                     </div>
                                     <div className="px-2 flex items-center gap-2 text-white font-bold text-lg truncate">
                                         <Server size={16} className="text-blue-400" />
-                                        <span className="truncate">{selectedCluster}</span>
+                                        <span className="truncate flex-1">{selectedCluster}</span>
+                                        {isEks && (
+                                            <span className="px-1.5 py-0.5 text-[0.65rem] bg-[#FF9900]/10 text-[#FF9900] border border-[#FF9900]/20 rounded font-medium tracking-wide">
+                                                EKS
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             )}

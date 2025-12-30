@@ -10,10 +10,12 @@ import { ToastNotification } from './components/shared/ToastNotification'
 import { AnimatePresence } from 'framer-motion'
 
 import { ConnectionErrorCard } from './components/dashboard/ConnectionErrorCard';
+import { isEksCluster } from './utils/cluster-utils';
 
 function App() {
     const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings'>('clusters')
     const [selectedCluster, setSelectedCluster] = useState<string | null>(null)
+    const [isEks, setIsEks] = useState(false);
 
     // Connection State
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
@@ -75,6 +77,14 @@ function App() {
             setConnectionStatus('connected');
             setResourceView('overview');
             setActiveView('dashboard');
+
+            // Check EKS status
+            window.k8s.getNodes(clusterName).then(nodes => {
+                setIsEks(isEksCluster(nodes));
+            }).catch(e => {
+                console.warn("Failed to check EKS status", e);
+                setIsEks(false);
+            });
         } catch (err: any) {
             console.error("Connection failed", err);
             // Failure
@@ -289,6 +299,7 @@ function App() {
                             onSelectCluster={handleClusterSelect}
                             connectionStatus={connectionStatus}
                             attemptedCluster={attemptedCluster}
+                            isEks={isEks}
                             onBack={() => {
                                 setActiveView('clusters');
                                 setSelectedCluster(null); // Optional: clear selection or keep it?
