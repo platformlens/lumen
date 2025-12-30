@@ -208,14 +208,10 @@ export class K8sService {
     async getNamespaces(contextName: string) {
         this.kc.setCurrentContext(contextName);
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
-        try {
-            const res = await k8sApi.listNamespace();
-            const items = (res as any).body ? (res as any).body.items : (res as any).items;
-            return items.map((ns: any) => ns.metadata?.name).filter(Boolean) as string[];
-        } catch (error) {
-            console.error('Error fetching namespaces:', error);
-            return [];
-        }
+        // Error propagation is required for connection verification
+        const res = await k8sApi.listNamespace();
+        const items = (res as any).body ? (res as any).body.items : (res as any).items;
+        return items.map((ns: any) => ns.metadata?.name).filter(Boolean) as string[];
     }
 
     async getDeployments(contextName: string, namespaces: string[] = []) {
@@ -404,74 +400,61 @@ export class K8sService {
         }
     }
 
-    startPodWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, pod: any) => void) {
-        // Stop existing watcher if any to avoid duplicates (simplified approach)
+    async startPodWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, pod: any) => void) {
+        // Stop existing watcher if any to avoid duplicates
         this.stopPodWatch();
 
         const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
         console.log(`[k8s] Starting watch for pods in ${activeWatchersKey(namespaces)}`);
         this.kc.setCurrentContext(contextName);
-        // Assuming Watch is imported from '@kubernetes/client-node'
         const watch = new Watch(this.kc);
-
-        // If 'all' or empty, we watch all namespaces?
-        // Watch API usually requires a path.
-        // Watching all namespaces: /api/v1/pods
-        // Watching specific: /api/v1/namespaces/{namespace}/pods
 
         const path = (namespaces.length === 0 || namespaces.includes('all'))
             ? '/api/v1/pods'
-            : `/api/v1/namespaces/${namespaces[0]}/pods`; // Currently simplified to single NS or global
+            : `/api/v1/namespaces/${namespaces[0]}/pods`;
 
-        // We'll just support global watch or single NS for now to keep it simple,
-        // or loop if multiple APIs needed. For this MVP, let's assume 'all' or single.
+        try {
+            const req = await watch.watch(
+                path,
+                {},
+                (type, apiObj, _watchObj) => {
+                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
+                        if (!apiObj || !apiObj.metadata) return;
 
-        const req = watch.watch(
-            path,
-            {},
-            (type, apiObj, _watchObj) => {
-                if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                    // Safety check for malformed events (e.g. BOOKMARK or ERROR type disguised or missing metadata)
-                    if (!apiObj || !apiObj.metadata) {
-                        // console.warn('[k8s] Watch received event without metadata', type, apiObj);
-                        return;
+                        const containerStatuses = apiObj.status?.containerStatuses || [];
+                        const initContainerStatuses = apiObj.status?.initContainerStatuses || [];
+                        const allStatuses = [...initContainerStatuses, ...containerStatuses];
+
+                        const pod = {
+                            name: apiObj.metadata?.name,
+                            namespace: apiObj.metadata?.namespace,
+                            status: apiObj.status?.phase,
+                            restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
+                            age: apiObj.metadata?.creationTimestamp,
+                            containers: allStatuses.map((c: any) => ({
+                                name: c.name,
+                                state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
+                                ready: c.ready,
+                                image: c.image,
+                                restartCount: c.restartCount
+                            })),
+                            metadata: apiObj.metadata,
+                            spec: apiObj.spec,
+                            node: apiObj.spec?.nodeName
+                        };
+                        onEvent(type, pod);
                     }
-
-                    // Check if namespace matches if we are in 'all' mode but filtering locally?
-                    // Actually server side filtering is better but global watch returns all.
-
-                    // Transform to our UI shape
-                    const containerStatuses = apiObj.status?.containerStatuses || [];
-                    const initContainerStatuses = apiObj.status?.initContainerStatuses || [];
-                    const allStatuses = [...initContainerStatuses, ...containerStatuses];
-
-                    const pod = {
-                        name: apiObj.metadata?.name,
-                        namespace: apiObj.metadata?.namespace,
-                        status: apiObj.status?.phase,
-                        restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
-                        age: apiObj.metadata?.creationTimestamp,
-                        containers: allStatuses.map((c: any) => ({
-                            name: c.name,
-                            state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
-                            ready: c.ready,
-                            image: c.image,
-                            restartCount: c.restartCount
-                        })),
-                        metadata: apiObj.metadata,
-                        spec: apiObj.spec,
-                        node: apiObj.spec?.nodeName
-                    };
-                    onEvent(type, pod);
+                },
+                (err) => {
+                    if (err) console.error('Watch exited with error', err);
                 }
-            },
-            (err) => {
-                console.error('Watch exited', err);
-            }
-        );
+            );
 
-        // Assuming this.activeWatchers is a Map<string, any>
-        this.activeWatchers.set('pods', req);
+            // Store the request object which has the abort method
+            this.activeWatchers.set('pods', req);
+        } catch (err) {
+            console.error('[k8s] Failed to start pod watch:', err);
+        }
     }
 
     stopPodWatch() {

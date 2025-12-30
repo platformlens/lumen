@@ -142,6 +142,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
     // Load Namespaces
     useEffect(() => {
+        // Explicitly wipe state on cluster change to prevent data leaks from previous cluster
+        setPods([]);
+        setDeployments([]);
+        setReplicaSets([]);
+        setServices([]);
+        setEvents([]);
+        setEndpointSlices([]);
+        setEndpoints([]);
+        setIngresses([]);
+        console.log('[Dashboard] State wiped for new cluster:', clusterName);
+
         window.k8s.getNamespaces(clusterName).then(setNamespaces).catch(console.error);
     }, [clusterName]);
 

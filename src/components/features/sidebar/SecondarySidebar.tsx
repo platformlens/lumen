@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Tooltip } from '../../shared/Tooltip';
-import { 
-    LayoutGrid, 
-    Box, 
-    Layers, 
-    Copy, 
-    ChevronDown, 
+import {
+    LayoutGrid,
+    Box,
+    Layers,
+    Copy,
+    ChevronDown,
     ChevronRight,
     Search,
     Server,
@@ -34,24 +34,29 @@ import {
 import { clsx } from 'clsx';
 
 interface SecondarySidebarProps {
-  mode: 'clusters' | 'resources' | 'settings';
-  onSelectView: (view: string) => void;
-  activeView: string;
-  // For cluster mode
-  selectedCluster?: string | null;
-  onSelectCluster?: (clusterName: string) => void;
-  onBack?: () => void;
+    mode: 'clusters' | 'resources' | 'settings';
+    onSelectView: (view: string) => void;
+    activeView: string;
+    // For cluster mode
+    selectedCluster?: string | null;
+    onSelectCluster?: (clusterName: string) => void;
+    onBack?: () => void;
+    // Connection State
+    connectionStatus?: 'idle' | 'connecting' | 'connected' | 'error';
+    attemptedCluster?: string | null;
 }
 
-export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({ 
-    mode, 
-    onSelectView, 
+export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
+    mode,
+    onSelectView,
     activeView,
     selectedCluster,
     onSelectCluster,
-    onBack
+    onBack,
+    connectionStatus,
+    attemptedCluster
 }) => {
-    const [openGroups, setOpenGroups] = useState<{[key: string]: boolean}>({
+    const [openGroups, setOpenGroups] = useState<{ [key: string]: boolean }>({
         'workloads': true,
         'network': false,
         'storage': false,
@@ -62,9 +67,8 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     const [clusters, setClusters] = useState<any[]>([]);
     const [crds, setCrds] = useState<any[]>([]);
     const [loadingCrds, setLoadingCrds] = useState(false);
-    const [expandedApiGroups, setExpandedApiGroups] = useState<{[key: string]: boolean}>({});
+    const [expandedApiGroups, setExpandedApiGroups] = useState<{ [key: string]: boolean }>({});
     const [searchQuery, setSearchQuery] = useState('');
-    const [connectingCluster, setConnectingCluster] = useState<string | null>(null);
 
     const toggleApiGroup = (group: string) => {
         setExpandedApiGroups(prev => ({
@@ -120,10 +124,10 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
             });
             // Also expand all API groups if query is long enough
             if (searchQuery.length > 2) {
-                 setExpandedApiGroups(prev => {
+                setExpandedApiGroups(prev => {
                     // This is a bit brute force, ideally we only open ones with matches
                     // But for now let's leave it to the user or implement smarter logic below
-                    return prev; 
+                    return prev;
                 });
             }
         }
@@ -131,7 +135,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
 
 
     const toggleGroup = (group: string) => {
-        setOpenGroups(prev => ({...prev, [group]: !prev[group]}));
+        setOpenGroups(prev => ({ ...prev, [group]: !prev[group] }));
     }
 
     // Filter Logic
@@ -204,9 +208,9 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     ];
 
     // Filter CRDs
-    const filteredCrds = crds.filter(crd => 
-        filterMatches(crd.name) || 
-        filterMatches(crd.group) || 
+    const filteredCrds = crds.filter(crd =>
+        filterMatches(crd.name) ||
+        filterMatches(crd.group) ||
         filterMatches(crd.kind)
     );
 
@@ -215,9 +219,9 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     return (
         <div className="w-64 h-full bg-transparent flex flex-col">
             <div className="p-4 border-b border-white/5">
-                 <div className="bg-white/5 rounded px-3 py-1.5 flex items-center gap-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-blue-500/5 transition-colors">
+                <div className="bg-white/5 rounded px-3 py-1.5 flex items-center gap-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-blue-500/5 transition-colors">
                     <Search size={14} className="text-gray-400" />
-                    <input 
+                    <input
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
@@ -225,43 +229,34 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                         className="bg-transparent border-none outline-none text-sm text-gray-200 placeholder-gray-500 w-full"
                     />
                     {searchQuery && (
-                        <button 
+                        <button
                             onClick={() => setSearchQuery('')}
                             className="text-gray-500 hover:text-white transition-colors p-0.5 hover:bg-white/10 rounded"
                         >
                             <X size={12} />
                         </button>
                     )}
-                 </div>
+                </div>
             </div>
 
             <div className="flex-1 overflow-y-auto py-2">
-                
+
                 {mode === 'clusters' && (
                     <div className="px-3">
-                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Clusters</h3>
-                         <div className="space-y-0.5">
+                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Clusters</h3>
+                        <div className="space-y-0.5">
                             {filteredClusters.map(c => (
-                                <NavItem 
+                                <NavItem
                                     key={c.name}
-                                    icon={<Server size={18} />} 
-                                    label={c.name} 
+                                    icon={<Server size={18} />}
+                                    label={c.name}
                                     active={selectedCluster === c.name}
-                                    isLoading={connectingCluster === c.name}
+                                    isLoading={connectionStatus === 'connecting' && attemptedCluster === c.name}
                                     loadingText="Logging in..."
-                                    onClick={async () => {
+                                    onClick={() => {
                                         if (onSelectCluster) {
-                                            setConnectingCluster(c.name);
-                                            try {
-                                                // Verify connection / warm up
-                                                await window.k8s.getNamespaces(c.name);
-                                            } catch (e) {
-                                                console.error("Connection check failed", e);
-                                                // Proceed anyway, error will be shown in Dashboard
-                                            }
                                             setSearchQuery(''); // Clear search on select
                                             onSelectCluster(c.name);
-                                            setConnectingCluster(null);
                                         }
                                     }}
                                 />
@@ -269,7 +264,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                             {filteredClusters.length === 0 && (
                                 <div className="px-3 py-2 text-sm text-gray-500 italic">No clusters found</div>
                             )}
-                         </div>
+                        </div>
                     </div>
                 )}
 
@@ -280,7 +275,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                             {/* Back / Cluster Info */}
                             {selectedCluster && (
                                 <div className="mb-4">
-                                    <div 
+                                    <div
                                         onClick={onBack}
                                         className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer group mb-1 px-2"
                                     >
@@ -297,18 +292,18 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                             {(!searchQuery || filterMatches('Overview')) && (
                                 <>
                                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Cluster</h3>
-                                    <NavItem 
-                                        icon={<LayoutGrid size={18} />} 
-                                        label="Overview" 
+                                    <NavItem
+                                        icon={<LayoutGrid size={18} />}
+                                        label="Overview"
                                         active={activeView === 'overview'}
                                         onClick={() => onSelectView('overview')}
                                     />
                                 </>
                             )}
                             {(!searchQuery || filterMatches('Nodes')) && (
-                                <NavItem 
-                                    icon={<Server size={18} />} 
-                                    label="Nodes" 
+                                <NavItem
+                                    icon={<Server size={18} />}
+                                    label="Nodes"
                                     active={activeView === 'nodes'}
                                     onClick={() => onSelectView('nodes')}
                                 />
@@ -321,17 +316,17 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                             if (searchQuery && filteredItems.length === 0) return null;
 
                             return (
-                                <SidebarGroup 
+                                <SidebarGroup
                                     key={group.id}
-                                    title={group.title} 
-                                    isOpen={openGroups[group.id]} 
+                                    title={group.title}
+                                    isOpen={openGroups[group.id]}
                                     onToggle={() => toggleGroup(group.id)}
                                 >
                                     {(searchQuery ? filteredItems : group.items).map(item => (
-                                        <NavItem 
+                                        <NavItem
                                             key={item.view}
-                                            icon={item.icon} 
-                                            label={item.label} 
+                                            icon={item.icon}
+                                            label={item.label}
                                             active={activeView === item.view}
                                             onClick={() => onSelectView(item.view)}
                                             comingSoon={item.comingSoon}
@@ -343,9 +338,9 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
 
                         {/* Custom Resources Group */}
                         {(hasCrdMatches || (!searchQuery)) && (
-                            <SidebarGroup 
-                                title="Custom Resources" 
-                                isOpen={openGroups['crd']} 
+                            <SidebarGroup
+                                title="Custom Resources"
+                                isOpen={openGroups['crd']}
                                 onToggle={() => toggleGroup('crd')}
                             >
                                 {loadingCrds && (
@@ -354,7 +349,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         Loading definitions...
                                     </div>
                                 )}
-                                
+
                                 {!loadingCrds && (
                                     <>
                                         {/* Definitions View */}
@@ -366,7 +361,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                                 onClick={() => onSelectView('crd-definitions')}
                                             />
                                         )}
-                                        
+
                                         {/* Grouped CRDs */}
                                         {Object.entries(filteredCrds.reduce((acc: any, crd: any) => {
                                             const group = crd.group || 'Other';
@@ -375,36 +370,36 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                             return acc;
                                         }, {})).sort(([a], [b]) => a.localeCompare(b)).map(([group, groupCrds]: [string, any]) => {
                                             const isExpanded = expandedApiGroups[group] || searchQuery.length > 0; // Auto expand on search
-                                            
+
                                             // Calculate if the group itself matches or if children match
                                             // Since we already filtered 'filteredCrds', we know 'groupCrds' contains matches.
                                             // The group name itself might match, or children.
-                                            
+
                                             return (
                                                 <div key={group} className="mt-2">
-                                                    <div 
+                                                    <div
                                                         className="px-3 py-1 flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase cursor-pointer hover:text-gray-300 transition-colors select-none group/item"
                                                         onClick={() => toggleApiGroup(group)}
                                                     >
                                                         <div className="shrink-0 flex items-center justify-center">
                                                             {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                                                         </div>
-                                                        <Tooltip 
-                                                            content={group} 
-                                                            placement="top" 
+                                                        <Tooltip
+                                                            content={group}
+                                                            placement="top"
                                                             delay={400}
                                                             className="min-w-0 flex-1 truncate block"
                                                         >
                                                             <span className="truncate block">{group}</span>
                                                         </Tooltip>
                                                     </div>
-                                                    
+
                                                     {isExpanded && (
                                                         <div className="pl-2 border-l border-[#333] ml-3 mt-1 space-y-0.5">
                                                             {groupCrds.map((crd: any) => (
                                                                 <NavItem
                                                                     key={crd.name}
-                                                                    icon={<Box size={14} />} 
+                                                                    icon={<Box size={14} />}
                                                                     label={crd.kind}
                                                                     active={activeView === `crd/${crd.group}/${crd.versions[0]}/${crd.plural}`}
                                                                     onClick={() => onSelectView(`crd/${crd.group}/${crd.versions[0]}/${crd.plural}`)}
@@ -424,17 +419,17 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
 
                 {mode === 'settings' && (
                     <div className="px-3">
-                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Settings</h3>
-                         <div className="space-y-0.5">
+                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Settings</h3>
+                        <div className="space-y-0.5">
                             {(!searchQuery || filterMatches('AI Models')) && (
                                 <NavItem
                                     icon={<Box size={18} />}
                                     label="AI Models"
                                     active={true}
-                                    onClick={() => {}}
+                                    onClick={() => { }}
                                 />
                             )}
-                         </div>
+                        </div>
                     </div>
                 )}
             </div>
@@ -463,7 +458,7 @@ const NavItem = ({ icon, label, active, onClick, hasSub = false, comingSoon = fa
 
 const SidebarGroup = ({ title, isOpen, onToggle, children }: any) => (
     <div className="px-3 mt-2">
-        <div 
+        <div
             className="flex items-center justify-between px-2 py-1.5 text-gray-400 hover:text-white cursor-pointer group"
             onClick={onToggle}
         >
