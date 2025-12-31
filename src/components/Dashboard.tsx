@@ -195,7 +195,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     // Deployment Watcher (1s interval when on deployments view)
     useEffect(() => {
         if (activeView === 'deployments' && clusterName) {
-            console.log('Starting Deployment Watcher (1000ms)');
+            console.log('Starting Deployment Watcher (5000ms)');
             const interval = setInterval(async () => {
                 const newDeployments = await window.k8s.getDeployments(clusterName, selectedNamespaces);
                 setDeployments(newDeployments);
