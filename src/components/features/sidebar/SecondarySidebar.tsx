@@ -29,7 +29,8 @@ import {
     Star,
     Cpu,
     ChevronLeft,
-    Loader2
+    Loader2,
+    Pin
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -46,7 +47,46 @@ interface SecondarySidebarProps {
     attemptedCluster?: string | null;
     isEks?: boolean;
     hasCertManager?: boolean;
+    // Pinned Clusters
+    pinnedClusters?: string[];
+    onTogglePin?: (clusterName: string) => void;
 }
+
+const NavItem = ({ icon, label, active, onClick, onContextMenu, hasSub = false, comingSoon = false, isLoading = false, loadingText }: any) => (
+    <div
+        onClick={isLoading ? undefined : onClick}
+        onContextMenu={isLoading ? undefined : onContextMenu}
+        className={clsx(
+            "flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors text-sm",
+            active ? "bg-[#2a2a2a] text-blue-400 font-medium" : "text-gray-400 hover:bg-[#2a2a2a] hover:text-gray-200",
+            comingSoon && "opacity-50 cursor-not-allowed",
+            isLoading && "opacity-80 cursor-wait"
+        )}
+    >
+        {isLoading ? <Loader2 size={18} className="animate-spin text-blue-400" /> : icon}
+        <span className="flex-1 truncate">{isLoading && loadingText ? loadingText : label}</span>
+        {hasSub && <ChevronRight size={14} className="text-gray-600" />}
+        {comingSoon && <span className="text-[10px] bg-gray-800 text-gray-400 px-1 py-0.5 rounded">Soon</span>}
+    </div>
+);
+
+const SidebarGroup = ({ title, isOpen, onToggle, children }: any) => (
+    <div className="px-3 mt-2">
+        <div
+            className="flex items-center justify-between px-2 py-1.5 text-gray-400 hover:text-white cursor-pointer group"
+            onClick={onToggle}
+        >
+            <h3 className="text-xs font-bold uppercase tracking-wider">{title}</h3>
+            {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </div>
+
+        {isOpen && (
+            <div className="mt-1 ml-2 pl-2 border-l border-[#333] space-y-0.5">
+                {children}
+            </div>
+        )}
+    </div>
+);
 
 export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     mode,
@@ -58,8 +98,28 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     connectionStatus,
     attemptedCluster,
     isEks,
-    hasCertManager
+    hasCertManager,
+    pinnedClusters = [],
+    onTogglePin
 }) => {
+    const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; cluster: string } | null>(null);
+
+    // Close context menu on click elsewhere
+    useEffect(() => {
+        const handleClick = () => setContextMenu(null);
+        document.addEventListener('click', handleClick);
+        return () => document.removeEventListener('click', handleClick);
+    }, []);
+
+    const handleContextMenu = (e: React.MouseEvent, clusterName: string) => {
+        e.preventDefault();
+        setContextMenu({
+            visible: true,
+            x: e.clientX,
+            y: e.clientY,
+            cluster: clusterName
+        });
+    };
     const [openGroups, setOpenGroups] = useState<{ [key: string]: boolean }>({
         'workloads': true,
         'certificates': true,
@@ -276,6 +336,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                             onSelectCluster(c.name);
                                         }
                                     }}
+                                    onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, c.name)}
                                 />
                             ))}
                             {filteredClusters.length === 0 && (
@@ -463,43 +524,30 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                     </div>
                 )}
             </div>
+
+
+            {/* Context Menu */}
+            {
+                contextMenu && (
+                    <div
+                        className="fixed z-50 bg-[#1e1e1e] border border-white/10 rounded-md shadow-xl py-1 min-w-[140px]"
+                        style={{ top: contextMenu.y, left: contextMenu.x }}
+                    >
+                        <button
+                            className="w-full text-left px-3 py-1.5 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                            onClick={() => {
+                                if (onTogglePin && contextMenu) {
+                                    onTogglePin(contextMenu.cluster);
+                                }
+                                setContextMenu(null);
+                            }}
+                        >
+                            <Pin size={14} className={pinnedClusters.includes(contextMenu.cluster) ? "fill-current" : ""} />
+                            {pinnedClusters.includes(contextMenu.cluster) ? "Unpin Cluster" : "Pin Cluster"}
+                        </button>
+                    </div>
+                )}
         </div>
     );
 };
 
-
-
-const NavItem = ({ icon, label, active, onClick, hasSub = false, comingSoon = false, isLoading = false, loadingText }: any) => (
-    <div
-        onClick={isLoading ? undefined : onClick}
-        className={clsx(
-            "flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors text-sm",
-            active ? "bg-[#2a2a2a] text-blue-400 font-medium" : "text-gray-400 hover:bg-[#2a2a2a] hover:text-gray-200",
-            comingSoon && "opacity-50 cursor-not-allowed",
-            isLoading && "opacity-80 cursor-wait"
-        )}
-    >
-        {isLoading ? <Loader2 size={18} className="animate-spin text-blue-400" /> : icon}
-        <span className="flex-1 truncate">{isLoading && loadingText ? loadingText : label}</span>
-        {hasSub && <ChevronRight size={14} className="text-gray-600" />}
-        {comingSoon && <span className="text-[10px] bg-gray-800 text-gray-400 px-1 py-0.5 rounded">Soon</span>}
-    </div>
-);
-
-const SidebarGroup = ({ title, isOpen, onToggle, children }: any) => (
-    <div className="px-3 mt-2">
-        <div
-            className="flex items-center justify-between px-2 py-1.5 text-gray-400 hover:text-white cursor-pointer group"
-            onClick={onToggle}
-        >
-            <h3 className="text-xs font-bold uppercase tracking-wider">{title}</h3>
-            {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </div>
-
-        {isOpen && (
-            <div className="mt-1 ml-2 pl-2 border-l border-[#333] space-y-0.5">
-                {children}
-            </div>
-        )}
-    </div>
-);

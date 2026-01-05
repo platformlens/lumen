@@ -194,6 +194,11 @@ contextBridge.exposeInMainWorld('k8s', {
   deleteHistoryItem: (id: string) => ipcRenderer.invoke('ai:deleteHistoryItem', id),
   clearHistory: () => ipcRenderer.invoke('ai:clearHistory'),
 
+  // --- Pinned Clusters ---
+  getPinnedClusters: () => ipcRenderer.invoke('k8s:getPinnedClusters'),
+  addPinnedCluster: (clusterName: string) => ipcRenderer.invoke('k8s:addPinnedCluster', clusterName),
+  removePinnedCluster: (clusterName: string) => ipcRenderer.invoke('k8s:removePinnedCluster', clusterName),
+
 
   // --- Terminal ---
   terminal: {

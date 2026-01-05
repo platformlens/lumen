@@ -159,5 +159,10 @@ interface Window {
     saveHistoryItem: (item: any) => Promise<boolean>
     deleteHistoryItem: (id: string) => Promise<boolean>
     clearHistory: () => Promise<boolean>
+
+    // --- Pinned Clusters ---
+    getPinnedClusters: () => Promise<string[]>
+    addPinnedCluster: (clusterName: string) => Promise<string[]>
+    removePinnedCluster: (clusterName: string) => Promise<string[]>
   }
 }

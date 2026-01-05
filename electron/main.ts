@@ -762,6 +762,34 @@ function registerIpcHandlers() {
     store.set('aiHistory', []);
     return true;
   });
+
+  // --- Pinned Clusters ---
+
+  ipcMain.handle('k8s:getPinnedClusters', async () => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    return (store.get('pinnedClusters') as string[]) || [];
+  });
+
+  ipcMain.handle('k8s:addPinnedCluster', async (_, clusterName) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const pinned = (store.get('pinnedClusters') as string[]) || [];
+    if (!pinned.includes(clusterName)) {
+      pinned.push(clusterName);
+      store.set('pinnedClusters', pinned);
+    }
+    return pinned; // Return updated list
+  });
+
+  ipcMain.handle('k8s:removePinnedCluster', async (_, clusterName) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    let pinned = (store.get('pinnedClusters') as string[]) || [];
+    pinned = pinned.filter(c => c !== clusterName);
+    store.set('pinnedClusters', pinned);
+    return pinned; // Return updated list
+  });
 }
 
 // ... helper for AI

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Pin, Server, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Sidebar } from './components/features/sidebar/Sidebar'
 import { SecondarySidebar } from './components/features/sidebar/SecondarySidebar'
 import { Dashboard } from './components/Dashboard'
@@ -24,6 +24,7 @@ function App() {
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
     const [connectionError, setConnectionError] = useState<{ message: string; timestamp: number } | null>(null);
     const [attemptedCluster, setAttemptedCluster] = useState<string | null>(null);
+    const [pinnedClusters, setPinnedClusters] = useState<string[]>([]);
 
     // Dashboard Sub-views
     const [resourceView, setResourceView] = useState<string>('overview')
@@ -34,6 +35,22 @@ function App() {
     const [aiStreamingContent, setAiStreamingContent] = useState<string>('');
     const [isAiStreaming, setIsAiStreaming] = useState(false);
     const aiCleanupRef = useRef<(() => void) | null>(null);
+
+    useEffect(() => {
+        window.k8s.getPinnedClusters().then(setPinnedClusters).catch(console.error);
+    }, []);
+
+    const handleTogglePin = async (clusterName: string) => {
+        if (pinnedClusters.includes(clusterName)) {
+            const updated = await window.k8s.removePinnedCluster(clusterName);
+            setPinnedClusters(updated);
+            showToast(`Unpinned ${clusterName}`, 'info');
+        } else {
+            const updated = await window.k8s.addPinnedCluster(clusterName);
+            setPinnedClusters(updated);
+            showToast(`Pinned ${clusterName}`, 'success');
+        }
+    };
 
     // Log Streaming State (Hoisted from Dashboard)
     // Log & Terminal State
@@ -368,8 +385,28 @@ function App() {
                         <div className="text-xs text-gray-500 font-medium ml-2 flex items-center pt-0.5">Lumen</div>
                     </div>
 
-                    {/* Window Controls / AI Toggle */}
-                    <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                    {/* Pinned Clusters & Window Controls */}
+                    <div className="flex items-center gap-4" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                        {/* Pinned Clusters View */}
+                        {pinnedClusters.length > 0 && (
+                            <div className="flex items-center gap-1.5 mr-2">
+                                {pinnedClusters.slice(0, 6).map(cluster => (
+                                    <div
+                                        key={cluster}
+                                        onClick={() => handleClusterSelect(cluster)}
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors border ${selectedCluster === cluster ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-white/5 border-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
+                                        title={cluster}
+                                    >
+                                        <Pin size={10} className="fill-current opacity-50" />
+                                        <span className="max-w-[100px] truncate">{cluster}</span>
+                                    </div>
+                                ))}
+                                {pinnedClusters.length > 6 && (
+                                    <div className="text-xs text-gray-500 px-1">+{pinnedClusters.length - 6}</div>
+                                )}
+                            </div>
+                        )}
+
                         <button
                             onClick={() => setIsAIPanelOpen(!isAIPanelOpen)}
                             className={`p-1.5 rounded-md transition-all ${isAIPanelOpen ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/10 text-gray-400'}`}
@@ -398,6 +435,8 @@ function App() {
                                 onSelectCluster={handleClusterSelect}
                                 connectionStatus={connectionStatus}
                                 attemptedCluster={attemptedCluster}
+                                pinnedClusters={pinnedClusters}
+                                onTogglePin={handleTogglePin}
                                 isEks={isEks}
                                 hasCertManager={hasCertManager}
                                 onBack={() => {

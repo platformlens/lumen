@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { GenericResourceView } from './GenericResourceView';
 import { getDeploymentStatus } from '../../../utils/resource-utils';
 import { useResourceSorting } from '../../../hooks/useResourceSorting';
 
 interface DeploymentsViewProps {
+    deployments: any[];
+    isLoading: boolean;
     clusterName: string;
     selectedNamespaces: string[];
     searchQuery: string;
@@ -11,65 +13,12 @@ interface DeploymentsViewProps {
 }
 
 export const DeploymentsView: React.FC<DeploymentsViewProps> = ({
-    clusterName,
-    selectedNamespaces,
+    deployments,
+    isLoading,
     searchQuery,
     onRowClick
 }) => {
-    const [deployments, setDeployments] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
     const { sortConfig, handleSort, getSortedData } = useResourceSorting();
-
-    useEffect(() => {
-        if (clusterName) {
-            setIsLoading(true);
-            // Initial load (optional if watcher sends everything, but good for immediate feedback)
-            window.k8s.getDeployments(clusterName, selectedNamespaces)
-                .then(data => {
-                    setDeployments(data);
-                    setIsLoading(false);
-                })
-                .catch(err => {
-                    console.error(err);
-                    setIsLoading(false);
-                });
-
-            // Start watcher
-            window.k8s.watchDeployments(clusterName, selectedNamespaces);
-
-            // Listen for changes
-            const unsubscribe = window.k8s.onDeploymentChange((type, deployment) => {
-                setDeployments(prev => {
-                    const matchIndex = prev.findIndex(d =>
-                        d.metadata?.uid === deployment.metadata?.uid ||
-                        (d.name === deployment.name && d.namespace === deployment.namespace)
-                    );
-
-                    if (type === 'DELETED') {
-                        if (matchIndex === -1) return prev;
-                        return prev.filter((_, i) => i !== matchIndex);
-                    } else {
-                        // ADDED or MODIFIED
-                        if (matchIndex !== -1) {
-                            // Check for actual changes to avoid render checking if possible, 
-                            // but for now, we assume the event implies a change or at least a sync.
-                            // However, strictly, we could use hasResourceChanged logic here too if we diff against prev[matchIndex]
-                            const newArr = [...prev];
-                            newArr[matchIndex] = deployment;
-                            return newArr;
-                        } else {
-                            return [...prev, deployment];
-                        }
-                    }
-                });
-            });
-
-            return () => {
-                unsubscribe();
-                window.k8s.stopWatchDeployments();
-            };
-        }
-    }, [clusterName, selectedNamespaces]);
 
     const sortedDeployments = getSortedData(deployments);
 

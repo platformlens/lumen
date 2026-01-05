@@ -313,6 +313,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 promises.push(window.k8s.getEvents(clusterName, nsFilter).then(setEvents));
             }
 
+            if (activeView === 'deployments') {
+                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
+            }
+
             // Individual Views
             if (activeView === 'nodes') {
                 promises.push(window.k8s.getNodes(clusterName).then(setNodes));
@@ -671,10 +675,48 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         duration: 0.3
     } as const;
 
+    const getResourceCount = () => {
+        if (activeView === 'deployments') return deployments.length;
+        if (activeView === 'pods') return pods.length;
+        if (activeView === 'replicasets') return replicaSets.length;
+        if (activeView === 'services') return services.length;
+        if (activeView === 'configmaps') return configMaps.length;
+        if (activeView === 'secrets') return secrets.length;
+        if (activeView === 'ingresses') return ingresses.length;
+        if (activeView === 'ingressclasses') return ingressClasses.length;
+        if (activeView === 'persistentvolumeclaims') return pvcs.length;
+        if (activeView === 'persistentvolumes') return pvs.length;
+        if (activeView === 'storageclasses') return storageClasses.length;
+        if (activeView === 'nodes') return nodes.length;
+        if (activeView === 'namespaces') return namespacesList.length;
+        if (activeView === 'serviceaccounts') return serviceAccounts.length;
+        if (activeView === 'roles') return roles.length;
+        if (activeView === 'clusterrolebindings') return clusterRoleBindings.length;
+        if (activeView === 'rolebindings') return roleBindings.length;
+        if (activeView === 'daemonsets') return daemonSets.length;
+        if (activeView === 'statefulsets') return statefulSets.length;
+        if (activeView === 'jobs') return jobs.length;
+        if (activeView === 'cronjobs') return cronJobs.length;
+        if (activeView === 'endpointslices') return endpointSlices.length;
+        if (activeView === 'endpoints') return endpoints.length;
+        if (activeView === 'networkpolicies') return networkPolicies.length;
+        if (activeView === 'horizontalpodautoscalers') return horizontalPodAutoscalers.length;
+        if (activeView === 'poddisruptionbudgets') return podDisruptionBudgets.length;
+        if (activeView === 'mutatingwebhookconfigurations') return mutatingWebhookConfigurations.length;
+        if (activeView === 'validatingwebhookconfigurations') return validatingWebhookConfigurations.length;
+        if (activeView === 'priorityclasses') return priorityClasses.length;
+        if (activeView === 'runtimeclasses') return runtimeClasses.length;
+        if (activeView === 'crd-definitions') return crdDefinitions.length;
+        if (activeView.startsWith('crd/')) return (customObjects && typeof customObjects === 'object' && 'items' in customObjects) ? (customObjects.items as any[]).length : (Array.isArray(customObjects) ? customObjects.length : 0);
+        return 0;
+    };
+
+    const resourceCount = getResourceCount();
+
     return (
-        <div className="flex flex-col h-full relative">
+        <div className="flex flex-col h-full relative" >
             {/* Top Bar */}
-            <div className="flex-none p-6 border border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between rounded-2xl">
+            < div className="flex-none p-6 border border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between rounded-2xl" >
                 <div className="flex items-center gap-4 flex-1">
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-900/20 flex-none">
                         <Layers className="text-white" size={20} />
@@ -685,6 +727,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
                                 <Network size={12} className="text-blue-400" />
                                 {clusterName}
+                            </span>
+                            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-xs font-semibold text-gray-300">
+                                {resourceCount} Total
                             </span>
                         </div>
                     </div>
@@ -749,81 +794,93 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         </button>
                     )}
                 </div>
-            </div>
+            </div >
 
             {/* Content Area */}
-            <div className="flex-1 overflow-y-auto p-6">
+            < div className="flex-1 overflow-y-auto p-6" >
                 {/* NODES TABLE */}
                 {/* NODES TABLE */}
-                {(activeView === 'nodes') && (
-                    <NodesView
-                        nodes={nodes}
-                        onRowClick={(node: any) => handleResourceClick(node, 'node')}
-                        searchQuery={searchQuery}
-                    />
-                )}
+                {
+                    (activeView === 'nodes') && (
+                        <NodesView
+                            nodes={nodes}
+                            onRowClick={(node: any) => handleResourceClick(node, 'node')}
+                            searchQuery={searchQuery}
+                        />
+                    )
+                }
 
-                {(activeView === 'backgrounds') && (
-                    null
-                )}
+                {
+                    (activeView === 'backgrounds') && (
+                        null
+                    )
+                }
 
-                {(activeView === 'namespaces') && (
-                    <GenericResourceView
-                        viewKey="namespaces"
-                        description="Virtual clusters backed by the same physical cluster."
-                        columns={[
-                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                            { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (s) => <span className={s === 'Active' ? 'text-green-400' : 'text-gray-400'}>{s}</span> },
-                            { label: 'Labels', dataKey: 'labels', flexGrow: 1, cellRenderer: (labels) => labels ? Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(', ') : '-' },
-                            { label: 'Annotations', dataKey: 'annotations', flexGrow: 1, cellRenderer: (anns) => anns ? Object.keys(anns).length + ' annotations' : '-' },
-                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                        ]}
-                        data={namespacesList}
-                        onRowClick={(ns: any) => handleResourceClick({ ...ns, type: 'namespace' }, 'namespace' as any)}
-                        searchQuery={searchQuery}
-                    />
-                )}
+                {
+                    (activeView === 'namespaces') && (
+                        <GenericResourceView
+                            viewKey="namespaces"
+                            description="Virtual clusters backed by the same physical cluster."
+                            columns={[
+                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                                { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (s) => <span className={s === 'Active' ? 'text-green-400' : 'text-gray-400'}>{s}</span> },
+                                { label: 'Labels', dataKey: 'labels', flexGrow: 1, cellRenderer: (labels) => labels ? Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(', ') : '-' },
+                                { label: 'Annotations', dataKey: 'annotations', flexGrow: 1, cellRenderer: (anns) => anns ? Object.keys(anns).length + ' annotations' : '-' },
+                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                            ]}
+                            data={namespacesList}
+                            onRowClick={(ns: any) => handleResourceClick({ ...ns, type: 'namespace' }, 'namespace' as any)}
+                            searchQuery={searchQuery}
+                        />
+                    )
+                }
 
-                {(activeView === 'certificates') && (
-                    <CertManagerView clusterName={clusterName} searchQuery={searchQuery} />
-                )}
+                {
+                    (activeView === 'certificates') && (
+                        <CertManagerView clusterName={clusterName} searchQuery={searchQuery} />
+                    )
+                }
 
                 {/* CUSTOM RESOURCES TABLE */}
                 {/* CUSTOM RESOURCES TABLE */}
-                {(isCrdView) && (
-                    <GenericResourceView
-                        viewKey={`crd-${currentCrdKind}`}
-                        description={currentCrdKind || 'Custom Resources'}
+                {
+                    (isCrdView) && (
+                        <GenericResourceView
+                            viewKey={`crd-${currentCrdKind}`}
+                            description={currentCrdKind || 'Custom Resources'}
 
-                        columns={[
-                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns || '-'}</span> },
-                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                        ]}
-                        data={customObjects}
-                        onRowClick={(obj: any) => handleResourceClick(obj, 'custom-resource')}
-                        searchQuery={searchQuery}
-                    />
-                )}
+                            columns={[
+                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns || '-'}</span> },
+                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                            ]}
+                            data={customObjects}
+                            onRowClick={(obj: any) => handleResourceClick(obj, 'custom-resource')}
+                            searchQuery={searchQuery}
+                        />
+                    )
+                }
 
                 {/* CRD DEFINITIONS TABLE */}
                 {/* CRD DEFINITIONS TABLE */}
-                {activeView === 'crd-definitions' && (
-                    <GenericResourceView
-                        viewKey="crd-definitions"
-                        description="Definitions of Custom Resources installed in the cluster."
-                        columns={[
-                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                            { label: 'Group', dataKey: 'group', flexGrow: 1, cellRenderer: (g) => <span className="text-blue-400">{g}</span> },
-                            { label: 'Kind', dataKey: 'kind', flexGrow: 1, cellRenderer: (k) => <span className="text-gray-300">{k}</span> },
-                            { label: 'Scope', dataKey: 'scope', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
-                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                        ]}
-                        data={crdDefinitions}
-                        onRowClick={(crd: any) => handleResourceClick(crd, 'crd-definition')}
-                        searchQuery={searchQuery}
-                    />
-                )}
+                {
+                    activeView === 'crd-definitions' && (
+                        <GenericResourceView
+                            viewKey="crd-definitions"
+                            description="Definitions of Custom Resources installed in the cluster."
+                            columns={[
+                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                                { label: 'Group', dataKey: 'group', flexGrow: 1, cellRenderer: (g) => <span className="text-blue-400">{g}</span> },
+                                { label: 'Kind', dataKey: 'kind', flexGrow: 1, cellRenderer: (k) => <span className="text-gray-300">{k}</span> },
+                                { label: 'Scope', dataKey: 'scope', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
+                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                            ]}
+                            data={crdDefinitions}
+                            onRowClick={(crd: any) => handleResourceClick(crd, 'crd-definition')}
+                            searchQuery={searchQuery}
+                        />
+                    )
+                }
 
                 <AnimatePresence mode="wait">
                     {/* OVERVIEW DASHBOARD */}
@@ -852,6 +909,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     {/* DEPLOYMENTS TABLE */}
                     {(activeView === 'deployments') && (
                         <DeploymentsView
+                            deployments={deployments}
+                            isLoading={loading}
                             clusterName={clusterName}
                             selectedNamespaces={selectedNamespaces}
                             searchQuery={searchQuery}
@@ -1355,9 +1414,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
 
 
-            </div>
+            </div >
             {/* ... (Previous code) ... */}
-            <Drawer
+            < Drawer
                 isOpen={isDrawerOpen}
                 onClose={() => {
                     if (!isScaleModalOpen) {
@@ -1366,7 +1425,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 }}
                 title={selectedResource?.name || 'Details'}
                 headerActions={
-                    <div className="flex items-center gap-2">
+                    < div className="flex items-center gap-2" >
                         {(selectedResource?.type === 'deployment' || selectedResource?.type === 'poddisruptionbudget') && onOpenYaml && (
                             <button
                                 onClick={() => {
@@ -1380,54 +1439,60 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             </button>
                         )}
 
-                        {selectedResource?.type === 'deployment' && (
-                            <button
-                                onClick={() => setIsScaleModalOpen(true)}
-                                className="p-1 px-3 ml-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
-                                title="Scale Deployment"
-                            >
-                                <Activity size={14} /> Scale
-                            </button>
-                        )}
+                        {
+                            selectedResource?.type === 'deployment' && (
+                                <button
+                                    onClick={() => setIsScaleModalOpen(true)}
+                                    className="p-1 px-3 ml-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
+                                    title="Scale Deployment"
+                                >
+                                    <Activity size={14} /> Scale
+                                </button>
+                            )
+                        }
 
-                        {(selectedResource?.type === 'deployment' || selectedResource?.type === 'daemonset' || selectedResource?.type === 'statefulset') && (
-                            <button
-                                onClick={async () => {
-                                    const name = selectedResource.metadata?.name || selectedResource.name;
-                                    const namespace = selectedResource.metadata?.namespace || selectedResource.namespace;
+                        {
+                            (selectedResource?.type === 'deployment' || selectedResource?.type === 'daemonset' || selectedResource?.type === 'statefulset') && (
+                                <button
+                                    onClick={async () => {
+                                        const name = selectedResource.metadata?.name || selectedResource.name;
+                                        const namespace = selectedResource.metadata?.namespace || selectedResource.namespace;
 
-                                    if (confirm(`Are you sure you want to restart ${selectedResource.type} ${name}?`)) {
-                                        try {
-                                            if (selectedResource.type === 'deployment') {
-                                                await window.k8s.restartDeployment(clusterName, namespace, name);
-                                            } else if (selectedResource.type === 'daemonset') {
-                                                await window.k8s.restartDaemonSet(clusterName, namespace, name);
-                                            } else if (selectedResource.type === 'statefulset') {
-                                                await window.k8s.restartStatefulSet(clusterName, namespace, name);
+                                        if (confirm(`Are you sure you want to restart ${selectedResource.type} ${name}?`)) {
+                                            try {
+                                                if (selectedResource.type === 'deployment') {
+                                                    await window.k8s.restartDeployment(clusterName, namespace, name);
+                                                } else if (selectedResource.type === 'daemonset') {
+                                                    await window.k8s.restartDaemonSet(clusterName, namespace, name);
+                                                } else if (selectedResource.type === 'statefulset') {
+                                                    await window.k8s.restartStatefulSet(clusterName, namespace, name);
+                                                }
+                                            } catch (e) {
+                                                console.error(e);
+                                                alert(`Failed to restart ${selectedResource.type}`);
                                             }
-                                        } catch (e) {
-                                            console.error(e);
-                                            alert(`Failed to restart ${selectedResource.type}`);
                                         }
-                                    }
-                                }}
-                                className="p-1 px-3 ml-2 bg-orange-600/20 hover:bg-orange-600/30 text-orange-400 border border-orange-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
-                                title="Rolling Restart"
-                            >
-                                <RotateCcw size={14} /> Restart
-                            </button>
-                        )}
+                                    }}
+                                    className="p-1 px-3 ml-2 bg-orange-600/20 hover:bg-orange-600/30 text-orange-400 border border-orange-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
+                                    title="Rolling Restart"
+                                >
+                                    <RotateCcw size={14} /> Restart
+                                </button>
+                            )
+                        }
 
-                        {selectedResource?.type === 'pod' && (
-                            <button
-                                onClick={handleDeletePod}
-                                className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded transition-colors"
-                                title="Delete Pod"
-                            >
-                                <Trash size={16} />
-                            </button>
-                        )}
-                    </div>
+                        {
+                            selectedResource?.type === 'pod' && (
+                                <button
+                                    onClick={handleDeletePod}
+                                    className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded transition-colors"
+                                    title="Delete Pod"
+                                >
+                                    <Trash size={16} />
+                                </button>
+                            )
+                        }
+                    </div >
                 }
 
             >
@@ -1458,7 +1523,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         </div>
                     )}
                 </ErrorBoundary>
-            </Drawer>
+            </Drawer >
 
             <AnimatePresence>
                 {isScaleModalOpen && selectedResource && (
@@ -1472,7 +1537,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 )}
             </AnimatePresence>
 
-        </div>
+        </div >
     );
 }
 
