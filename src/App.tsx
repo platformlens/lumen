@@ -8,6 +8,7 @@ import { LogViewer, PanelTab } from './components/features/logs/LogViewer'
 import { StatusBar } from './components/features/layout/StatusBar'
 import { BottomPanel } from './components/features/layout/BottomPanel'
 import { ToastNotification } from './components/shared/ToastNotification'
+import { ConfirmModal } from './components/shared/ConfirmModal'
 import { AnimatePresence } from 'framer-motion'
 
 import { ConnectionErrorCard } from './components/dashboard/ConnectionErrorCard';
@@ -25,6 +26,22 @@ function App() {
     const [connectionError, setConnectionError] = useState<{ message: string; timestamp: number } | null>(null);
     const [attemptedCluster, setAttemptedCluster] = useState<string | null>(null);
     const [pinnedClusters, setPinnedClusters] = useState<string[]>([]);
+    const [unpinModalOpen, setUnpinModalOpen] = useState(false);
+    const [showOverflowDropdown, setShowOverflowDropdown] = useState(false);
+    const [clusterToUnpin, setClusterToUnpin] = useState<string | null>(null);
+
+    // AI Model State
+    // AI Model State
+    // AI Model State
+    // AI Model State
+    const [aiProvider, setAiProvider] = useState<'google' | 'bedrock'>(() => {
+        // Use sync IPC to get persisted value on cold start
+        return window.k8s.getProviderSync();
+    });
+    const [aiModel, setAiModel] = useState<string>(() => {
+        // Use sync IPC to get persisted value on cold start
+        return window.k8s.getModelSync();
+    });
 
     // Dashboard Sub-views
     const [resourceView, setResourceView] = useState<string>('overview')
@@ -49,6 +66,21 @@ function App() {
             const updated = await window.k8s.addPinnedCluster(clusterName);
             setPinnedClusters(updated);
             showToast(`Pinned ${clusterName}`, 'success');
+        }
+    };
+
+    const handlePinClick = (e: React.MouseEvent, cluster: string) => {
+        e.stopPropagation(); // Prevent cluster selection
+        setClusterToUnpin(cluster);
+        setUnpinModalOpen(true);
+    };
+
+    const handleConfirmUnpin = async () => {
+        if (clusterToUnpin) {
+            const updated = await window.k8s.removePinnedCluster(clusterToUnpin);
+            setPinnedClusters(updated);
+            showToast(`Unpinned ${clusterToUnpin}`, 'info');
+            setClusterToUnpin(null);
         }
     };
 
@@ -88,6 +120,25 @@ function App() {
         return cleanup;
     }, []);
 
+    // Load AI model settings and pinned clusters
+    useEffect(() => {
+        const loadPinnedClusters = async () => {
+            const pinned = await window.k8s.getPinnedClusters();
+            setPinnedClusters(pinned);
+        };
+        loadPinnedClusters();
+
+        // Listen for AI model changes from Settings
+        const handleAIModelChange = (e: Event) => {
+            const customEvent = e as CustomEvent<{ provider: "google" | "bedrock"; model: string }>;
+            console.log("[AI Model] Event received:", customEvent.detail);
+            setAiProvider(customEvent.detail.provider);
+            setAiModel(customEvent.detail.model);
+        };
+        window.addEventListener("aiModelChanged", handleAIModelChange);
+        return () => window.removeEventListener("aiModelChanged", handleAIModelChange);
+    }, []);
+
     const handleClusterSelect = async (clusterName: string) => {
         // Clear previous error and set connecting state
         setConnectionStatus('connecting');
@@ -123,16 +174,15 @@ function App() {
         } catch (err: any) {
             console.error("Connection failed", err);
             // Failure
+            const errorMessage = err.message || "Failed to connect to cluster. Please check your credentials and network connection.";
             setConnectionError({
-                message: err.message || "Failed to connect to cluster. Please check your credentials and network connection.",
+                message: errorMessage,
                 timestamp: Date.now()
             });
             setConnectionStatus('error');
-            // Do NOT switch view fully, but we stay in 'clusters' mode or special error mode?
-            // User wants "Detailed Error Card in the main content area (replacing 'Select a cluster')"
-            // So we might need to be in a state where we show the card.
-            // Since activeView is 'clusters', we render the fallback content in Main.
-            // We can use attemptedCluster + connectionError to show the card there.
+
+            // Show toast notification with error details
+            showToast(`Authentication Failed: ${errorMessage}`, 'error');
         }
     };
 
@@ -344,7 +394,7 @@ function App() {
             aiCleanupRef.current();
         }
 
-        const model = localStorage.getItem('k8ptain_model') || 'gemini-2.5-flash';
+        const model = localStorage.getItem('k8ptain_model') || 'gemini-1.5-flash';
         const provider = localStorage.getItem('k8ptain_provider') || 'google';
 
         try {
@@ -397,12 +447,62 @@ function App() {
                                         className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors border ${selectedCluster === cluster ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-white/5 border-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
                                         title={cluster}
                                     >
-                                        <Pin size={10} className="fill-current opacity-50" />
-                                        <span className="max-w-[100px] truncate">{cluster}</span>
+                                        <Pin
+                                            size={10}
+                                            className="fill-current opacity-50 hover:opacity-100 transition-opacity"
+                                            onClick={(e) => handlePinClick(e, cluster)}
+                                        />
+                                        <span className="max-w-[150px] truncate">{cluster}</span>
                                     </div>
                                 ))}
                                 {pinnedClusters.length > 6 && (
-                                    <div className="text-xs text-gray-500 px-1">+{pinnedClusters.length - 6}</div>
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setShowOverflowDropdown(!showOverflowDropdown)}
+                                            className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded hover:bg-white/10 transition-colors cursor-pointer"
+                                        >
+                                            +{pinnedClusters.length - 6} more
+                                        </button>
+
+                                        {showOverflowDropdown && (
+                                            <>
+                                                {/* Backdrop to close dropdown */}
+                                                <div
+                                                    className="fixed inset-0 z-[100]"
+                                                    onClick={() => setShowOverflowDropdown(false)}
+                                                />
+
+                                                {/* Dropdown menu */}
+                                                <div className="absolute top-full right-0 mt-1 bg-[#1e1e1e] border border-white/10 rounded-md shadow-xl py-1 min-w-[180px] z-[101]">
+                                                    {pinnedClusters.slice(6).map(cluster => (
+                                                        <div
+                                                            key={cluster}
+                                                            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-300 hover:bg-white/10 cursor-pointer transition-colors"
+                                                        >
+                                                            <Pin
+                                                                size={12}
+                                                                className="fill-current opacity-50 hover:opacity-100 transition-opacity flex-shrink-0"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handlePinClick(e, cluster);
+                                                                    setShowOverflowDropdown(false);
+                                                                }}
+                                                            />
+                                                            <span
+                                                                className="flex-1 truncate"
+                                                                onClick={() => {
+                                                                    handleClusterSelect(cluster);
+                                                                    setShowOverflowDropdown(false);
+                                                                }}
+                                                            >
+                                                                {cluster}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         )}
@@ -417,7 +517,7 @@ function App() {
                     </div>
                 </div>
 
-                <div className="flex-1 flex overflow-hidden p-4 gap-4 pb-0">
+                <div className="flex-1 flex overflow-hidden p-4 gap-4 ">
                     {/* Main Sidebar & Content Container */}
                     <div
                         className="flex flex-1 overflow-hidden gap-4 pb-4 transition-[padding] duration-100 ease-out"
@@ -521,7 +621,7 @@ function App() {
                 But BottomPanel is also there.
                 Status Bar is usually fixed bottom.
             */}
-                    <div className="absolute bottom-0 left-0 w-full z-[100] pointer-events-none">
+                    <div className="absolute bottom-0 left-0 w-full z-[100] ">
                         <StatusBar
                             activeCluster={selectedCluster}
                             onTogglePanel={() => {
@@ -538,11 +638,13 @@ function App() {
                             }}
                             isPanelOpen={isBottomPanelOpen}
                             notificationCount={0}
+                            aiProvider={aiProvider}
+                            aiModel={aiModel}
                         />
                     </div>
 
                     {/* Toast Notifications */}
-                    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+                    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 ">
                         <AnimatePresence>
                             {toasts.map(toast => (
                                 <ToastNotification
@@ -569,6 +671,21 @@ function App() {
                     />
                 )}
             </AnimatePresence>
+
+            {/* Unpin Confirmation Modal */}
+            <ConfirmModal
+                isOpen={unpinModalOpen}
+                onClose={() => {
+                    setUnpinModalOpen(false);
+                    setClusterToUnpin(null);
+                }}
+                onConfirm={handleConfirmUnpin}
+                title="Unpin Cluster"
+                message={`Are you sure you want to unpin "${clusterToUnpin}" from the top bar?`}
+                confirmText="Unpin"
+                cancelText="Cancel"
+                variant="warning"
+            />
         </div>
     )
 }

@@ -60,6 +60,13 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
+let store: any;
+
+async function loadStore() {
+  const { default: Store } = await import('electron-store');
+  store = new Store();
+}
+loadStore(); // Start loading immediately
 
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
@@ -789,6 +796,32 @@ function registerIpcHandlers() {
     pinned = pinned.filter(c => c !== clusterName);
     store.set('pinnedClusters', pinned);
     return pinned; // Return updated list
+  });
+
+  // Sync handlers for cold start
+  ipcMain.on('settings:getModelSync', (event) => {
+    if (store) {
+      event.returnValue = store.get('k8ptain_model') || 'gemini-1.5-flash';
+    } else {
+      event.returnValue = 'gemini-1.5-flash';
+    }
+  });
+
+  ipcMain.on('settings:getProviderSync', (event) => {
+    if (store) {
+      event.returnValue = store.get('k8ptain_provider') || 'google';
+    } else {
+      event.returnValue = 'google';
+    }
+  });
+
+  ipcMain.handle('settings:saveModelSelection', (_event, provider, model) => {
+    if (store) {
+      store.set('k8ptain_provider', provider);
+      store.set('k8ptain_model', model);
+      return true;
+    }
+    return false;
   });
 }
 

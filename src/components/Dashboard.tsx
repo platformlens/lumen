@@ -797,7 +797,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             </div >
 
             {/* Content Area */}
-            < div className="flex-1 overflow-y-auto p-6" >
+            < div className="flex-1 overflow-y-auto p-6 pb-4" >
                 {/* NODES TABLE */}
                 {/* NODES TABLE */}
                 {

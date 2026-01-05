@@ -187,6 +187,9 @@ contextBridge.exposeInMainWorld('k8s', {
   getAwsCreds: () => ipcRenderer.invoke('settings:getAwsCreds'),
   listModels: (provider: string) => ipcRenderer.invoke('ai:listModels', provider),
   checkAwsAuth: () => ipcRenderer.invoke('ai:checkAwsAuth'),
+  getModelSync: () => ipcRenderer.sendSync('settings:getModelSync'),
+  getProviderSync: () => ipcRenderer.sendSync('settings:getProviderSync'),
+  saveModelSelection: (provider: string, model: string) => ipcRenderer.invoke('settings:saveModelSelection', provider, model),
 
   // --- AI History ---
   getHistory: () => ipcRenderer.invoke('ai:getHistory'),

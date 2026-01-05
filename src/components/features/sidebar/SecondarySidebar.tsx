@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { Tooltip } from '../../shared/Tooltip';
 import {
     LayoutGrid,
@@ -113,10 +114,29 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
 
     const handleContextMenu = (e: React.MouseEvent, clusterName: string) => {
         e.preventDefault();
+
+        // Menu dimensions
+        const menuWidth = 160;
+        const menuHeight = 50;
+
+        // Calculate position - position close to cursor with smart flipping
+        let x = e.clientX + 2; // Small offset from cursor
+        let y = e.clientY + 2;
+
+        // If too close to right edge, show menu to the left of cursor
+        if (x + menuWidth > window.innerWidth) {
+            x = e.clientX - menuWidth - 2;
+        }
+
+        // If too close to bottom edge, show menu above cursor
+        if (y + menuHeight > window.innerHeight) {
+            y = e.clientY - menuHeight - 2;
+        }
+
         setContextMenu({
             visible: true,
-            x: e.clientX,
-            y: e.clientY,
+            x,
+            y,
             cluster: clusterName
         });
     };
@@ -294,244 +314,247 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     const hasCrdMatches = filteredCrds.length > 0;
 
     return (
-        <div className="w-64 h-full bg-transparent flex flex-col">
-            <div className="p-4 border-b border-white/5">
-                <div className="bg-white/5 rounded px-3 py-1.5 flex items-center gap-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-blue-500/5 transition-colors">
-                    <Search size={14} className="text-gray-400" />
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search..."
-                        className="bg-transparent border-none outline-none text-sm text-gray-200 placeholder-gray-500 w-full"
-                    />
-                    {searchQuery && (
-                        <button
-                            onClick={() => setSearchQuery('')}
-                            className="text-gray-500 hover:text-white transition-colors p-0.5 hover:bg-white/10 rounded"
-                        >
-                            <X size={12} />
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto py-2">
-
-                {mode === 'clusters' && (
-                    <div className="px-3">
-                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Clusters</h3>
-                        <div className="space-y-0.5">
-                            {filteredClusters.map(c => (
-                                <NavItem
-                                    key={c.name}
-                                    icon={<Server size={18} />}
-                                    label={c.name}
-                                    active={selectedCluster === c.name}
-                                    isLoading={connectionStatus === 'connecting' && attemptedCluster === c.name}
-                                    loadingText="Logging in..."
-                                    onClick={() => {
-                                        if (onSelectCluster) {
-                                            setSearchQuery(''); // Clear search on select
-                                            onSelectCluster(c.name);
-                                        }
-                                    }}
-                                    onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, c.name)}
-                                />
-                            ))}
-                            {filteredClusters.length === 0 && (
-                                <div className="px-3 py-2 text-sm text-gray-500 italic">No clusters found</div>
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {mode === 'resources' && (
-                    <>
-                        {/* Top Level Items */}
-                        <div className="px-3 mb-2">
-                            {/* Back / Cluster Info */}
-                            {selectedCluster && (
-                                <div className="mb-4">
-                                    <div
-                                        onClick={onBack}
-                                        className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer group mb-1 px-2"
-                                    >
-                                        <ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" />
-                                        <span className="text-xs font-medium uppercase tracking-wider">Back to Clusters</span>
-                                    </div>
-                                    <div className="px-2 flex items-center gap-2 text-white font-bold text-lg truncate">
-                                        <Server size={16} className="text-blue-400" />
-                                        <span className="truncate flex-1">{selectedCluster}</span>
-                                        {isEks && (
-                                            <span className="px-1.5 py-0.5 text-[0.65rem] bg-[#FF9900]/10 text-[#FF9900] border border-[#FF9900]/20 rounded font-medium tracking-wide">
-                                                EKS
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            {(!searchQuery || filterMatches('Overview')) && (
-                                <>
-                                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Cluster</h3>
-                                    <NavItem
-                                        icon={<LayoutGrid size={18} />}
-                                        label="Overview"
-                                        active={activeView === 'overview'}
-                                        onClick={() => onSelectView('overview')}
-                                    />
-                                </>
-                            )}
-                            {(!searchQuery || filterMatches('Nodes')) && (
-                                <NavItem
-                                    icon={<Server size={18} />}
-                                    label="Nodes"
-                                    active={activeView === 'nodes'}
-                                    onClick={() => onSelectView('nodes')}
-                                />
-                            )}
-                            {(!searchQuery || filterMatches('Namespaces')) && (
-                                <NavItem
-                                    icon={<Layers size={18} />}
-                                    label="Namespaces"
-                                    active={activeView === 'namespaces'}
-                                    onClick={() => onSelectView('namespaces')}
-                                />
-                            )}
-                        </div>
-
-                        {/* Standard Groups */}
-                        {STANDARD_MENU.map(group => {
-                            const filteredItems = group.items.filter(item => filterMatches(item.label));
-                            if (searchQuery && filteredItems.length === 0) return null;
-
-                            return (
-                                <SidebarGroup
-                                    key={group.id}
-                                    title={group.title}
-                                    isOpen={openGroups[group.id]}
-                                    onToggle={() => toggleGroup(group.id)}
-                                >
-                                    {(searchQuery ? filteredItems : group.items).map(item => (
-                                        <NavItem
-                                            key={item.view}
-                                            icon={item.icon}
-                                            label={item.label}
-                                            active={activeView === item.view}
-                                            onClick={() => onSelectView(item.view)}
-                                            comingSoon={item.comingSoon}
-                                        />
-                                    ))}
-                                </SidebarGroup>
-                            );
-                        })}
-
-                        {/* Custom Resources Group */}
-                        {(hasCrdMatches || (!searchQuery)) && (
-                            <SidebarGroup
-                                title="Custom Resources"
-                                isOpen={openGroups['crd']}
-                                onToggle={() => toggleGroup('crd')}
+        <>
+            <div className="w-64 h-full bg-transparent flex flex-col">
+                <div className="p-4 border-b border-white/5">
+                    <div className="bg-white/5 rounded px-3 py-1.5 flex items-center gap-2 border border-white/10 focus-within:border-blue-500/50 focus-within:bg-blue-500/5 transition-colors">
+                        <Search size={14} className="text-gray-400" />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Search..."
+                            className="bg-transparent border-none outline-none text-sm text-gray-200 placeholder-gray-500 w-full"
+                        />
+                        {searchQuery && (
+                            <button
+                                onClick={() => setSearchQuery('')}
+                                className="text-gray-500 hover:text-white transition-colors p-0.5 hover:bg-white/10 rounded"
                             >
-                                {loadingCrds && (
-                                    <div className="px-3 py-2 text-xs text-gray-500 italic flex items-center gap-2">
-                                        <div className="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
-                                        Loading definitions...
+                                <X size={12} />
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto py-2 pb-4">
+
+                    {mode === 'clusters' && (
+                        <div className="px-3">
+                            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Clusters</h3>
+                            <div className="space-y-0.5">
+                                {filteredClusters.map(c => (
+                                    <NavItem
+                                        key={c.name}
+                                        icon={<Server size={18} />}
+                                        label={c.name}
+                                        active={selectedCluster === c.name}
+                                        isLoading={connectionStatus === 'connecting' && attemptedCluster === c.name}
+                                        loadingText="Logging in..."
+                                        onClick={() => {
+                                            if (onSelectCluster) {
+                                                setSearchQuery(''); // Clear search on select
+                                                onSelectCluster(c.name);
+                                            }
+                                        }}
+                                        onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, c.name)}
+                                    />
+                                ))}
+                                {filteredClusters.length === 0 && (
+                                    <div className="px-3 py-2 text-sm text-gray-500 italic">No clusters found</div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'resources' && (
+                        <>
+                            {/* Top Level Items */}
+                            <div className="px-3 mb-2">
+                                {/* Back / Cluster Info */}
+                                {selectedCluster && (
+                                    <div className="mb-4">
+                                        <div
+                                            onClick={onBack}
+                                            className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer group mb-1 px-2"
+                                        >
+                                            <ChevronLeft size={14} className="group-hover:-translate-x-0.5 transition-transform" />
+                                            <span className="text-xs font-medium uppercase tracking-wider">Back to Clusters</span>
+                                        </div>
+                                        <div className="px-2 flex items-center gap-2 text-white font-bold text-lg truncate">
+                                            <Server size={16} className="text-blue-400" />
+                                            <span className="truncate flex-1">{selectedCluster}</span>
+                                            {isEks && (
+                                                <span className="px-1.5 py-0.5 text-[0.65rem] bg-[#FF9900]/10 text-[#FF9900] border border-[#FF9900]/20 rounded font-medium tracking-wide">
+                                                    EKS
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
 
-                                {!loadingCrds && (
+                                {(!searchQuery || filterMatches('Overview')) && (
                                     <>
-                                        {/* Definitions View */}
-                                        {(!searchQuery || filterMatches('Definitions')) && (
-                                            <NavItem
-                                                icon={<Puzzle size={16} />}
-                                                label="Definitions"
-                                                active={activeView === 'crd-definitions'}
-                                                onClick={() => onSelectView('crd-definitions')}
-                                            />
-                                        )}
-
-                                        {/* Grouped CRDs */}
-                                        {Object.entries(filteredCrds.reduce((acc: any, crd: any) => {
-                                            const group = crd.group || 'Other';
-                                            if (!acc[group]) acc[group] = [];
-                                            acc[group].push(crd);
-                                            return acc;
-                                        }, {})).sort(([a], [b]) => a.localeCompare(b)).map(([group, groupCrds]: [string, any]) => {
-                                            const isExpanded = expandedApiGroups[group] || searchQuery.length > 0; // Auto expand on search
-
-                                            // Calculate if the group itself matches or if children match
-                                            // Since we already filtered 'filteredCrds', we know 'groupCrds' contains matches.
-                                            // The group name itself might match, or children.
-
-                                            return (
-                                                <div key={group} className="mt-2">
-                                                    <div
-                                                        className="px-3 py-1 flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase cursor-pointer hover:text-gray-300 transition-colors select-none group/item"
-                                                        onClick={() => toggleApiGroup(group)}
-                                                    >
-                                                        <div className="shrink-0 flex items-center justify-center">
-                                                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                                        </div>
-                                                        <Tooltip
-                                                            content={group}
-                                                            placement="top"
-                                                            delay={400}
-                                                            className="min-w-0 flex-1 truncate block"
-                                                        >
-                                                            <span className="truncate block">{group}</span>
-                                                        </Tooltip>
-                                                    </div>
-
-                                                    {isExpanded && (
-                                                        <div className="pl-2 border-l border-[#333] ml-3 mt-1 space-y-0.5">
-                                                            {groupCrds.map((crd: any) => (
-                                                                <NavItem
-                                                                    key={crd.name}
-                                                                    icon={<Box size={14} />}
-                                                                    label={crd.kind}
-                                                                    active={activeView === `crd/${crd.group}/${crd.versions[0]}/${crd.plural}`}
-                                                                    onClick={() => onSelectView(`crd/${crd.group}/${crd.versions[0]}/${crd.plural}`)}
-                                                                />
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Cluster</h3>
+                                        <NavItem
+                                            icon={<LayoutGrid size={18} />}
+                                            label="Overview"
+                                            active={activeView === 'overview'}
+                                            onClick={() => onSelectView('overview')}
+                                        />
                                     </>
                                 )}
-                            </SidebarGroup>
-                        )}
-                    </>
-                )}
+                                {(!searchQuery || filterMatches('Nodes')) && (
+                                    <NavItem
+                                        icon={<Server size={18} />}
+                                        label="Nodes"
+                                        active={activeView === 'nodes'}
+                                        onClick={() => onSelectView('nodes')}
+                                    />
+                                )}
+                                {(!searchQuery || filterMatches('Namespaces')) && (
+                                    <NavItem
+                                        icon={<Layers size={18} />}
+                                        label="Namespaces"
+                                        active={activeView === 'namespaces'}
+                                        onClick={() => onSelectView('namespaces')}
+                                    />
+                                )}
+                            </div>
 
-                {mode === 'settings' && (
-                    <div className="px-3">
-                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Settings</h3>
-                        <div className="space-y-0.5">
-                            {(!searchQuery || filterMatches('AI Models')) && (
-                                <NavItem
-                                    icon={<Box size={18} />}
-                                    label="AI Models"
-                                    active={true}
-                                    onClick={() => { }}
-                                />
+                            {/* Standard Groups */}
+                            {STANDARD_MENU.map(group => {
+                                const filteredItems = group.items.filter(item => filterMatches(item.label));
+                                if (searchQuery && filteredItems.length === 0) return null;
+
+                                return (
+                                    <SidebarGroup
+                                        key={group.id}
+                                        title={group.title}
+                                        isOpen={openGroups[group.id]}
+                                        onToggle={() => toggleGroup(group.id)}
+                                    >
+                                        {(searchQuery ? filteredItems : group.items).map(item => (
+                                            <NavItem
+                                                key={item.view}
+                                                icon={item.icon}
+                                                label={item.label}
+                                                active={activeView === item.view}
+                                                onClick={() => onSelectView(item.view)}
+                                                comingSoon={item.comingSoon}
+                                            />
+                                        ))}
+                                    </SidebarGroup>
+                                );
+                            })}
+
+                            {/* Custom Resources Group */}
+                            {(hasCrdMatches || (!searchQuery)) && (
+                                <SidebarGroup
+                                    title="Custom Resources"
+                                    isOpen={openGroups['crd']}
+                                    onToggle={() => toggleGroup('crd')}
+                                >
+                                    {loadingCrds && (
+                                        <div className="px-3 py-2 text-xs text-gray-500 italic flex items-center gap-2">
+                                            <div className="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></div>
+                                            Loading definitions...
+                                        </div>
+                                    )}
+
+                                    {!loadingCrds && (
+                                        <>
+                                            {/* Definitions View */}
+                                            {(!searchQuery || filterMatches('Definitions')) && (
+                                                <NavItem
+                                                    icon={<Puzzle size={16} />}
+                                                    label="Definitions"
+                                                    active={activeView === 'crd-definitions'}
+                                                    onClick={() => onSelectView('crd-definitions')}
+                                                />
+                                            )}
+
+                                            {/* Grouped CRDs */}
+                                            {Object.entries(filteredCrds.reduce((acc: any, crd: any) => {
+                                                const group = crd.group || 'Other';
+                                                if (!acc[group]) acc[group] = [];
+                                                acc[group].push(crd);
+                                                return acc;
+                                            }, {})).sort(([a], [b]) => a.localeCompare(b)).map(([group, groupCrds]: [string, any]) => {
+                                                const isExpanded = expandedApiGroups[group] || searchQuery.length > 0; // Auto expand on search
+
+                                                // Calculate if the group itself matches or if children match
+                                                // Since we already filtered 'filteredCrds', we know 'groupCrds' contains matches.
+                                                // The group name itself might match, or children.
+
+                                                return (
+                                                    <div key={group} className="mt-2">
+                                                        <div
+                                                            className="px-3 py-1 flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase cursor-pointer hover:text-gray-300 transition-colors select-none group/item"
+                                                            onClick={() => toggleApiGroup(group)}
+                                                        >
+                                                            <div className="shrink-0 flex items-center justify-center">
+                                                                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                                            </div>
+                                                            <Tooltip
+                                                                content={group}
+                                                                placement="top"
+                                                                delay={400}
+                                                                className="min-w-0 flex-1 truncate block"
+                                                            >
+                                                                <span className="truncate block">{group}</span>
+                                                            </Tooltip>
+                                                        </div>
+
+                                                        {isExpanded && (
+                                                            <div className="pl-2 border-l border-[#333] ml-3 mt-1 space-y-0.5">
+                                                                {groupCrds.map((crd: any) => (
+                                                                    <NavItem
+                                                                        key={crd.name}
+                                                                        icon={<Box size={14} />}
+                                                                        label={crd.kind}
+                                                                        active={activeView === `crd/${crd.group}/${crd.versions[0]}/${crd.plural}`}
+                                                                        onClick={() => onSelectView(`crd/${crd.group}/${crd.versions[0]}/${crd.plural}`)}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </>
+                                    )}
+                                </SidebarGroup>
                             )}
+                        </>
+                    )}
+
+                    {mode === 'settings' && (
+                        <div className="px-3">
+                            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Settings</h3>
+                            <div className="space-y-0.5">
+                                {(!searchQuery || filterMatches('AI Models')) && (
+                                    <NavItem
+                                        icon={<Box size={18} />}
+                                        label="AI Models"
+                                        active={true}
+                                        onClick={() => { }}
+                                    />
+                                )}
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
+                </div>
+
+
             </div>
 
-
-            {/* Context Menu */}
+            {/* Context Menu - Rendered via portal to prevent clipping */}
             {
-                contextMenu && (
+                contextMenu && ReactDOM.createPortal(
                     <div
-                        className="fixed z-50 bg-[#1e1e1e] border border-white/10 rounded-md shadow-xl py-1 min-w-[140px]"
-                        style={{ top: contextMenu.y, left: contextMenu.x }}
+                        className="fixed z-[9999] bg-[#1e1e1e] border border-white/10 rounded-md shadow-xl py-1 min-w-[140px]"
+                        style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
                     >
                         <button
                             className="w-full text-left px-3 py-1.5 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
@@ -545,9 +568,11 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                             <Pin size={14} className={pinnedClusters.includes(contextMenu.cluster) ? "fill-current" : ""} />
                             {pinnedClusters.includes(contextMenu.cluster) ? "Unpin Cluster" : "Pin Cluster"}
                         </button>
-                    </div>
-                )}
-        </div>
+                    </div>,
+                    document.body
+                )
+            }
+        </>
     );
 };
 

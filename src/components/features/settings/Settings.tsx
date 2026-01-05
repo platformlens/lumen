@@ -1,12 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { Settings as SettingsIcon, Check, Shield } from 'lucide-react';
 import { GlassButton } from '../../shared/GlassButton';
+import { ToggleGroup } from '../../shared/ToggleGroup';
 import packageJson from '../../../../package.json';
 import logoUrl from '../../../assets/logo.png';
 
 export const Settings: React.FC = () => {
-  const [selectedProvider, setSelectedProvider] = useState<string>('google');
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
+  const [selectedProvider, setSelectedProvider] = useState<string>(() =>
+    window.k8s.getProviderSync()
+  );
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return window.k8s.getModelSync();
+  });
 
   // Google State
   const [inputKey, setInputKey] = useState('');
@@ -44,10 +49,6 @@ export const Settings: React.FC = () => {
   const [forceManualAws, setForceManualAws] = useState(false);
 
   useEffect(() => {
-    const savedModel = localStorage.getItem('k8ptain_model');
-    const savedProvider = localStorage.getItem('k8ptain_provider');
-    if (savedModel) setSelectedModel(savedModel);
-    if (savedProvider) setSelectedProvider(savedProvider);
 
     // Load persisted API Key for Gemini
     window.k8s.getApiKey().then(key => {
@@ -79,6 +80,7 @@ export const Settings: React.FC = () => {
 
 
   // Fetch models whenever savedKey changes (and is present)
+  // Fetch models whenever savedKey changes (and is present)
   useEffect(() => {
     if (savedKey) {
       window.k8s.listModels('google').then(models => {
@@ -87,8 +89,8 @@ export const Settings: React.FC = () => {
         } else {
           // Fallback
           setGoogleModels([
-            { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash Exp' },
             { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
+            { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash Exp' },
             { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
           ]);
         }
@@ -142,8 +144,14 @@ export const Settings: React.FC = () => {
   const handleModelChange = (modelId: string, provider: string) => {
     setSelectedModel(modelId);
     setSelectedProvider(provider);
-    localStorage.setItem('k8ptain_model', modelId);
-    localStorage.setItem('k8ptain_provider', provider);
+
+    // Save to electron-store via IPC for persistence
+    window.k8s.saveModelSelection(provider, modelId);
+
+    // Dispatch custom event to notify other components
+    window.dispatchEvent(new CustomEvent('aiModelChanged', {
+      detail: { provider, model: modelId }
+    }));
   };
 
   const getMaskedKey = (key: string) => {
@@ -185,25 +193,19 @@ export const Settings: React.FC = () => {
 
           {/* AI Provider & Key Section */}
           <section>
-            <div className="flex items-center gap-4 mb-4">
+            <div className="flex items-center justify-between gap-4 mb-4">
               <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                 <div className="w-1 h-6 bg-blue-500 rounded-full"></div>
                 AI Provider Configuration
               </h3>
-              <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
-                <button
-                  onClick={() => setSelectedProvider('google')}
-                  className={`px-4 py-1.5 rounded-md text-sm transition-all ${selectedProvider === 'google' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                >
-                  Google Gemini
-                </button>
-                <button
-                  onClick={() => setSelectedProvider('bedrock')}
-                  className={`px-4 py-1.5 rounded-md text-sm transition-all ${selectedProvider === 'bedrock' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                >
-                  AWS Bedrock
-                </button>
-              </div>
+              <ToggleGroup
+                options={[
+                  { value: 'google', label: 'Google Gemini' },
+                  { value: 'bedrock', label: 'AWS Bedrock' }
+                ]}
+                value={selectedProvider}
+                onChange={(provider) => handleModelChange(selectedModel, provider)}
+              />
             </div>
 
             {selectedProvider === 'google' ? (

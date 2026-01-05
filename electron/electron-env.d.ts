@@ -164,5 +164,8 @@ interface Window {
     getPinnedClusters: () => Promise<string[]>
     addPinnedCluster: (clusterName: string) => Promise<string[]>
     removePinnedCluster: (clusterName: string) => Promise<string[]>
+    getModelSync: () => string
+    getProviderSync: () => 'google' | 'bedrock'
+    saveModelSelection: (provider: string, model: string) => Promise<boolean>
   }
 }
