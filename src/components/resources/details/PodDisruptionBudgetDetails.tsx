@@ -3,9 +3,9 @@ import { Calendar, Tag, Code, Shield, AlertCircle, CheckCircle, XCircle, Target 
 
 interface PodDisruptionBudgetDetailsProps {
     podDisruptionBudget: any;
-    onExplain: () => void;
-    isExplaining: boolean;
-    explanation: string | null;
+    onExplain?: () => void;
+    isExplaining?: boolean;
+    explanation?: string | null;
 }
 
 export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProps> = ({
@@ -48,56 +48,57 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setShowRaw(!showRaw)}
-                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${
-                                showRaw 
-                                    ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent' 
+                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showRaw
+                                    ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent'
                                     : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent'
-                            } hover:shadow-lg hover:scale-105 active:scale-95`}
+                                } hover:shadow-lg hover:scale-105 active:scale-95`}
                         >
                             <Code size={10} /> {showRaw ? 'Hide' : 'Show'} Raw
                         </button>
-                        <button
-                            onClick={onExplain}
-                            disabled={isExplaining}
-                            className={`
-                                flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
-                                transition-all duration-300 border
-                                ${isExplaining 
-                                    ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait' 
-                                    : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
-                                }
-                            `}
-                        >
-                            {isExplaining ? (
-                                <>
-                                    <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                    Analyzing...
-                                </>
-                            ) : (
-                                <>
-                                    <span className="text-xs">✨</span> Explain
-                                </>
-                            )}
-                        </button>
+                        {onExplain && (
+                            <button
+                                onClick={onExplain}
+                                disabled={isExplaining}
+                                className={`
+                                    flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
+                                    transition-all duration-300 border
+                                    ${isExplaining
+                                        ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait'
+                                        : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
+                                    }
+                                `}
+                            >
+                                {isExplaining ? (
+                                    <>
+                                        <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Analyzing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="text-xs">✨</span> Explain
+                                    </>
+                                )}
+                            </button>
+                        )}
                     </div>
                 </div>
-                
+
                 <div className="bg-white/5 rounded-md p-4 border border-white/10 space-y-2">
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">Name</span>
                         <span className="col-span-2 text-white font-mono">{metadata.name}</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">Namespace</span>
                         <span className="col-span-2 text-white font-mono">{metadata.namespace}</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">UID</span>
                         <span className="col-span-2 text-gray-500 font-mono text-xs">{metadata.uid}</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">Created</span>
                         <span className="col-span-2 text-white">{new Date(metadata.creationTimestamp).toLocaleString()}</span>
@@ -154,7 +155,7 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                     <Shield className="text-blue-400" size={20} />
                     <h3 className="text-lg font-semibold text-white">Disruption Budget</h3>
                 </div>
-                
+
                 <div className="space-y-4">
                     {/* Budget Constraints */}
                     <div className="grid grid-cols-2 gap-4">
@@ -216,7 +217,7 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                         <AlertCircle className="text-yellow-400" size={20} />
                         <h3 className="text-lg font-semibold text-white">Current Status</h3>
                     </div>
-                    
+
                     <div className="space-y-4">
                         {/* Pod Health Stats */}
                         <div className="grid grid-cols-2 gap-4">
@@ -245,13 +246,12 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                                 <div className="space-y-2">
                                     {status.conditions.map((condition: any, index: number) => (
                                         <div key={index} className="flex items-start gap-3 p-2 bg-black/20 rounded">
-                                            <div className={`mt-0.5 ${
-                                                condition.status === 'True' 
-                                                    ? 'text-green-400' 
-                                                    : condition.status === 'False' 
-                                                    ? 'text-red-400' 
-                                                    : 'text-yellow-400'
-                                            }`}>
+                                            <div className={`mt-0.5 ${condition.status === 'True'
+                                                    ? 'text-green-400'
+                                                    : condition.status === 'False'
+                                                        ? 'text-red-400'
+                                                        : 'text-yellow-400'
+                                                }`}>
                                                 {condition.status === 'True' ? (
                                                     <CheckCircle size={16} />
                                                 ) : condition.status === 'False' ? (
@@ -263,13 +263,12 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                                             <div className="flex-1">
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-sm font-medium text-white">{condition.type}</span>
-                                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                                        condition.status === 'True' 
+                                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${condition.status === 'True'
                                                             ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                                                             : condition.status === 'False'
-                                                            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                                                            : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
-                                                    }`}>
+                                                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                                                : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                                        }`}>
                                                         {condition.status}
                                                     </span>
                                                 </div>

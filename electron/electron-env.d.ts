@@ -153,5 +153,11 @@ interface Window {
     getAwsCreds: () => Promise<any>
     listModels: (provider: string) => Promise<Array<{ id: string; name: string }>>
     checkAwsAuth: () => Promise<{ isManaged: boolean; isAuthenticated: boolean; error?: string }>
+
+    // --- AI History ---
+    getHistory: () => Promise<Array<any>>
+    saveHistoryItem: (item: any) => Promise<boolean>
+    deleteHistoryItem: (id: string) => Promise<boolean>
+    clearHistory: () => Promise<boolean>
   }
 }

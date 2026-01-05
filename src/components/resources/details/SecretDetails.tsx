@@ -3,9 +3,9 @@ import { Eye, EyeOff, Copy, Check, Lock, Shield, FileText, Calendar, Key } from 
 
 interface SecretDetailsProps {
     secret: any;
-    explanation: string | null;
-    onExplain: () => void;
-    isExplaining: boolean;
+    explanation?: string | null;
+    onExplain?: () => void;
+    isExplaining?: boolean;
 }
 
 interface DecodedCert {
@@ -100,29 +100,32 @@ export const SecretDetails: React.FC<SecretDetailsProps> = ({
                     </div>
                 </div>
                 {/* AI Explain Button */}
-                <button
-                    onClick={onExplain}
-                    disabled={isExplaining}
-                    className={`
-                        flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium
-                        transition-all duration-300 border
-                        ${isExplaining
-                            ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait'
-                            : 'bg-gradient-to-r from-blue-600/10 to-purple-600/10 hover:from-blue-600/20 hover:to-purple-600/20 text-blue-400 border-blue-500/20 hover:border-blue-500/30'
-                        }
-                    `}
-                >
-                    {isExplaining ? (
-                        <>
-                            <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                            Analyzing...
-                        </>
-                    ) : (
-                        <>
-                            <span className="text-sm">✨</span> Explain
-                        </>
-                    )}
-                </button>
+                {/* AI Explain Button */}
+                {onExplain && (
+                    <button
+                        onClick={onExplain}
+                        disabled={isExplaining}
+                        className={`
+                            flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium
+                            transition-all duration-300 border
+                            ${isExplaining
+                                ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait'
+                                : 'bg-gradient-to-r from-blue-600/10 to-purple-600/10 hover:from-blue-600/20 hover:to-purple-600/20 text-blue-400 border-blue-500/20 hover:border-blue-500/30'
+                            }
+                        `}
+                    >
+                        {isExplaining ? (
+                            <>
+                                <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                Analyzing...
+                            </>
+                        ) : (
+                            <>
+                                <span className="text-sm">✨</span> Explain
+                            </>
+                        )}
+                    </button>
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-6">

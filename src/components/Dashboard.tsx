@@ -31,9 +31,11 @@ interface DashboardProps {
     onOpenLogs: (pod: any, containerName: string) => void;
     onNavigate?: (view: string) => void;
     onOpenYaml?: (deployment: any) => void;
+    onExplain?: (resource: any) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml }) => {
+
+export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain }) => {
     const [namespaces, setNamespaces] = useState<string[]>([]);
     const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(['all']);
 
@@ -89,8 +91,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [detailedResource, setDetailedResource] = useState<any>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     // AI State
-    const [explanation, setExplanation] = useState<string | null>(null);
-    const [isExplaining, setIsExplaining] = useState(false);
+
     const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
     const [drawerTab, setDrawerTab] = useState<'details' | 'topology'>('details');
     const [podViewMode, setPodViewMode] = useState<'list' | 'visual'>('list');
@@ -175,11 +176,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
 
 
-    // Clear explanation when resource changes
-    useEffect(() => {
-        setExplanation(null);
-        setIsExplaining(false);
-    }, [selectedResource?.type, selectedResource?.namespace, selectedResource?.name]);
+
 
 
     // Load Namespaces
@@ -568,61 +565,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     };
 
-    const cleanupStreamRef = React.useRef<(() => void) | null>(null);
-
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (cleanupStreamRef.current) {
-                cleanupStreamRef.current();
-            }
-        }
-    }, []);
-
     const handleExplain = async (resource: any = null) => {
         const target = resource || detailedResource;
         if (!target) return;
 
-        // Cleanup previous stream listener if any
-        if (cleanupStreamRef.current) {
-            cleanupStreamRef.current();
-            cleanupStreamRef.current = null;
+        if (onExplain) {
+            onExplain(target);
         }
+    };
 
-        setIsExplaining(true);
-        setExplanation(''); // Reset for streaming start
 
-        try {
-            const model = localStorage.getItem('k8ptain_model') || 'gemini-2.5-flash';
-            const provider = localStorage.getItem('k8ptain_provider') || 'google';
-
-            console.log(`Starting explanation stream with model=${model}, provider=${provider}`);
-
-            // streamExplainResource returns an unsubscribe function if we wanted to cancel
-            cleanupStreamRef.current = window.k8s.streamExplainResource(
-                target,
-                { model, provider },
-                (chunk) => {
-                    setExplanation(prev => (prev || '') + chunk);
-                },
-                () => {
-                    setIsExplaining(false);
-                    console.log('Explanation stream done');
-                    cleanupStreamRef.current = null; // Clear ref when done
-                },
-                (err) => {
-                    console.error("AI Stream Error:", err);
-                    setExplanation(prev => (prev || '') + `\n\nError generating explanation: ${err}`);
-                    setIsExplaining(false);
-                    cleanupStreamRef.current = null;
-                }
-            );
-        } catch (e) {
-            setExplanation("Failed to start explanation stream.");
-            console.error(e);
-            setIsExplaining(false);
-        }
-    }
 
     const handleNavigate = async (kind: string, name: string) => {
         console.log('handleNavigate called with:', kind, name);
@@ -1492,8 +1444,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                 <DrawerDetailsRenderer
                                     selectedResource={selectedResource}
                                     detailedResource={detailedResource}
-                                    explanation={explanation}
-                                    isExplaining={isExplaining}
                                     clusterName={clusterName}
                                     onExplain={handleExplain}
                                     onNavigate={handleNavigate}

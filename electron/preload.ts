@@ -188,6 +188,12 @@ contextBridge.exposeInMainWorld('k8s', {
   listModels: (provider: string) => ipcRenderer.invoke('ai:listModels', provider),
   checkAwsAuth: () => ipcRenderer.invoke('ai:checkAwsAuth'),
 
+  // --- AI History ---
+  getHistory: () => ipcRenderer.invoke('ai:getHistory'),
+  saveHistoryItem: (item: any) => ipcRenderer.invoke('ai:saveHistoryItem', item),
+  deleteHistoryItem: (id: string) => ipcRenderer.invoke('ai:deleteHistoryItem', id),
+  clearHistory: () => ipcRenderer.invoke('ai:clearHistory'),
+
 
   // --- Terminal ---
   terminal: {

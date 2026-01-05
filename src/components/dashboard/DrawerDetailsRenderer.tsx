@@ -23,8 +23,6 @@ import { SecretDetails } from '../resources/details/SecretDetails';
 interface DrawerDetailsRendererProps {
     selectedResource: any;
     detailedResource: any;
-    explanation: string | null;
-    isExplaining: boolean;
     clusterName: string;
     onExplain: (resource: any) => void;
     onNavigate: (kind: string, name: string) => void;
@@ -35,8 +33,6 @@ interface DrawerDetailsRendererProps {
 export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
     selectedResource,
     detailedResource,
-    explanation,
-    isExplaining,
     clusterName,
     onExplain,
     onNavigate,
@@ -52,9 +48,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <DeploymentDetails
                     deployment={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -63,9 +59,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <ReplicaSetDetails
                     replicaSet={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onNavigate={onNavigate}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
@@ -75,9 +71,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <DaemonSetDetails
                     daemonSet={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -86,9 +82,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <StatefulSetDetails
                     statefulSet={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -97,9 +93,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <JobDetails
                     job={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -108,9 +104,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <CronJobDetails
                     cronJob={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -120,9 +116,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                 <ServiceDetails
                     resource={detailedResource}
                     clusterName={clusterName}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onShowTopology={onShowTopology}
                 />
             );
@@ -130,10 +126,10 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <PodDetails
                     pod={detailedResource}
-                    explanation={explanation}
+
                     onOpenLogs={(container) => onOpenLogs(detailedResource, container)}
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                     onNavigate={onNavigate}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
@@ -153,16 +149,16 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <NamespaceDetails
                     namespace={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         case 'crd-definition':
             return (
                 <CrdDetails
                     crd={detailedResource}
-                    explanation={explanation}
+
                 />
             );
         case 'custom-resource':
@@ -170,9 +166,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                 return (
                     <NodePoolDetails
                         nodePool={detailedResource}
-                        explanation={explanation}
+
                         onExplain={handleExplain}
-                        isExplaining={isExplaining}
+
                     />
                 );
 
@@ -181,9 +177,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         case 'endpointslice':
@@ -198,18 +194,18 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         case 'secret':
             return (
                 <SecretDetails
                     secret={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         case 'horizontalpodautoscaler':
@@ -219,27 +215,27 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         case 'poddisruptionbudget':
             return (
                 <PodDisruptionBudgetDetails
                     podDisruptionBudget={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         case 'priorityclass':
             return (
                 <PriorityClassDetails
                     priorityClass={detailedResource}
-                    explanation={explanation}
+
                     onExplain={handleExplain}
-                    isExplaining={isExplaining}
+
                 />
             );
         default:

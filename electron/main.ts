@@ -700,6 +700,42 @@ function registerIpcHandlers() {
     const store = new Store();
     return (store.get('awsCreds') as any) || {};
   });
+
+  // --- AI History ---
+  ipcMain.handle('ai:getHistory', async () => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    return (store.get('aiHistory') as any[]) || [];
+  });
+
+  ipcMain.handle('ai:saveHistoryItem', async (_, item) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const history: any[] = (store.get('aiHistory') as any[]) || [];
+    // Enforce limit of 50
+    history.unshift(item);
+    if (history.length > 50) {
+      history.splice(50);
+    }
+    store.set('aiHistory', history);
+    return true;
+  });
+
+  ipcMain.handle('ai:deleteHistoryItem', async (_, id) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    let history: any[] = (store.get('aiHistory') as any[]) || [];
+    history = history.filter(h => h.id !== id);
+    store.set('aiHistory', history);
+    return true;
+  });
+
+  ipcMain.handle('ai:clearHistory', async () => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    store.set('aiHistory', []);
+    return true;
+  });
 }
 
 // ... helper for AI

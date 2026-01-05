@@ -59,7 +59,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-40"
+            className="absolute inset-0 bg-black/50 z-40"
           />
 
           {/* Drawer */}
@@ -69,8 +69,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed top-4 right-4 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-2xl overflow-hidden"
-            style={{ height: 'calc(100vh - 2rem - 24px)' }}
+            className="absolute top-2 right-2 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-2xl overflow-hidden bottom-4"
           >
             {/* Header */}
             <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5">

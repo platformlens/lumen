@@ -3,9 +3,9 @@ import { Calendar, Tag, Code, Star, Shield, AlertCircle } from 'lucide-react';
 
 interface PriorityClassDetailsProps {
     priorityClass: any;
-    onExplain: () => void;
-    isExplaining: boolean;
-    explanation: string | null;
+    onExplain?: () => void;
+    isExplaining?: boolean;
+    explanation?: string | null;
 }
 
 export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
@@ -48,51 +48,52 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setShowRaw(!showRaw)}
-                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${
-                                showRaw 
-                                    ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent' 
+                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showRaw
+                                    ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent'
                                     : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent'
-                            } hover:shadow-lg hover:scale-105 active:scale-95`}
+                                } hover:shadow-lg hover:scale-105 active:scale-95`}
                         >
                             <Code size={10} /> {showRaw ? 'Hide' : 'Show'} Raw
                         </button>
-                        <button
-                            onClick={onExplain}
-                            disabled={isExplaining}
-                            className={`
-                                flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
-                                transition-all duration-300 border
-                                ${isExplaining 
-                                    ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait' 
-                                    : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
-                                }
-                            `}
-                        >
-                            {isExplaining ? (
-                                <>
-                                    <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                    Analyzing...
-                                </>
-                            ) : (
-                                <>
-                                    <span className="text-xs">✨</span> Explain
-                                </>
-                            )}
-                        </button>
+                        {onExplain && (
+                            <button
+                                onClick={onExplain}
+                                disabled={isExplaining}
+                                className={`
+                                    flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
+                                    transition-all duration-300 border
+                                    ${isExplaining
+                                        ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait'
+                                        : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
+                                    }
+                                `}
+                            >
+                                {isExplaining ? (
+                                    <>
+                                        <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Analyzing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="text-xs">✨</span> Explain
+                                    </>
+                                )}
+                            </button>
+                        )}
                     </div>
                 </div>
-                
+
                 <div className="bg-white/5 rounded-md p-4 border border-white/10 space-y-2">
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">Name</span>
                         <span className="col-span-2 text-white font-mono">{metadata.name}</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">UID</span>
                         <span className="col-span-2 text-gray-500 font-mono text-xs">{metadata.uid}</span>
                     </div>
-                    
+
                     <div className="grid grid-cols-3 gap-4">
                         <span className="text-gray-400">Created</span>
                         <span className="col-span-2 text-white">{new Date(metadata.creationTimestamp).toLocaleString()}</span>
@@ -149,7 +150,7 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                     <Star className="text-yellow-400" size={20} />
                     <h3 className="text-lg font-semibold text-white">Priority Configuration</h3>
                 </div>
-                
+
                 <div className="space-y-4">
                     {/* Priority Value */}
                     <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/20 rounded-lg p-4">
@@ -172,20 +173,19 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                             <p className="text-sm font-medium text-white">Preemption Policy</p>
                         </div>
                         <div className="flex items-center gap-2">
-                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                                preemptionPolicy === 'PreemptLowerPriority' 
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${preemptionPolicy === 'PreemptLowerPriority'
                                     ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                                     : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-                            }`}>
+                                }`}>
                                 {preemptionPolicy || 'PreemptLowerPriority'}
                             </span>
                         </div>
                         <p className="text-xs text-gray-400 mt-2">
-                            {preemptionPolicy === 'PreemptLowerPriority' 
+                            {preemptionPolicy === 'PreemptLowerPriority'
                                 ? 'Pods of this priority class can preempt lower-priority pods.'
                                 : preemptionPolicy === 'Never'
-                                ? 'Pods of this priority class will never cause preemption.'
-                                : 'Defines whether pods can preempt lower-priority pods.'}
+                                    ? 'Pods of this priority class will never cause preemption.'
+                                    : 'Defines whether pods can preempt lower-priority pods.'}
                         </p>
                     </div>
 
@@ -196,16 +196,15 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                             <p className="text-sm font-medium text-white">Global Default</p>
                         </div>
                         <div className="flex items-center gap-2">
-                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                                globalDefault 
+                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${globalDefault
                                     ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                                     : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-                            }`}>
+                                }`}>
                                 {globalDefault ? 'Yes' : 'No'}
                             </span>
                         </div>
                         <p className="text-xs text-gray-400 mt-2">
-                            {globalDefault 
+                            {globalDefault
                                 ? 'This priority class is used for pods that do not specify a priority class.'
                                 : 'Pods must explicitly reference this priority class to use it.'}
                         </p>
