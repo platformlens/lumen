@@ -109,7 +109,7 @@ declare global {
             scaleDeployment: (contextName: string, namespace: string, name: string, replicas: number) => Promise<void>;
             getDeploymentYaml: (contextName: string, namespace: string, name: string) => Promise<string>;
             updateDeploymentYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => Promise<any>;
-            startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number) => Promise<{ id: string, localPort: number }>;
+            startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number, resourceType?: 'service' | 'pod') => Promise<{ id: string, localPort: number }>;
             stopAllPortForwards: () => Promise<void>;
             stopPortForward: (id: string) => Promise<void>;
             getActivePortForwards: () => Promise<any[]>;
@@ -119,6 +119,9 @@ declare global {
             watchPods: (contextName: string, namespaces?: string[]) => void;
             stopWatchPods: () => void;
             onPodChange: (callback: (type: string, pod: any) => void) => () => void;
+            watchDeployments: (contextName: string, namespaces?: string[]) => void;
+            stopWatchDeployments: () => void;
+            onDeploymentChange: (callback: (type: string, deployment: any) => void) => () => void;
             streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => void;
             stopStreamPodLogs: (namespace: string, name: string, containerName: string) => Promise<void>;
             onPodLogChunk: (callback: (streamId: string, chunk: string) => void) => () => void;

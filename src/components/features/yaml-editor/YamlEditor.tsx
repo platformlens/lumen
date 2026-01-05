@@ -9,7 +9,7 @@ interface YamlEditorProps {
     onSave: (newContent: string) => Promise<void>;
 }
 
-export const YamlEditor: React.FC<YamlEditorProps> = ({ initialYaml, onSave }) => {
+export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, onSave }) => {
     const [yaml, setYaml] = useState(initialYaml);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -221,4 +221,4 @@ export const YamlEditor: React.FC<YamlEditorProps> = ({ initialYaml, onSave }) =
             )}
         </div>
     );
-};
+});

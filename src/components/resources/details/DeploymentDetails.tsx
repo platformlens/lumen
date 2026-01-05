@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Box, Activity, Tag, List } from 'lucide-react';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
+import { ContainerResources } from './ContainerResources';
 
 interface DeploymentDetailsProps {
     deployment: any;
@@ -205,6 +206,7 @@ export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment
                                         </div>
                                     </div>
                                 )}
+                                <ContainerResources container={c} />
                             </div>
                         ))}
                     </div>

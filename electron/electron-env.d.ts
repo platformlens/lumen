@@ -113,7 +113,7 @@ interface Window {
     getCRD: (contextName: string, name: string) => Promise<any>
     listCustomObjects: (contextName: string, group: string, version: string, plural: string, namespace?: string) => Promise<any[]>
     getCustomObjects: (contextName: string, group: string, version: string, plural: string) => Promise<any[]>
-    startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number) => Promise<{ id: string, localPort: number }>
+    startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number, resourceType?: 'service' | 'pod') => Promise<{ id: string, localPort: number }>
     stopPortForward: (id: string) => Promise<boolean>
     stopAllPortForwards: () => Promise<boolean>
     getActivePortForwards: () => Promise<Array<{ id: string, namespace: string, serviceName: string, inputPort: string | number, targetPort: number, localPort: number }>>
@@ -121,6 +121,9 @@ interface Window {
     watchPods: (contextName: string, namespaces: string[]) => void
     stopWatchPods: () => void
     onPodChange: (callback: (type: string, pod: any) => void) => (() => void)
+    watchDeployments: (contextName: string, namespaces: string[]) => void
+    stopWatchDeployments: () => void
+    onDeploymentChange: (callback: (type: string, deployment: any) => void) => (() => void)
     streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => void
     stopStreamPodLogs: (namespace: string, name: string, containerName: string) => Promise<void>
     onPodLogChunk: (callback: (streamId: string, chunk: string) => void) => (() => void)

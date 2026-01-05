@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DeploymentsView } from './dashboard/views/DeploymentsView';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Activity,
@@ -170,39 +171,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         });
     };
 
-    const getDeploymentStatus = (dep: any) => {
-        const conditions = dep.status?.conditions || [];
 
-        // Check for specific failure states first
-        const replicaFailure = conditions.find((c: any) => c.type === 'ReplicaFailure' && c.status === 'True');
-        if (replicaFailure) return { status: 'Failed', color: 'red' };
 
-        const progressing = conditions.find((c: any) => c.type === 'Progressing');
-        if (progressing && progressing.status === 'False') return { status: 'Stalled', color: 'red' };
 
-        // If it's progressing but not yet available (rolling update in progress)
-        if (progressing && progressing.status === 'True' && dep.status?.updatedReplicas < dep.spec?.replicas) {
-            return { status: 'Updating', color: 'blue' };
-        }
-
-        // Available check
-        const available = conditions.find((c: any) => c.type === 'Available' && c.status === 'True');
-        if (available) return { status: 'Active', color: 'green' };
-
-        return { status: 'Pending', color: 'yellow' };
-    };
-
-    // Deployment Watcher (1s interval when on deployments view)
-    useEffect(() => {
-        if (activeView === 'deployments' && clusterName) {
-            console.log('Starting Deployment Watcher (5000ms)');
-            const interval = setInterval(async () => {
-                const newDeployments = await window.k8s.getDeployments(clusterName, selectedNamespaces);
-                setDeployments(newDeployments);
-            }, 1000);
-            return () => clearInterval(interval);
-        }
-    }, [activeView, clusterName, selectedNamespaces]);
 
     // Clear explanation when resource changes
     useEffect(() => {
@@ -349,9 +320,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             if (activeView === 'nodes') {
                 promises.push(window.k8s.getNodes(clusterName).then(setNodes));
             }
-            if (activeView === 'deployments') {
-                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
-            }
+
             if (activeView === 'pods') {
                 promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
                 promises.push(window.k8s.getNodes(clusterName).then(setNodes));
@@ -888,30 +857,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
                     {/* DEPLOYMENTS TABLE */}
                     {/* DEPLOYMENTS TABLE */}
+                    {/* DEPLOYMENTS TABLE */}
                     {(activeView === 'deployments') && (
-                        <GenericResourceView
-                            viewKey="deployments"
-                            description="Manage your application deployments and scaling strategies."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Replicas', dataKey: 'replicas', width: 100, flexGrow: 0, cellRenderer: (_, dep) => <span className="text-gray-400">{dep.availableReplicas || 0} / {dep.replicas || 0}</span> },
-                                {
-                                    label: 'Status', dataKey: 'status', width: 120, flexGrow: 0, cellRenderer: (_, dep) => {
-                                        const { status, color } = getDeploymentStatus(dep);
-                                        return (
-                                            <span className={`px-2 py-0.5 rounded text-xs font-medium bg-${color}-500/10 text-${color}-400 border border-${color}-500/20`}>
-                                                {status}
-                                            </span>
-                                        );
-                                    }
-                                }
-                            ]}
-                            data={getSortedData(deployments)}
-                            onRowClick={(dep: any) => handleResourceClick(dep, 'deployment')}
-                            sortConfig={sortConfig}
-                            onSort={handleSort}
+                        <DeploymentsView
+                            clusterName={clusterName}
+                            selectedNamespaces={selectedNamespaces}
                             searchQuery={searchQuery}
+                            onRowClick={(dep) => handleResourceClick(dep, 'deployment')}
                         />
                     )}
 
@@ -926,6 +878,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             onSort={handleSort}
                             onRowClick={(pod: any) => handleResourceClick(pod, 'pod')}
                             searchQuery={searchQuery}
+                            isLoading={loading}
                         />
                     )}
 

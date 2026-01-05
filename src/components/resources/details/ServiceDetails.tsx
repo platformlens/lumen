@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Network, Square } from 'lucide-react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { PortForwardModal } from '../../shared/PortForwardModal';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
+import { PortForwardModal } from '../../shared/PortForwardModal';
+import { usePortForwarding } from '../../../hooks/usePortForwarding';
+import { PortActions } from '../../shared/PortActions';
 
 interface ServiceDetailsProps {
     resource: any;
@@ -14,80 +15,15 @@ interface ServiceDetailsProps {
 }
 
 export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, clusterName, explanation, onExplain, isExplaining, onShowTopology }) => {
-    const [selectedPort, setSelectedPort] = useState<{port: number, targetPort: any} | null>(null);
-    const [activeForwards, setActiveForwards] = useState<{[key: string]: {id: string, localPort: number, targetPort: number}}>({});
     const [showTopology, setShowTopology] = useState(false);
 
-    const fetchForwards = async () => {
-        try {
-            const forwards = await window.k8s.getActivePortForwards();
-            // Filter for this service
-            const myForwards = forwards.filter((f: any) => 
-                f.namespace === resource.metadata.namespace && 
-                f.serviceName === resource.metadata.name
-            );
-            
-            const myActive: {[key: string]: any} = {};
-            myForwards.forEach((f: any) => {
-                // Use inputPort if available (for exact match with what UI sent), otherwise fallback to targetPort
-                const key = f.inputPort !== undefined ? `${f.inputPort}` : `${f.targetPort}`;
-                myActive[key] = f;
-            });
-            setActiveForwards(myActive);
-        } catch (err) {
-            console.error("Failed to sync forwards", err);
-        }
-    };
-
-    // Sync active forwards on mount
-    useEffect(() => {
-        fetchForwards();
-    }, [resource.metadata.name, resource.metadata.namespace]);
-
-    const handleStartForward = async (localPort: number) => {
-        if (!clusterName) {
-            console.error("Cluster name missing");
-            return;
-        }
-        
-        const targetPort = selectedPort?.targetPort || selectedPort?.port;
-        
-        try {
-            const result = await window.k8s.startPortForward(
-                clusterName, 
-                resource.metadata.namespace, 
-                resource.metadata.name, 
-                targetPort, 
-                localPort
-            );
-            
-            // Auto open active browser
-            const url = `http://localhost:${result.localPort}`;
-            window.k8s.openExternal(url);
-            
-            // Refresh state from backend
-            await fetchForwards();
-            
-        } catch (err) {
-            console.error("Failed to start port forward", err);
-        } finally {
-            setSelectedPort(null);
-        }
-    };
-
-    const handleStopForward = async (targetPort: number) => {
-        const portKey = `${targetPort}`;
-        const forward = activeForwards[portKey];
-        if (!forward) return;
-
-        try {
-            await window.k8s.stopPortForward(forward.id);
-            // Refresh state from backend to ensure we are in sync
-            await fetchForwards();
-        } catch (err) {
-            console.error("Failed to stop", err);
-        }
-    }
+    const {
+        selectedPort,
+        setSelectedPort,
+        activeForwards,
+        handleStartForward,
+        handleStopForward
+    } = usePortForwarding(resource, 'Service', clusterName);
 
     if (!resource) return null;
 
@@ -114,39 +50,38 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
                         {onShowTopology && (
                             <button
                                 onClick={() => setShowTopology(!showTopology)}
-                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${
-                                    showTopology 
-                                        ? 'bg-pink-600/80 hover:bg-pink-500 text-white border-transparent' 
+                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showTopology
+                                        ? 'bg-pink-600/80 hover:bg-pink-500 text-white border-transparent'
                                         : 'bg-gradient-to-r from-purple-600/80 to-pink-600/80 hover:from-purple-500 hover:to-pink-500 text-white border-transparent'
-                                } hover:shadow-lg hover:scale-105 active:scale-95`}
+                                    } hover:shadow-lg hover:scale-105 active:scale-95`}
                             >
                                 <span className="text-xs">{showTopology ? '✖️' : '🔗'}</span> {showTopology ? 'Hide' : 'Display'} Topology
                             </button>
                         )}
                         {onExplain && (
-                        <button
-                            onClick={onExplain}
-                            disabled={isExplaining}
-                            className={`
+                            <button
+                                onClick={onExplain}
+                                disabled={isExplaining}
+                                className={`
                                 flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
                                 transition-all duration-300 border
-                                ${isExplaining 
-                                    ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait' 
-                                    : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
-                                }
+                                ${isExplaining
+                                        ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait'
+                                        : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
+                                    }
                             `}
-                        >
-                            {isExplaining ? (
-                                <>
-                                    <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                    Analyzing...
-                                </>
-                            ) : (
-                                <>
-                                    <span className="text-xs">✨</span> Explain
-                                </>
-                            )}
-                        </button>
+                            >
+                                {isExplaining ? (
+                                    <>
+                                        <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Analyzing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="text-xs">✨</span> Explain
+                                    </>
+                                )}
+                            </button>
                         )}
                     </div>
                 </div>
@@ -227,43 +162,24 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
                                 <div className="text-gray-300">{port.protocol}</div>
                                 <div className="font-mono text-yellow-400">{port.port}</div>
                                 <div className="font-mono text-blue-400">{targetPortVal}</div>
-                                <div className="flex justify-end items-center gap-2">
-                                    {active ? (
-                                        <div className="flex items-center gap-2">
-                                            <button 
-                                                onClick={() => window.k8s.openExternal(`http://localhost:${active.localPort}`)}
-                                                className="text-xs text-green-400 hover:text-green-300 underline font-mono truncate max-w-[100px]"
-                                            >
-                                                :{active.localPort}
-                                            </button>
-                                            <button 
-                                                onClick={() => handleStopForward(targetPortVal)}
-                                                className="p-1.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
-                                                title="Stop Forwarding"
-                                            >
-                                                <Square size={12} fill="currentColor" />
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <button 
-                                            onClick={() => setSelectedPort({ port: port.port, targetPort: targetPortVal })}
-                                            className="px-2 py-1 rounded bg-green-600/20 text-green-400 border border-green-600/30 hover:bg-green-600/30 text-xs flex items-center gap-1 transition-colors"
-                                        >
-                                            <Network size={12} /> Forward
-                                        </button>
-                                    )}
-                                </div>
+                                <PortActions
+                                    port={port}
+                                    targetPortVal={targetPortVal}
+                                    activeForward={active}
+                                    onForward={() => setSelectedPort({ port: port.port, targetPort: targetPortVal })}
+                                    onStop={() => handleStopForward(targetPortVal)}
+                                />
                             </div>
                         );
                     })}
-                     {(!resource.spec?.ports || resource.spec.ports.length === 0) && (
-                         <div className="p-4 text-center text-gray-500 text-sm col-span-5">No ports defined.</div>
+                    {(!resource.spec?.ports || resource.spec.ports.length === 0) && (
+                        <div className="p-4 text-center text-gray-500 text-sm col-span-5">No ports defined.</div>
                     )}
                 </div>
             </div>
 
             {/* Modal */}
-            <PortForwardModal 
+            <PortForwardModal
                 isOpen={!!selectedPort}
                 onClose={() => setSelectedPort(null)}
                 onStart={handleStartForward}

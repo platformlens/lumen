@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { VirtualizedTable, IColumn } from '../../shared/VirtualizedTable';
+import { SkeletonLoader } from '../../shared/SkeletonLoader';
 
 interface GenericResourceViewProps {
     title?: string; // Optional override, usually handled by header
@@ -12,6 +13,7 @@ interface GenericResourceViewProps {
     onSort?: (key: string) => void;
     viewKey?: string; // For motion key
     searchQuery?: string;
+    isLoading?: boolean;
 }
 
 export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
@@ -22,7 +24,8 @@ export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
     sortConfig,
     onSort,
     viewKey = "resource-view",
-    searchQuery = ''
+    searchQuery = '',
+    isLoading = false
 }) => {
     const pageVariants = {
         initial: { opacity: 0, y: 10 },
@@ -64,13 +67,17 @@ export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
                 </p>
             )}
             <div className="flex-1 min-h-0">
-                <VirtualizedTable
-                    columns={columns}
-                    data={filteredData}
-                    onRowClick={onRowClick}
-                    sortConfig={sortConfig}
-                    onSort={onSort}
-                />
+                {isLoading ? (
+                    <SkeletonLoader />
+                ) : (
+                    <VirtualizedTable
+                        columns={columns}
+                        data={filteredData}
+                        onRowClick={onRowClick}
+                        sortConfig={sortConfig}
+                        onSort={onSort}
+                    />
+                )}
             </div>
         </motion.div>
     );

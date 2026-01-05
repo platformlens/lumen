@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Box, Tag, List, Server, Network, Copy, Check, AlertCircle, ShieldAlert, Activity, Info, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Box, Tag, List, Server, Network, Copy, Check, AlertCircle, ShieldAlert, Info, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { ToggleGroup } from '../../shared/ToggleGroup';
+import { ContainerResources } from './ContainerResources';
+import { PortForwardModal } from '../../shared/PortForwardModal';
+import { usePortForwarding } from '../../../hooks/usePortForwarding';
+import { PortActions } from '../../shared/PortActions';
 
 interface PodDetailsProps {
     pod: any;
@@ -24,6 +28,14 @@ export const PodDetails: React.FC<PodDetailsProps> = ({ pod, explanation, onOpen
     const [page, setPage] = useState(1);
     const [showAllContainers, setShowAllContainers] = useState(false);
     const EVENTS_PER_PAGE = 10;
+
+    const {
+        selectedPort,
+        setSelectedPort,
+        activeForwards,
+        handleStartForward,
+        handleStopForward
+    } = usePortForwarding(pod, 'Pod', clusterName);
 
     useEffect(() => {
         let isMounted = true;
@@ -291,6 +303,7 @@ export const PodDetails: React.FC<PodDetailsProps> = ({ pod, explanation, onOpen
                                 <button
                                     onClick={() => onOpenLogs(c.name)}
                                     className="bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:border-blue-500/50 rounded px-3 py-1.5 flex items-center gap-1.5 transition-all duration-200 group shrink-0"
+                                    title="View Logs"
                                 >
                                     <Server size={14} />
                                     <span className="text-xs font-mono font-bold">LOGS</span>
@@ -302,13 +315,25 @@ export const PodDetails: React.FC<PodDetailsProps> = ({ pod, explanation, onOpen
                                 <div className="mb-4">
                                     <span className="text-gray-500 text-xs uppercase font-bold block mb-2">Exposed Ports</span>
                                     <div className="flex flex-wrap gap-2">
-                                        {c.ports.map((p: any) => (
-                                            <div key={p.containerPort} className="bg-white/10 text-gray-300 px-2 py-1 rounded text-xs font-mono flex items-center gap-1">
-                                                <Server size={12} className="text-gray-500" />
-                                                {p.containerPort}/{p.protocol}
-                                                {p.name && <span className="text-gray-500 ml-1">({p.name})</span>}
-                                            </div>
-                                        ))}
+                                        {c.ports.map((p: any) => {
+                                            const active = activeForwards[`${p.containerPort}`];
+                                            return (
+                                                <div key={p.containerPort} className="bg-white/10 text-gray-300 px-2 py-1 rounded text-xs font-mono flex items-center gap-2">
+                                                    <Server size={12} className="text-gray-500" />
+                                                    <span>{p.containerPort}/{p.protocol}</span>
+                                                    {p.name && <span className="text-gray-500">({p.name})</span>}
+                                                    <div className="ml-1 pl-2 border-l border-white/20">
+                                                        <PortActions
+                                                            port={p}
+                                                            targetPortVal={p.containerPort} // For pods, containerPort is the target
+                                                            activeForward={active}
+                                                            onForward={() => setSelectedPort({ port: p.containerPort, targetPort: p.containerPort })}
+                                                            onStop={() => handleStopForward(p.containerPort)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 </div>
                             )}
@@ -328,6 +353,9 @@ export const PodDetails: React.FC<PodDetailsProps> = ({ pod, explanation, onOpen
                                     </div>
                                 </div>
                             )}
+
+                            {/* Resources */}
+                            <ContainerResources container={c} />
 
                             {(() => {
                                 // Find status: check both initContainerStatuses and containerStatuses
@@ -450,6 +478,15 @@ export const PodDetails: React.FC<PodDetailsProps> = ({ pod, explanation, onOpen
                     </div>
                 )}
             </div>
+
+            {/* Modal */}
+            <PortForwardModal
+                isOpen={!!selectedPort}
+                onClose={() => setSelectedPort(null)}
+                onStart={handleStartForward}
+                serviceName={pod.metadata?.name}
+                targetPort={selectedPort?.port || 0}
+            />
         </div>
     );
 };

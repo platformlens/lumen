@@ -216,8 +216,8 @@ function registerIpcHandlers() {
 
 
 
-  ipcMain.handle('k8s:startPortForward', (_, contextName, namespace, serviceName, servicePort, localPort) => {
-    return k8sService.startPortForward(contextName, namespace, serviceName, servicePort, localPort);
+  ipcMain.handle('k8s:startPortForward', (_, contextName, namespace, serviceName, servicePort, localPort, resourceType) => {
+    return k8sService.startPortForward(contextName, namespace, serviceName, servicePort, localPort, resourceType);
   })
 
   ipcMain.handle('k8s:stopPortForward', (_, id) => {
@@ -289,6 +289,16 @@ function registerIpcHandlers() {
 
   ipcMain.on('k8s:stopWatchPods', () => {
     k8sService.stopPodWatch();
+  })
+
+  ipcMain.on('k8s:watchDeployments', (event, contextName, namespaces) => {
+    k8sService.startDeploymentWatch(contextName, namespaces, (type, deployment) => {
+      event.sender.send('k8s:deploymentChange', type, deployment);
+    });
+  })
+
+  ipcMain.on('k8s:stopWatchDeployments', () => {
+    k8sService.stopDeploymentWatch();
   })
 
   ipcMain.on('k8s:streamPodLogs', (event, contextName, namespace, name, containerName) => {

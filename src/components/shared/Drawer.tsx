@@ -1,6 +1,27 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X } from 'lucide-react';
+import { X, Copy, Check } from 'lucide-react';
+
+// Better approach: Encapsulate the Copy Button entirely
+const CopyButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="p-1.5 rounded-md hover:bg-white/10 text-gray-500 hover:text-white transition-colors"
+      title="Copy title"
+    >
+      {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
+    </button>
+  );
+};
 
 interface DrawerProps {
   isOpen: boolean;
@@ -16,16 +37,16 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
   // Close on click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-        if (drawerRef.current && !drawerRef.current.contains(event.target as Node)) {
-            onClose();
-        }
+      if (drawerRef.current && !drawerRef.current.contains(event.target as Node)) {
+        onClose();
+      }
     };
 
     if (isOpen) {
-        document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isOpen, onClose]);
 
@@ -40,7 +61,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 z-40"
           />
-          
+
           {/* Drawer */}
           <motion.div
             ref={drawerRef}
@@ -53,19 +74,22 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
           >
             {/* Header */}
             <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5">
-                <h2 className="text-xl font-bold text-white truncate flex-1 mr-4">{title}</h2>
-                
-                <div className="flex items-center gap-2 flex-shrink-0">
-                    {headerActions}
-                    <button onClick={onClose} className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white transition-colors ml-2">
-                        <X size={20} />
-                    </button>
-                </div>
+              <div className="flex items-center gap-2 flex-1 mr-4 overflow-hidden">
+                <h2 className="text-xl font-bold text-white truncate">{title}</h2>
+                <CopyButton text={title} />
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {headerActions}
+                <button onClick={onClose} className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white transition-colors ml-2">
+                  <X size={20} />
+                </button>
+              </div>
             </div>
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-6">
-                {children}
+              {children}
             </div>
           </motion.div>
         </>

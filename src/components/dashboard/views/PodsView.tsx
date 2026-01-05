@@ -4,6 +4,7 @@ import { VirtualizedTable, IColumn } from '../../shared/VirtualizedTable';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { PodVisualizer } from '../../resources/visualizers/PodVisualizer';
 import { ErrorBoundary } from '../../shared/ErrorBoundary';
+import { SkeletonLoader } from '../../shared/SkeletonLoader';
 
 interface PodsViewProps {
     viewMode: 'list' | 'visual';
@@ -14,6 +15,7 @@ interface PodsViewProps {
     onSort: (key: string) => void;
     onRowClick: (pod: any) => void;
     searchQuery?: string;
+    isLoading?: boolean;
 }
 
 export const PodsView: React.FC<PodsViewProps> = ({
@@ -24,7 +26,8 @@ export const PodsView: React.FC<PodsViewProps> = ({
     sortConfig,
     onSort,
     onRowClick,
-    searchQuery = ''
+    searchQuery = '',
+    isLoading = false
 }) => {
     const pageVariants = {
         initial: { opacity: 0, y: 10 },
@@ -49,20 +52,20 @@ export const PodsView: React.FC<PodsViewProps> = ({
         });
     }, [sortedPods, searchQuery]);
 
-    const columns: IColumn[] = [
+    const columns: IColumn[] = useMemo(() => [
         {
             label: 'Name',
             dataKey: 'name',
             sortable: true,
             flexGrow: 2,
-            cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span>
+            cellRenderer: (name: any) => <span className="font-medium text-gray-200">{name}</span>
         },
         {
             label: 'Namespace',
             dataKey: 'namespace',
             sortable: true,
             flexGrow: 1,
-            cellRenderer: (ns) => <span className="text-gray-400">{ns}</span>
+            cellRenderer: (ns: any) => <span className="text-gray-400">{ns}</span>
         },
         {
             label: 'Restarts',
@@ -70,7 +73,7 @@ export const PodsView: React.FC<PodsViewProps> = ({
             sortable: true,
             width: 100,
             flexGrow: 0,
-            cellRenderer: (restarts) => <span className="text-gray-400">{restarts}</span>
+            cellRenderer: (restarts: any) => <span className="text-gray-400">{restarts}</span>
         },
         {
             label: 'Status',
@@ -78,7 +81,7 @@ export const PodsView: React.FC<PodsViewProps> = ({
             sortable: true,
             width: 120,
             flexGrow: 0,
-            cellRenderer: (status) => (
+            cellRenderer: (status: any) => (
                 <span className={`px-2 py-0.5 rounded text-xs border ${status === 'Running' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
                     status === 'Pending' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
                         status === 'Succeeded' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
@@ -94,7 +97,7 @@ export const PodsView: React.FC<PodsViewProps> = ({
             dataKey: 'containers',
             width: 150,
             flexGrow: 0,
-            cellRenderer: (containers) => (
+            cellRenderer: (containers: any) => (
                 <div className="flex gap-1 items-center">
                     {containers?.map((c: any, idx: number) => {
                         let color = 'bg-gray-500';
@@ -121,9 +124,9 @@ export const PodsView: React.FC<PodsViewProps> = ({
             sortable: true,
             width: 120,
             flexGrow: 0,
-            cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span>
+            cellRenderer: (age: any) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span>
         }
-    ];
+    ], []);
 
     return (
         <motion.div
@@ -141,13 +144,17 @@ export const PodsView: React.FC<PodsViewProps> = ({
                         The smallest deployable units of computing that you can create and manage.
                     </p>
                     <div className="flex-1 min-h-0">
-                        <VirtualizedTable
-                            data={filteredPods}
-                            columns={columns}
-                            sortConfig={sortConfig}
-                            onSort={onSort}
-                            onRowClick={onRowClick}
-                        />
+                        {isLoading ? (
+                            <SkeletonLoader />
+                        ) : (
+                            <VirtualizedTable
+                                data={filteredPods}
+                                columns={columns}
+                                sortConfig={sortConfig}
+                                onSort={onSort}
+                                onRowClick={onRowClick}
+                            />
+                        )}
                     </div>
                 </>
             ) : (

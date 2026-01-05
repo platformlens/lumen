@@ -128,7 +128,7 @@ contextBridge.exposeInMainWorld('k8s', {
   getRuntimeClass: (contextName: string, name: string) => ipcRenderer.invoke('k8s:getRuntimeClass', contextName, name),
 
   // --- Port Forwarding ---
-  startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number) => ipcRenderer.invoke('k8s:startPortForward', contextName, namespace, serviceName, servicePort, localPort),
+  startPortForward: (contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number, resourceType?: 'service' | 'pod') => ipcRenderer.invoke('k8s:startPortForward', contextName, namespace, serviceName, servicePort, localPort, resourceType),
   stopPortForward: (id: string) => ipcRenderer.invoke('k8s:stopPortForward', id),
   stopAllPortForwards: () => ipcRenderer.invoke('k8s:stopAllPortForwards'),
   getActivePortForwards: () => ipcRenderer.invoke('k8s:getActivePortForwards'),
@@ -138,6 +138,13 @@ contextBridge.exposeInMainWorld('k8s', {
   deletePod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:deletePod', contextName, namespace, name),
   watchPods: (contextName: string, namespaces: string[]) => ipcRenderer.send('k8s:watchPods', contextName, namespaces),
   stopWatchPods: () => ipcRenderer.send('k8s:stopWatchPods'),
+  watchDeployments: (contextName: string, namespaces: string[]) => ipcRenderer.send('k8s:watchDeployments', contextName, namespaces),
+  stopWatchDeployments: () => ipcRenderer.send('k8s:stopWatchDeployments'),
+  onDeploymentChange: (callback: (type: string, deployment: any) => void) => {
+    const listener = (_: any, type: string, deployment: any) => callback(type, deployment);
+    ipcRenderer.on('k8s:deploymentChange', listener);
+    return () => ipcRenderer.off('k8s:deploymentChange', listener);
+  },
   onPodChange: (callback: (type: string, pod: any) => void) => {
     const listener = (_: any, type: string, pod: any) => callback(type, pod);
     ipcRenderer.on('k8s:podChange', listener);

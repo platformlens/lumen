@@ -6,7 +6,9 @@ import * as yaml from 'js-yaml';
 interface ActiveForward {
     id: string;
     namespace: string;
+    // serviceName represents the resource name (service or pod)
     serviceName: string;
+    resourceType: 'service' | 'pod';
     inputPort: string | number; // The port identifier passed by UI (e.g. 80 or "http")
     targetPort: number; // The resolved numeric port on the pod
     localPort: number;
@@ -45,82 +47,127 @@ export class K8sService {
             id: f.id,
             namespace: f.namespace,
             serviceName: f.serviceName,
+            resourceType: f.resourceType || 'service', // default for back-compat if any persisted, though we don't persist active forwards
             inputPort: f.inputPort,
             targetPort: f.targetPort,
             localPort: f.localPort
         }));
     }
 
-    async startPortForward(contextName: string, namespace: string, serviceName: string, servicePort: number, localPort: number) {
-        console.log(`[k8s] startPortForward for ${namespace}/${serviceName}:${servicePort} -> ${localPort}`);
+    async startPortForward(contextName: string, namespace: string, resourceName: string, port: number, localPort: number, resourceType: 'service' | 'pod' = 'service') {
+        console.log(`[k8s] startPortForward for ${resourceType} ${namespace}/${resourceName}:${port} -> ${localPort}`);
         this.kc.setCurrentContext(contextName);
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
         const forward = new PortForward(this.kc);
 
-        // 1. Find a pod for the service
-        // Get service first to get selector
-        let service;
-        try {
-            const res = await k8sApi.readNamespacedService({ name: serviceName, namespace });
-            service = (res as any).body ? (res as any).body : res;
-        } catch (e) {
-            // fallback
-            const res = await (k8sApi as any).readNamespacedService(serviceName, namespace);
-            service = (res as any).body ? (res as any).body : res;
-        }
-
-        if (!service || !service.spec || !service.spec.selector) {
-            throw new Error(`Service ${serviceName} has no selector or does not exist.`);
-        }
-
-        // List pods matching selector
-        const labelSelector = Object.entries(service.spec.selector).map(([k, v]) => `${k}=${v}`).join(',');
-        const podsRes = await k8sApi.listNamespacedPod({ namespace, labelSelector });
-        const pods = (podsRes as any).body ? (podsRes as any).body.items : podsRes.items;
-
-        const targetPod = pods.find((p: any) => p.status.phase === 'Running');
-        if (!targetPod) {
-            throw new Error(`No running pods found for service ${serviceName}`);
-        }
-
-        const podName = targetPod.metadata.name;
-
-        // Resolve Target Port if it is a name
+        let podName = '';
         let targetPortNum: number;
+        // Check if port is physically a string or number, even if typed as number (IPC args)
+        const inputPort = port as unknown as (string | number);
 
-        // Check if servicePort is physically a string or number, even if typed as number (IPC args)
-        const inputPort = servicePort as unknown as (string | number);
+        if (resourceType === 'pod') {
+            // Direct pod forwarding
+            podName = resourceName;
 
-        if (typeof inputPort === 'number') {
-            targetPortNum = inputPort;
-        } else {
-            // It's a string, try to parse it as int just in case "80" was passed
-            const parsed = parseInt(inputPort, 10);
-            if (!isNaN(parsed) && parsed.toString() === inputPort.toString()) {
-                targetPortNum = parsed;
+            // For pods, we must verify the pod exists and resolve the port if it's named
+            const podRes = await k8sApi.readNamespacedPod({ name: podName, namespace });
+            const targetPod = (podRes as any).body ? (podRes as any).body : podRes;
+
+            if (!targetPod) {
+                throw new Error(`Pod ${podName} not found`);
+            }
+
+            if (typeof inputPort === 'number') {
+                targetPortNum = inputPort;
             } else {
-                // It's a named port, we must resolve it from the pod spec
-                console.log(`[k8s] Resolving named port '${inputPort}' for pod ${podName}`);
-                let foundPort = -1;
-
-                // Iterate over containers to find the port by name
-                if (targetPod.spec && targetPod.spec.containers) {
-                    for (const container of targetPod.spec.containers) {
-                        if (container.ports) {
-                            const match = container.ports.find((p: any) => p.name === inputPort);
-                            if (match) {
-                                foundPort = match.containerPort;
-                                break;
+                const parsed = parseInt(inputPort, 10);
+                if (!isNaN(parsed) && parsed.toString() === inputPort.toString()) {
+                    targetPortNum = parsed;
+                } else {
+                    // Resolve named port on Pod
+                    console.log(`[k8s] Resolving named port '${inputPort}' for pod ${podName}`);
+                    let foundPort = -1;
+                    if (targetPod.spec && targetPod.spec.containers) {
+                        for (const container of targetPod.spec.containers) {
+                            if (container.ports) {
+                                const match = container.ports.find((p: any) => p.name === inputPort);
+                                if (match) {
+                                    foundPort = match.containerPort;
+                                    break;
+                                }
                             }
                         }
                     }
+                    if (foundPort === -1) {
+                        throw new Error(`Could not resolve named port '${inputPort}' to a numeric port in pod ${podName}`);
+                    }
+                    targetPortNum = foundPort;
                 }
+            }
 
-                if (foundPort === -1) {
-                    throw new Error(`Could not resolve named port '${inputPort}' to a numeric port in pod ${podName}`);
+        } else {
+            // Service forwarding (old logic)
+            // 1. Find a pod for the service
+            const serviceName = resourceName;
+
+            let service;
+            try {
+                const res = await k8sApi.readNamespacedService({ name: serviceName, namespace });
+                service = (res as any).body ? (res as any).body : res;
+            } catch (e) {
+                // fallback
+                const res = await (k8sApi as any).readNamespacedService(serviceName, namespace);
+                service = (res as any).body ? (res as any).body : res;
+            }
+
+            if (!service || !service.spec || !service.spec.selector) {
+                throw new Error(`Service ${serviceName} has no selector or does not exist.`);
+            }
+
+            // List pods matching selector
+            const labelSelector = Object.entries(service.spec.selector).map(([k, v]) => `${k}=${v}`).join(',');
+            const podsRes = await k8sApi.listNamespacedPod({ namespace, labelSelector });
+            const pods = (podsRes as any).body ? (podsRes as any).body.items : podsRes.items;
+
+            const targetPod = pods.find((p: any) => p.status.phase === 'Running');
+            if (!targetPod) {
+                throw new Error(`No running pods found for service ${serviceName}`);
+            }
+
+            podName = targetPod.metadata.name;
+
+            // Resolve Target Port if it is a name
+            if (typeof inputPort === 'number') {
+                targetPortNum = inputPort;
+            } else {
+                // It's a string, try to parse it as int just in case "80" was passed
+                const parsed = parseInt(inputPort, 10);
+                if (!isNaN(parsed) && parsed.toString() === inputPort.toString()) {
+                    targetPortNum = parsed;
+                } else {
+                    // It's a named port, we must resolve it from the pod spec
+                    console.log(`[k8s] Resolving named port '${inputPort}' for pod ${podName}`);
+                    let foundPort = -1;
+
+                    // Iterate over containers to find the port by name
+                    if (targetPod.spec && targetPod.spec.containers) {
+                        for (const container of targetPod.spec.containers) {
+                            if (container.ports) {
+                                const match = container.ports.find((p: any) => p.name === inputPort);
+                                if (match) {
+                                    foundPort = match.containerPort;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (foundPort === -1) {
+                        throw new Error(`Could not resolve named port '${inputPort}' to a numeric port in pod ${podName}`);
+                    }
+                    targetPortNum = foundPort;
+                    console.log(`[k8s] Resolved '${inputPort}' to ${targetPortNum}`);
                 }
-                targetPortNum = foundPort;
-                console.log(`[k8s] Resolved '${inputPort}' to ${targetPortNum}`);
             }
         }
 
@@ -142,12 +189,13 @@ export class K8sService {
             server.listen(localPort, '127.0.0.1', () => {
                 const address = server.address() as net.AddressInfo;
                 const actualLocalPort = address.port;
-                const id = `${namespace}-${serviceName}-${actualLocalPort}`;
+                const id = `${namespace}-${resourceName}-${actualLocalPort}`;
 
                 this.activeForwards.set(id, {
                     id,
                     namespace,
-                    serviceName,
+                    serviceName: resourceName,
+                    resourceType,
                     inputPort,
                     targetPort: targetPortNum,
                     localPort: actualLocalPort,
@@ -499,7 +547,66 @@ export class K8sService {
             if (req && req.abort) req.abort(); // Check if req has abort
             this.activeWatchers.delete('pods');
         }
+
     }
+
+    async startDeploymentWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, deployment: any) => void) {
+        this.stopDeploymentWatch();
+
+        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
+        console.log(`[k8s] Starting watch for deployments in ${activeWatchersKey(namespaces)}`);
+        this.kc.setCurrentContext(contextName);
+        const watch = new Watch(this.kc);
+
+        const path = (namespaces.length === 0 || namespaces.includes('all'))
+            ? '/apis/apps/v1/deployments'
+            : `/apis/apps/v1/namespaces/${namespaces[0]}/deployments`;
+
+        try {
+            const req = await watch.watch(
+                path,
+                {},
+                (type, apiObj, _watchObj) => {
+                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
+                        if (!apiObj || !apiObj.metadata) return;
+
+                        const dep = {
+                            name: apiObj.metadata?.name,
+                            namespace: apiObj.metadata?.namespace,
+                            replicas: apiObj.spec?.replicas,
+                            availableReplicas: apiObj.status?.availableReplicas,
+                            status: apiObj.status,
+                            metadata: apiObj.metadata,
+                            spec: apiObj.spec
+                        };
+                        onEvent(type, dep);
+                    }
+                },
+                (err) => {
+                    // Ignore abort errors as they are expected when stopping the watch
+                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
+                        console.log('[k8s] Deployment watch aborted (expected)');
+                        return;
+                    }
+                    if (err) console.error('Deployment Watch exited with error', err);
+                }
+            );
+
+            this.activeWatchers.set('deployments', req);
+        } catch (err) {
+            console.error('[k8s] Failed to start deployment watch:', err);
+        }
+    }
+
+    stopDeploymentWatch() {
+        if (this.activeWatchers.has('deployments')) {
+            console.log('[k8s] Stopping deployment watch');
+            const req = this.activeWatchers.get('deployments');
+            if (req && req.abort) req.abort();
+            this.activeWatchers.delete('deployments');
+        }
+    }
+
 
     async getReplicaSets(contextName: string, namespaces: string[] = []) {
         this.kc.setCurrentContext(contextName);
