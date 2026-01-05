@@ -568,9 +568,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     };
 
+    const cleanupStreamRef = React.useRef<(() => void) | null>(null);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (cleanupStreamRef.current) {
+                cleanupStreamRef.current();
+            }
+        }
+    }, []);
+
     const handleExplain = async (resource: any = null) => {
         const target = resource || detailedResource;
         if (!target) return;
+
+        // Cleanup previous stream listener if any
+        if (cleanupStreamRef.current) {
+            cleanupStreamRef.current();
+            cleanupStreamRef.current = null;
+        }
 
         setIsExplaining(true);
         setExplanation(''); // Reset for streaming start
@@ -582,7 +599,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             console.log(`Starting explanation stream with model=${model}, provider=${provider}`);
 
             // streamExplainResource returns an unsubscribe function if we wanted to cancel
-            window.k8s.streamExplainResource(
+            cleanupStreamRef.current = window.k8s.streamExplainResource(
                 target,
                 { model, provider },
                 (chunk) => {
@@ -591,11 +608,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 () => {
                     setIsExplaining(false);
                     console.log('Explanation stream done');
+                    cleanupStreamRef.current = null; // Clear ref when done
                 },
                 (err) => {
                     console.error("AI Stream Error:", err);
                     setExplanation(prev => (prev || '') + `\n\nError generating explanation: ${err}`);
                     setIsExplaining(false);
+                    cleanupStreamRef.current = null;
                 }
             );
         } catch (e) {

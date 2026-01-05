@@ -139,6 +139,11 @@ contextBridge.exposeInMainWorld('k8s', {
     const doneListener = () => onDone();
     const errorListener = (_: any, err: any) => onError(err);
 
+    // Prevent duplicate listeners by removing previous ones
+    ipcRenderer.removeAllListeners('ai:explainResourceStream:chunk');
+    ipcRenderer.removeAllListeners('ai:explainResourceStream:done');
+    ipcRenderer.removeAllListeners('ai:explainResourceStream:error');
+
     ipcRenderer.on('ai:explainResourceStream:chunk', chunkListener);
     ipcRenderer.on('ai:explainResourceStream:done', doneListener);
     ipcRenderer.on('ai:explainResourceStream:error', errorListener);

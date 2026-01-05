@@ -400,23 +400,87 @@ function registerIpcHandlers() {
           client.send(new ListInferenceProfilesCommand({}))
         ]);
 
-        const foundationModels = (foundationRes.modelSummaries || [])
-          .filter(m => m.providerName === 'Anthropic')
-          .map(m => ({
-            id: m.modelId,
-            name: m.modelName,
-            provider: m.providerName
-          }));
+        // Helper to normalize and prettify names
+        const cleanModelName = (name: string) => {
+          let cleaned = name
+            .replace(/^us\.anthropic\./, '')
+            .replace(/^eu\.anthropic\./, '')
+            .replace(/^apac\.anthropic\./, '')
+            .replace(/^anthropic\./, '')
+            .replace(/^US Anthropic\s+/i, '')
+            .replace(/^Global Anthropic\s+/i, '');
 
-        const inferenceProfiles = (profilesRes.inferenceProfileSummaries || [])
-          .filter(p => p.type === 'SYSTEM_DEFINED' && (p.inferenceProfileName?.includes('Anthropic') || p.description?.includes('Anthropic')))
-          .map(p => ({
-            id: p.inferenceProfileId,
-            name: `[Profile] ${p.inferenceProfileName}`,
-            provider: 'Anthropic'
-          }));
+          // Replace hyphens with spaces
+          cleaned = cleaned.replace(/-/g, ' ');
 
-        return [...inferenceProfiles, ...foundationModels];
+          // Capitalize known terms
+          cleaned = cleaned
+            .replace(/\bclaude\b/i, 'Claude')
+            .replace(/\bsonnet\b/i, 'Sonnet')
+            .replace(/\bhaiku\b/i, 'Haiku')
+            .replace(/\bopus\b/i, 'Opus')
+            .replace(/\binstant\b/i, 'Instant');
+
+          return cleaned.trim();
+        };
+
+        const allModels = [];
+        const seenCoreIds = new Set<string>();
+
+        // 1. Process System Profiles (Prioritize US)
+        const profiles = (profilesRes.inferenceProfileSummaries || [])
+          .filter(p => p.type === 'SYSTEM_DEFINED' && (p.inferenceProfileName?.includes('Anthropic') || p.description?.includes('Anthropic')));
+
+        // Sort: US first, then others
+        profiles.sort((a, b) => {
+          const aName = a.inferenceProfileName || '';
+          const bName = b.inferenceProfileName || '';
+          const aUS = aName.startsWith('us.') || aName.startsWith('US');
+          const bUS = bName.startsWith('us.') || bName.startsWith('US');
+          if (aUS && !bUS) return -1;
+          if (!aUS && bUS) return 1;
+          return 0;
+        });
+
+        for (const p of profiles) {
+          const rawName = p.inferenceProfileName || '';
+          const id = p.inferenceProfileId;
+          if (!id) continue;
+
+          const name = cleanModelName(rawName);
+          const prettyName = name.replace(/(\d+)\s+(\d+)/, '$1.$2');
+
+          if (!seenCoreIds.has(prettyName)) {
+            seenCoreIds.add(prettyName);
+            allModels.push({
+              id: id,
+              name: prettyName,
+              provider: 'Anthropic'
+            });
+          }
+        }
+
+        // 2. Process Foundation Models (Backfill)
+        const foundation = (foundationRes.modelSummaries || [])
+          .filter(m => m.providerName === 'Anthropic');
+
+        for (const m of foundation) {
+          const rawName = m.modelName || m.modelId || '';
+          const id = m.modelId;
+          const name = cleanModelName(rawName);
+          const prettyName = name.replace(/(\d+)\s+(\d+)/, '$1.$2');
+
+          if (!seenCoreIds.has(prettyName)) {
+            seenCoreIds.add(prettyName);
+            allModels.push({
+              id: id,
+              name: prettyName,
+              provider: 'Anthropic'
+            });
+          }
+        }
+
+        return allModels;
       } catch (err) {
         console.error('Error listing Bedrock models:', err);
         return [];
