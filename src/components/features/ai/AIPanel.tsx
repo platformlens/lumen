@@ -45,6 +45,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     const [history, setHistory] = useState<AIHistoryItem[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [localChat, setLocalChat] = useState<{ role: 'user' | 'ai', content: string }[]>([]);
+    const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
 
     // Ref for auto-scrolling
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -63,6 +64,28 @@ export const AIPanel: React.FC<AIPanelProps> = ({
             loadHistory();
         }
     }, [isOpen]);
+
+    // Reset chat when context changes
+    useEffect(() => {
+        if (resourceContext) {
+            // Only reset if it's a different resource than what we might have had?
+            // Since we don't track "previousContext", we assume any change here implies new selection.
+            // But we must be careful not to reset if it's the SAME object ref but we need to check values.
+            // To be safe, just clearing localChat is fine because when we select a resource, we expect a fresh start usually.
+            // However, we must NOT clear if we are in the middle of streaming for THIS resource.
+            // The isStreaming check in the other effect handles the "prompt" insertion.
+            setLocalChat([]);
+            setActiveTab('chat');
+            setSelectedHistoryId(null);
+        }
+    }, [resourceContext?.name, resourceContext?.namespace, resourceContext?.type]);
+
+    // Reload history when streaming finishes
+    useEffect(() => {
+        if (!isStreaming && isOpen) {
+            loadHistory();
+        }
+    }, [isStreaming, isOpen]);
 
     // Update local chat when streaming explanation comes in
     useEffect(() => {
@@ -112,6 +135,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
             { role: 'ai', content: item.response }
         ]);
         setActiveTab('chat');
+        setSelectedHistoryId(item.id);
     };
 
     const handleDeleteHistory = async (e: React.MouseEvent, id: string) => {
@@ -250,33 +274,48 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                             {history.length === 0 ? (
                                 <div className="text-center py-8 text-gray-600 text-sm">No history yet</div>
                             ) : (
-                                history.map(item => (
-                                    <div
-                                        key={item.id}
-                                        onClick={() => handleSelectHistory(item)}
-                                        className="group p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-transparent hover:border-white/10 transition-all cursor-pointer relative"
-                                    >
-                                        <div className="flex justify-between items-start mb-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-xs font-medium text-blue-400">{item.resourceType || 'Resource'}</span>
-                                                <span className="text-[10px] text-gray-500">• {new Date(item.timestamp).toLocaleDateString()}</span>
+                                history.map((item, index) => {
+                                    const isCurrent = selectedHistoryId
+                                        ? item.id === selectedHistoryId
+                                        : (resourceContext && item.resourceName === resourceContext.name && item.resourceType === resourceContext.type && history.findIndex(h => h.resourceName === resourceContext.name && h.resourceType === resourceContext.type) === index);
+
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            onClick={() => handleSelectHistory(item)}
+                                            className={`group p-3 rounded-xl transition-all cursor-pointer relative border ${isCurrent
+                                                ? 'bg-blue-500/10 border-blue-500/50'
+                                                : 'bg-white/5 hover:bg-white/10 border-transparent hover:border-white/10'
+                                                }`}
+                                        >
+                                            <div className="flex justify-between items-start mb-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-medium text-blue-400">{item.resourceType || 'Resource'}</span>
+                                                    {isCurrent && (
+                                                        <span className="flex items-center gap-1 bg-blue-500/20 text-blue-300 text-[9px] px-1.5 py-0.5 rounded-full font-medium">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                                                            Current
+                                                        </span>
+                                                    )}
+                                                    <span className="text-[10px] text-gray-500">• {new Date(item.timestamp).toLocaleDateString()}</span>
+                                                </div>
+                                                <button
+                                                    onClick={(e) => handleDeleteHistory(e, item.id)}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition-all"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
                                             </div>
-                                            <button
-                                                onClick={(e) => handleDeleteHistory(e, item.id)}
-                                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition-all"
-                                            >
-                                                <Trash2 className="w-3 h-3" />
-                                            </button>
+                                            <div className="text-sm text-gray-300 line-clamp-2 font-medium mb-0.5">
+                                                {item.resourceName || 'Unknown Resource'}
+                                            </div>
+                                            <div className="text-xs text-gray-500 line-clamp-1">
+                                                {item.response}
+                                            </div>
+                                            <ChevronRight className="w-3 h-3 text-gray-600 absolute right-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                                         </div>
-                                        <div className="text-sm text-gray-300 line-clamp-2 font-medium mb-0.5">
-                                            {item.resourceName || 'Unknown Resource'}
-                                        </div>
-                                        <div className="text-xs text-gray-500 line-clamp-1">
-                                            {item.response}
-                                        </div>
-                                        <ChevronRight className="w-3 h-3 text-gray-600 absolute right-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                    </div>
-                                ))
+                                    );
+                                })
                             )}
                         </div>
                     </div>

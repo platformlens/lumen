@@ -298,8 +298,34 @@ function registerIpcHandlers() {
         prompt: prompt,
       });
 
+      let fullResponse = '';
       for await (const textPart of result.textStream) {
+        fullResponse += textPart;
         event.sender.send('ai:explainResourceStream:chunk', textPart);
+      }
+
+      // Save to History
+      try {
+        const { default: Store } = await import('electron-store');
+        const store = new Store();
+        const history: any[] = (store.get('aiHistory') as any[]) || [];
+
+        const historyItem = {
+          id: Math.random().toString(36).substr(2, 9),
+          timestamp: Date.now(),
+          prompt: `Explain ${resource.kind || resource.type} ${resource.metadata?.name || resource.name}`,
+          response: fullResponse,
+          resourceName: resource.metadata?.name || resource.name,
+          resourceType: resource.kind || resource.type,
+          model: model,
+          provider: provider
+        };
+
+        history.unshift(historyItem);
+        if (history.length > 50) history.splice(50);
+        store.set('aiHistory', history);
+      } catch (saveErr) {
+        console.error("Failed to save AI history:", saveErr);
       }
 
       event.sender.send('ai:explainResourceStream:done');
