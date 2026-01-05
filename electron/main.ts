@@ -531,8 +531,12 @@ app.on('activate', () => {
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {
-    const iconPath = path.join(process.env.APP_ROOT, 'resources', 'icon.png');
-    app.dock.setIcon(iconPath);
+    try {
+      const iconPath = path.join(process.env.APP_ROOT, 'resources', 'icon.png');
+      app.dock.setIcon(iconPath);
+    } catch (e) {
+      console.error('Failed to set dock icon:', e);
+    }
   }
   createWindow();
 })

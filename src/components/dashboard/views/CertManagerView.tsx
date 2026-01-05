@@ -19,7 +19,7 @@ export const CertManagerView: React.FC<CertManagerViewProps> = ({ clusterName, s
     const [certificates, setCertificates] = useState<any[]>([]);
     const [issuers, setIssuers] = useState<any[]>([]);
     const [clusterIssuers, setClusterIssuers] = useState<any[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [_loading, setLoading] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -362,7 +362,7 @@ export const CertManagerView: React.FC<CertManagerViewProps> = ({ clusterName, s
                                                 paddingAngle={5}
                                                 dataKey="value"
                                             >
-                                                {issuerData.map((entry, index) => (
+                                                {issuerData.map((_entry, index) => (
                                                     <Cell key={`cell-${index}`} fill={['#3b82f6', '#a855f7', '#10b981', '#f59e0b', '#ec4899'][index % 5]} stroke="rgba(0,0,0,0.2)" />
                                                 ))}
                                             </Pie>

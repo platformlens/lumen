@@ -20,7 +20,7 @@ interface PodsViewProps {
 
 export const PodsView: React.FC<PodsViewProps> = ({
     viewMode,
-    pods,
+    // pods,
     sortedPods,
     nodes,
     sortConfig,

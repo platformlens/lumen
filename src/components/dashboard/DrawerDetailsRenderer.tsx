@@ -175,8 +175,17 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                         isExplaining={isExplaining}
                     />
                 );
+
             }
-        // Fallthrough to generic
+            // Fallthrough to generic if not handled specifically above
+            return (
+                <GenericResourceDetails
+                    resource={detailedResource}
+                    explanation={explanation}
+                    onExplain={handleExplain}
+                    isExplaining={isExplaining}
+                />
+            );
         case 'endpointslice':
         case 'endpoint':
         case 'ingress':

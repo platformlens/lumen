@@ -22,7 +22,27 @@ export class TerminalService {
             this.ptyProcesses.get(id)?.kill();
         }
 
-        const shell = process.env[os.platform() === 'win32' ? 'COMSPEC' : 'SHELL'] || '/bin/bash';
+        let shell = process.env[os.platform() === 'win32' ? 'COMSPEC' : 'SHELL'];
+
+        if (!shell && os.platform() === 'darwin') {
+            shell = '/bin/zsh';
+        } else if (!shell) {
+            shell = '/bin/bash';
+        }
+
+        console.log(`[Terminal] Debug Info:`);
+        console.log(`[Terminal] Process Arch: ${process.arch}`);
+        console.log(`[Terminal] Selected Shell: ${shell}`);
+
+        // Debug shell existence
+        try {
+            // Basic sync check since we are in a class method, imports are top level usually but we can require or just use fs if imported.
+            // 'fs' is not imported, let's fix that in next step or assume it fails silently if not. 
+            // Actually, I to be safe I will just Log. 
+            // Wait, I can import fs in the file header if I view it again? No, I'll use dynamic require or similar if possible? 
+            // No, standard import is better. But I don't want to change imports and break things.
+            // I'll skip fs check for now and rely on the shell path logic which is the core fix.
+        } catch (e) { }
 
         // Use user's home directory as CWD
         // Use user's home directory as CWD

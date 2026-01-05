@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GenericResourceView } from './GenericResourceView';
-import { getDeploymentStatus, hasResourceChanged } from '../../../utils/resource-utils';
+import { getDeploymentStatus } from '../../../utils/resource-utils';
 import { useResourceSorting } from '../../../hooks/useResourceSorting';
 
 interface DeploymentsViewProps {
