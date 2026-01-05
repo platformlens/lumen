@@ -132,7 +132,23 @@ contextBridge.exposeInMainWorld('k8s', {
   stopPortForward: (id: string) => ipcRenderer.invoke('k8s:stopPortForward', id),
   stopAllPortForwards: () => ipcRenderer.invoke('k8s:stopAllPortForwards'),
   getActivePortForwards: () => ipcRenderer.invoke('k8s:getActivePortForwards'),
-  explainResource: (resource: any, model?: string) => ipcRenderer.invoke('ai:explainResource', resource, model),
+  streamExplainResource: (resource: any, options: any, onChunk: (chunk: string) => void, onDone: () => void, onError: (err: any) => void) => {
+    ipcRenderer.send('ai:explainResourceStream', resource, options);
+
+    const chunkListener = (_: any, chunk: string) => onChunk(chunk);
+    const doneListener = () => onDone();
+    const errorListener = (_: any, err: any) => onError(err);
+
+    ipcRenderer.on('ai:explainResourceStream:chunk', chunkListener);
+    ipcRenderer.on('ai:explainResourceStream:done', doneListener);
+    ipcRenderer.on('ai:explainResourceStream:error', errorListener);
+
+    return () => {
+      ipcRenderer.off('ai:explainResourceStream:chunk', chunkListener);
+      ipcRenderer.off('ai:explainResourceStream:done', doneListener);
+      ipcRenderer.off('ai:explainResourceStream:error', errorListener);
+    };
+  },
   decodeCertificate: (certData: string) => ipcRenderer.invoke('k8s:decodeCertificate', certData),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   deletePod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:deletePod', contextName, namespace, name),
@@ -162,6 +178,11 @@ contextBridge.exposeInMainWorld('k8s', {
   // --- Settings ---
   saveApiKey: (key: string) => ipcRenderer.invoke('settings:saveApiKey', key),
   getApiKey: () => ipcRenderer.invoke('settings:getApiKey'),
+  saveAwsCreds: (creds: any) => ipcRenderer.invoke('settings:saveAwsCreds', creds),
+  getAwsCreds: () => ipcRenderer.invoke('settings:getAwsCreds'),
+  listModels: (provider: string) => ipcRenderer.invoke('ai:listModels', provider),
+  checkAwsAuth: () => ipcRenderer.invoke('ai:checkAwsAuth'),
+
 
   // --- Terminal ---
   terminal: {

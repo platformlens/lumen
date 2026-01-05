@@ -140,5 +140,18 @@ interface Window {
     openExternal: (url: string) => Promise<void>
     getApiKey: () => Promise<string>
     saveApiKey: (key: string) => Promise<void>
+
+    // AI Streaming & AWS Creds
+    streamExplainResource: (
+      resource: any,
+      options: { model: string; provider: string },
+      onChunk: (chunk: string) => void,
+      onDone: () => void,
+      onError: (error: any) => void
+    ) => () => void
+    saveAwsCreds: (creds: any) => Promise<void>
+    getAwsCreds: () => Promise<any>
+    listModels: (provider: string) => Promise<Array<{ id: string; name: string }>>
+    checkAwsAuth: () => Promise<{ isManaged: boolean; isAuthenticated: boolean; error?: string }>
   }
 }

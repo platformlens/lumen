@@ -571,15 +571,36 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const handleExplain = async (resource: any = null) => {
         const target = resource || detailedResource;
         if (!target) return;
+
         setIsExplaining(true);
+        setExplanation(''); // Reset for streaming start
+
         try {
             const model = localStorage.getItem('k8ptain_model') || 'gemini-2.5-flash';
-            const result = await window.k8s.explainResource(target, model);
-            setExplanation(result);
+            const provider = localStorage.getItem('k8ptain_provider') || 'google';
+
+            console.log(`Starting explanation stream with model=${model}, provider=${provider}`);
+
+            // streamExplainResource returns an unsubscribe function if we wanted to cancel
+            window.k8s.streamExplainResource(
+                target,
+                { model, provider },
+                (chunk) => {
+                    setExplanation(prev => (prev || '') + chunk);
+                },
+                () => {
+                    setIsExplaining(false);
+                    console.log('Explanation stream done');
+                },
+                (err) => {
+                    console.error("AI Stream Error:", err);
+                    setExplanation(prev => (prev || '') + `\n\nError generating explanation: ${err}`);
+                    setIsExplaining(false);
+                }
+            );
         } catch (e) {
-            setExplanation("Failed to generate explanation. Please check your API key.");
+            setExplanation("Failed to start explanation stream.");
             console.error(e);
-        } finally {
             setIsExplaining(false);
         }
     }

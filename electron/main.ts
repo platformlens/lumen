@@ -1,9 +1,14 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import fixPath from 'fix-path';
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { K8sService } from './k8s'
 import { TerminalService } from './terminal'
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
+import { streamText } from 'ai';
 import dotenv from 'dotenv'
 
 // Fix PATH for MacOS to find aws/kubectl etc
@@ -240,16 +245,43 @@ function registerIpcHandlers() {
     return k8sService.decodeCertificate(certData);
   })
 
-  ipcMain.handle('ai:explainResource', async (_, resource, modelName) => {
+  ipcMain.on('ai:explainResourceStream', async (event, resource, options) => {
     try {
-      const apiKey = await getApiKey();
+      const { provider = 'google', model = 'gemini-1.5-flash' } = options || {};
+      let aiModel;
 
-      if (!apiKey) {
-        throw new Error('GEMINI_API_KEY environment variable is not set and no API key configured in settings.');
+      if (provider === 'google') {
+        const apiKey = await getApiKey();
+        if (!apiKey) {
+          event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
+          return;
+        }
+        const google = createGoogleGenerativeAI({ apiKey });
+        aiModel = google(model);
+      } else if (provider === 'bedrock') {
+        const awsCreds = await getAwsCreds();
+
+        let bedrockConfig: any = {
+          region: awsCreds.region || 'us-east-1',
+        };
+
+        if (awsCreds.accessKeyId && awsCreds.secretAccessKey) {
+          bedrockConfig.accessKeyId = awsCreds.accessKeyId;
+          bedrockConfig.secretAccessKey = awsCreds.secretAccessKey;
+          if (awsCreds.sessionToken) {
+            bedrockConfig.sessionToken = awsCreds.sessionToken;
+          }
+        } else {
+          // Use managed credentials via chain
+          bedrockConfig.credentialProvider = fromNodeProviderChain();
+        }
+
+        const bedrock = createAmazonBedrock(bedrockConfig);
+        aiModel = bedrock(model);
+      } else {
+        event.sender.send('ai:explainResourceStream:error', `Unknown provider: ${provider}`);
+        return;
       }
-
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey });
 
       const { getPromptForResource } = await import('./prompts');
       const basePrompt = getPromptForResource(resource);
@@ -261,17 +293,138 @@ function registerIpcHandlers() {
         ${JSON.stringify(resource, null, 2)}
       `;
 
-      const response = await ai.models.generateContent({
-        model: modelName || "gemini-2.5-flash",
-        contents: prompt,
+      const result = streamText({
+        model: aiModel,
+        prompt: prompt,
       });
 
-      return response.text;
+      for await (const textPart of result.textStream) {
+        event.sender.send('ai:explainResourceStream:chunk', textPart);
+      }
+
+      event.sender.send('ai:explainResourceStream:done');
+
     } catch (error: any) {
       console.error('AI Error:', error);
-      throw new Error(`Failed to explain resource: ${error.message}`);
+      event.sender.send('ai:explainResourceStream:error', error.message || 'Unknown error');
     }
   })
+
+  ipcMain.handle('ai:checkAwsAuth', async () => {
+    try {
+      const savedCreds = await getAwsCreds();
+      let client;
+
+      if (savedCreds.accessKeyId && savedCreds.secretAccessKey) {
+        // Using saved creds
+        client = new BedrockClient({
+          region: savedCreds.region || 'us-east-1',
+          credentials: {
+            accessKeyId: savedCreds.accessKeyId,
+            secretAccessKey: savedCreds.secretAccessKey,
+            sessionToken: savedCreds.sessionToken
+          }
+        });
+      } else {
+        // Try managed (environment/SSO)
+        client = new BedrockClient({ region: savedCreds.region || 'us-east-1' });
+      }
+
+      // Lightweight check
+      const command = new ListFoundationModelsCommand({ byOutputModality: 'TEXT' });
+      await client.send(command);
+
+      return {
+        isManaged: !savedCreds.accessKeyId, // If we succeeded without explicit saved ID
+        isAuthenticated: true
+      };
+    } catch (err: any) {
+      console.error('AWS Auth Check Failed:', err);
+      // Determine if it was a credential issue or something else
+      return {
+        isManaged: false,
+        isAuthenticated: false,
+        error: err.message
+      };
+    }
+  })
+
+
+
+
+  ipcMain.handle('ai:listModels', async (_, provider: string) => {
+    if (provider === 'google') {
+      try {
+        const apiKey = await getApiKey();
+        if (!apiKey) return [];
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (!response.ok) {
+          console.error('Failed to list Gemini models:', await response.text());
+          return [];
+        }
+
+        const data = await response.json();
+        const models = (data.models || [])
+          .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+          .map((m: any) => ({
+            id: m.name.replace('models/', ''),
+            name: m.displayName
+          }));
+
+        return models;
+      } catch (err) {
+        console.error('Error listing Gemini models:', err);
+        return [];
+      }
+    } else if (provider === 'bedrock') {
+      try {
+        const savedCreds = await getAwsCreds();
+        let client;
+
+        if (savedCreds.accessKeyId && savedCreds.secretAccessKey) {
+          client = new BedrockClient({
+            region: savedCreds.region || 'us-east-1',
+            credentials: {
+              accessKeyId: savedCreds.accessKeyId,
+              secretAccessKey: savedCreds.secretAccessKey,
+              sessionToken: savedCreds.sessionToken
+            }
+          });
+        } else {
+          client = new BedrockClient({ region: savedCreds.region || 'us-east-1' });
+        }
+
+        const [foundationRes, profilesRes] = await Promise.all([
+          client.send(new ListFoundationModelsCommand({ byOutputModality: 'TEXT' })),
+          client.send(new ListInferenceProfilesCommand({}))
+        ]);
+
+        const foundationModels = (foundationRes.modelSummaries || [])
+          .filter(m => m.providerName === 'Anthropic')
+          .map(m => ({
+            id: m.modelId,
+            name: m.modelName,
+            provider: m.providerName
+          }));
+
+        const inferenceProfiles = (profilesRes.inferenceProfileSummaries || [])
+          .filter(p => p.type === 'SYSTEM_DEFINED' && (p.inferenceProfileName?.includes('Anthropic') || p.description?.includes('Anthropic')))
+          .map(p => ({
+            id: p.inferenceProfileId,
+            name: `[Profile] ${p.inferenceProfileName}`,
+            provider: 'Anthropic'
+          }));
+
+        return [...inferenceProfiles, ...foundationModels];
+      } catch (err) {
+        console.error('Error listing Bedrock models:', err);
+        return [];
+      }
+    }
+    return [];
+  })
+
 
   ipcMain.handle('k8s:deletePod', (_, contextName, namespace, name) => {
     return k8sService.deletePod(contextName, namespace, name);
@@ -470,6 +623,19 @@ function registerIpcHandlers() {
     const store = new Store();
     return (store.get('geminiApiKey') as string) || '';
   });
+
+  ipcMain.handle('settings:saveAwsCreds', async (_, creds) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    store.set('awsCreds', creds);
+    return true;
+  });
+
+  ipcMain.handle('settings:getAwsCreds', async () => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    return (store.get('awsCreds') as any) || {};
+  });
 }
 
 // ... helper for AI
@@ -478,6 +644,12 @@ async function getApiKey(): Promise<string> {
   const store = new Store();
   const key = store.get('geminiApiKey') as string;
   return key || process.env.GEMINI_API_KEY || '';
+}
+
+async function getAwsCreds(): Promise<any> {
+  const { default: Store } = await import('electron-store');
+  const store = new Store();
+  return (store.get('awsCreds') as any) || {};
 }
 
 registerIpcHandlers()
