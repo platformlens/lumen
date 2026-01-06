@@ -152,10 +152,27 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     };
 
     const isOverlay = props.mode !== 'sidebar';
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    // Prevent clicks inside the AI panel from closing other drawers (stop propagation)
+    useEffect(() => {
+        const panel = panelRef.current;
+        if (!panel) return;
+
+        const handleMouseDown = (e: MouseEvent) => {
+            e.stopPropagation();
+        };
+
+        panel.addEventListener('mousedown', handleMouseDown);
+        return () => {
+            panel.removeEventListener('mousedown', handleMouseDown);
+        };
+    }, []);
 
     return (
 
         <motion.div
+            ref={panelRef}
             initial={isOverlay ? { x: 400, opacity: 0 } : { width: 0, opacity: 0 }}
             animate={isOverlay ? { x: 0, opacity: 1 } : { width: 450, opacity: 1 }}
             exit={isOverlay ? { x: 400, opacity: 0 } : { width: 0, opacity: 0 }}
@@ -163,15 +180,18 @@ export const AIPanel: React.FC<AIPanelProps> = ({
             className={`${isOverlay ? 'fixed top-0 right-0 h-screen z-[60]' : 'h-full border-l border-white/10 z-10 flex-none'} w-[450px] bg-[#0F0F0F] shadow-2xl flex flex-col`}
         >
             {/* Header */}
-            <div className="h-14 border-b border-white/5 flex items-center justify-between px-4 bg-white/5 backdrop-blur-md">
+            <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5 backdrop-blur-xl">
                 <div className="flex items-center gap-3">
-                    <div className="p-1.5 bg-blue-500/20 rounded-lg">
+                    <div className="h-8 w-8 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
                         <MessageSquare className="w-4 h-4 text-blue-400" />
                     </div>
-                    <span className="font-medium text-sm text-gray-200">AI Assistant</span>
+                    <div>
+                        <h2 className="font-semibold text-sm text-white tracking-wide">AI Assistant</h2>
+                        <p className="text-[10px] text-blue-400/80 font-medium">Lumen Intelligence</p>
+                    </div>
                 </div>
-                <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg transition-colors">
-                    <X className="w-4 h-4 text-gray-400" />
+                <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-all text-gray-400 hover:text-white">
+                    <X className="w-5 h-5" />
                 </button>
             </div>
 
@@ -233,8 +253,9 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-4 border-t border-white/10 bg-black/20">
-                            <div className="relative">
+                        <div className="p-4 border-t border-white/10 bg-[#0F0F0F]/90 backdrop-blur-lg">
+                            <div className="relative group">
+                                <div className="absolute inset-0 bg-blue-500/5 rounded-xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity" />
                                 <textarea
                                     value={inputValue}
                                     onChange={(e) => setInputValue(e.target.value)}
@@ -245,18 +266,20 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                                         }
                                     }}
                                     placeholder={resourceContext ? `Ask about ${resourceContext.name}...` : "Ask AI..."}
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-none h-[50px]"
+                                    className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl py-4 pl-4 pr-12 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 focus:bg-[#202020] resize-none h-[60px] transition-all shadow-inner relative z-10"
                                 />
                                 <button
                                     onClick={handleSend}
                                     disabled={!inputValue.trim()}
-                                    className="absolute right-2 top-1.5 p-1.5 bg-blue-500 rounded-lg text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-600 transition-colors"
+                                    className="absolute right-3 top-3 p-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-900/20 z-20"
                                 >
-                                    <Send className="w-3.5 h-3.5" />
+                                    <Send className="w-4 h-4" />
                                 </button>
                             </div>
-                            <div className="text-[10px] text-gray-600 mt-2 text-center">
-                                AI may generate incorrect info. Check important details.
+                            <div className="mt-3 flex items-center justify-center gap-2 opacity-40">
+                                <div className="h-px w-8 bg-gradient-to-r from-transparent to-gray-500" />
+                                <span className="text-[10px] text-gray-400 font-medium">AI can make mistakes</span>
+                                <div className="h-px w-8 bg-gradient-to-l from-transparent to-gray-500" />
                             </div>
                         </div>
                     </div>

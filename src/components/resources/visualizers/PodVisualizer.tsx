@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LayoutGrid, Server, RefreshCw } from 'lucide-react';
 import { TimeAgo } from '../../shared/TimeAgo';
@@ -207,7 +208,7 @@ export const PodVisualizer: React.FC<PodVisualizerProps> = ({ pods: livePods, no
                     status={pod.status}
                     style={{ left, top }}
                     onMouseEnter={(e) => {
-                        const rect = (e.target as HTMLElement).getBoundingClientRect();
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                         setHoveredPod({
                             pod,
                             x: rect.left + rect.width / 2,
@@ -284,19 +285,22 @@ export const PodVisualizer: React.FC<PodVisualizerProps> = ({ pods: livePods, no
             </div>
 
             {/* Tooltip Portal/Overlay */}
-            <AnimatePresence>
-                {hoveredPod && (
-                    <motion.div
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        className="fixed z-50 pointer-events-none"
-                        style={{ left: 0, top: 0 }}
-                    >
-                        <PodTooltip pod={hoveredPod.pod} position={{ x: hoveredPod.x, y: hoveredPod.y }} />
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {createPortal(
+                <AnimatePresence>
+                    {hoveredPod && (
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.9 }}
+                            className="fixed z-50 pointer-events-none"
+                            style={{ left: 0, top: 0 }}
+                        >
+                            <PodTooltip pod={hoveredPod.pod} position={{ x: hoveredPod.x, y: hoveredPod.y }} />
+                        </motion.div>
+                    )}
+                </AnimatePresence>,
+                document.body
+            )}
 
             <style>{`
                 .clip-hex {

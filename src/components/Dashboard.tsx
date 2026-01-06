@@ -14,6 +14,7 @@ import {
 
 import { ErrorBoundary } from './shared/ErrorBoundary';
 import { TimeAgo } from './shared/TimeAgo';
+import { ToggleGroup } from './shared/ToggleGroup';
 import { NamespaceSelector } from './dashboard/NamespaceSelector';
 import { Drawer } from './shared/Drawer';
 import { DrawerDetailsRenderer } from './dashboard/DrawerDetailsRenderer';
@@ -859,26 +860,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         />
                     </div>
                     {/* Pod View Toggle */}
+                    {/* Pod View Toggle */}
                     {activeView === 'pods' && (
-                        <div className="flex bg-black/40 p-1 rounded-lg border border-white/10 flex-none">
-                            <button
-                                onClick={() => setPodViewMode('list')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all border ${podViewMode === 'list'
-                                    ? 'bg-blue-600/20 text-blue-400 border-blue-600/30 shadow-lg'
-                                    : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'
-                                    }`}
-                            >
-                                <Layers size={14} /> List
-                            </button>
-                            <button
-                                onClick={() => setPodViewMode('visual')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all border ${podViewMode === 'visual'
-                                    ? 'bg-blue-600/20 text-blue-400 border-blue-600/30 shadow-lg'
-                                    : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'
-                                    }`}
-                            >
-                                <Square size={14} /> Visual
-                            </button>
+                        <div className="flex-none">
+                            <ToggleGroup
+                                value={podViewMode}
+                                onChange={(v) => setPodViewMode(v as 'list' | 'visual')}
+                                options={[
+                                    { value: 'list', label: 'List', icon: Layers },
+                                    { value: 'visual', label: 'Visual', icon: Square }
+                                ]}
+                            />
                         </div>
                     )}
 

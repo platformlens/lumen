@@ -509,6 +509,7 @@ function App() {
 
                         <button
                             onClick={() => setIsAIPanelOpen(!isAIPanelOpen)}
+                            onMouseDown={(e) => e.stopPropagation()}
                             className={`p-1.5 rounded-md transition-all ${isAIPanelOpen ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/10 text-gray-400'}`}
                             title="Toggle AI Assistant"
                         >
