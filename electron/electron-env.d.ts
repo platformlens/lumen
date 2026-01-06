@@ -104,6 +104,8 @@ interface Window {
     getRoles: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; age: string }>>
     getRole: (contextName: string, namespace: string, name: string) => Promise<any>
     getRoleBindings: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; age: string }>>
+    getClusterRoles: (contextName: string) => Promise<Array<{ name: string; age: string }>>
+    getClusterRole: (contextName: string, name: string) => Promise<any>
     getClusterRoleBinding: (contextName: string, name: string) => Promise<any>
     getRoleBinding: (contextName: string, namespace: string, name: string) => Promise<any>
     getEvents: (contextName: string, namespaces?: string[]) => Promise<Array<{ type: string; reason: string; message: string; count: number; lastTimestamp: string; object: string; namespace: string }>>

@@ -3,6 +3,7 @@ import { DeploymentDetails } from '../resources/details/DeploymentDetails';
 import { PodDetails } from '../resources/details/PodDetails';
 import { ServiceDetails } from '../resources/details/ServiceDetails';
 import { ClusterRoleBindingDetails } from '../resources/details/ClusterRoleBindingDetails';
+import { HpaDetails } from '../resources/details/HpaDetails';
 import { RoleBindingDetails } from '../resources/details/RoleBindingDetails';
 import { ServiceAccountDetails } from '../resources/details/ServiceAccountDetails';
 import { RoleDetails } from '../resources/details/RoleDetails';
@@ -135,13 +136,16 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                     clusterName={clusterName}
                 />
             );
+        case 'horizontalpodautoscaler':
+            return <HpaDetails resource={detailedResource} />;
         case 'clusterrolebinding':
-            return <ClusterRoleBindingDetails resource={detailedResource} />;
+            return <ClusterRoleBindingDetails resource={detailedResource} onNavigate={onNavigate} />;
         case 'rolebinding':
-            return <RoleBindingDetails resource={detailedResource} />;
+            return <RoleBindingDetails resource={detailedResource} onNavigate={onNavigate} />;
         case 'serviceaccount':
             return <ServiceAccountDetails resource={detailedResource} />;
         case 'role':
+        case 'clusterrole':
             return <RoleDetails resource={detailedResource} />;
         case 'node':
             return <NodeDetails node={detailedResource} />;

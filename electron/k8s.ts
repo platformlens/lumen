@@ -767,6 +767,38 @@ export class K8sService {
         }));
     }
 
+    async getClusterRoles(contextName: string) {
+        console.log(`[k8s] getClusterRoles called`);
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(RbacAuthorizationV1Api);
+        try {
+            const res = await k8sApi.listClusterRole();
+            const items = (res as any).body ? (res as any).body.items : (res as any).items;
+            return items.map((cr: any) => ({
+                name: cr.metadata?.name,
+                age: cr.metadata?.creationTimestamp,
+                metadata: cr.metadata,
+                rules: cr.rules
+            }));
+        } catch (error) {
+            console.error("Error fetching ClusterRoles:", error);
+            return [];
+        }
+    }
+
+    async getClusterRole(contextName: string, name: string) {
+        console.log(`[k8s] getClusterRole called for ${name}`);
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(RbacAuthorizationV1Api);
+        try {
+            const res = await k8sApi.readClusterRole({ name });
+            return (res as any).body ? (res as any).body : res;
+        } catch (error) {
+            console.error("Error fetching ClusterRole:", error);
+            return null;
+        }
+    }
+
     async getClusterRoleBinding(contextName: string, name: string) {
         console.log(`[k8s] getClusterRoleBinding called for ${name}`);
         this.kc.setCurrentContext(contextName);

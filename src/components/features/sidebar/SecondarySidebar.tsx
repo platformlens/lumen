@@ -53,6 +53,19 @@ interface SecondarySidebarProps {
     onTogglePin?: (clusterName: string) => void;
 }
 
+interface MenuItem {
+    label: string;
+    view: string;
+    icon: React.ReactNode;
+    comingSoon?: boolean;
+}
+
+interface MenuGroup {
+    id: string;
+    title: string;
+    items: MenuItem[];
+}
+
 const NavItem = ({ icon, label, active, onClick, onContextMenu, hasSub = false, comingSoon = false, isLoading = false, loadingText }: any) => (
     <div
         onClick={isLoading ? undefined : onClick}
@@ -229,7 +242,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     const filteredClusters = clusters.filter(c => filterMatches(c.name));
 
     // Standard Menu Data
-    const STANDARD_MENU = [
+    const STANDARD_MENU: MenuGroup[] = [
         {
             id: 'workloads',
             title: 'Workloads',
@@ -283,7 +296,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
             id: 'access',
             title: 'Access Control',
             items: [
-                { label: 'Cluster Roles', view: 'clusterroles', icon: <Shield size={18} />, comingSoon: true },
+                { label: 'Cluster Roles', view: 'clusterroles', icon: <Shield size={18} /> },
                 { label: 'Cluster Role Bindings', view: 'clusterrolebindings', icon: <Shield size={18} /> },
                 { label: 'Roles', view: 'roles', icon: <Users size={18} /> },
                 { label: 'Role Bindings', view: 'rolebindings', icon: <Users size={18} /> },

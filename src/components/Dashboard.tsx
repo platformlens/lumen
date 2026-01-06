@@ -44,6 +44,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [replicaSets, setReplicaSets] = useState<any[]>([]);
     const [services, setServices] = useState<any[]>([]);
     const [clusterRoleBindings, setClusterRoleBindings] = useState<any[]>([]);
+    const [clusterRoles, setClusterRoles] = useState<any[]>([]);
     const [roleBindings, setRoleBindings] = useState<any[]>([]);
     const [events, setEvents] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
@@ -335,6 +336,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             if (activeView === 'clusterrolebindings') {
                 promises.push(window.k8s.getClusterRoleBindings(clusterName).then(setClusterRoleBindings));
             }
+            if (activeView === 'clusterroles') {
+                promises.push(window.k8s.getClusterRoles(clusterName).then(setClusterRoles));
+            }
             if (activeView === 'rolebindings') {
                 promises.push(window.k8s.getRoleBindings(clusterName, nsFilter).then(setRoleBindings));
             }
@@ -444,7 +448,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         loadResources();
     }, [clusterName, selectedNamespaces, activeView]);
 
-    const handleResourceClick = async (resource: any, type: 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'other') => {
+    const handleResourceClick = async (resource: any, type: 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'other') => {
         setSelectedResource({ ...resource, type });
         setIsDrawerOpen(true);
         setDetailedResource(null); // Clear previous details while loading
@@ -452,7 +456,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
         // Only fetch details for types we have specific detail fetching logic for
         // Config resources will use generic details component
-        if (['deployment', 'service', 'pod', 'replicaset', 'clusterrolebinding', 'rolebinding', 'serviceaccount', 'role', 'node', 'crd-definition', 'custom-resource', 'daemonset', 'statefulset', 'job', 'cronjob', 'endpointslice', 'endpoint', 'ingress', 'ingressclass', 'networkpolicy', 'persistentvolumeclaim', 'persistentvolume', 'storageclass', 'configmap', 'secret', 'horizontalpodautoscaler', 'poddisruptionbudget', 'mutatingwebhookconfiguration', 'validatingwebhookconfiguration', 'priorityclass', 'runtimeclass', 'namespace'].includes(type)) {
+        if (['deployment', 'service', 'pod', 'replicaset', 'clusterrole', 'clusterrolebinding', 'rolebinding', 'serviceaccount', 'role', 'node', 'crd-definition', 'custom-resource', 'daemonset', 'statefulset', 'job', 'cronjob', 'endpointslice', 'endpoint', 'ingress', 'ingressclass', 'networkpolicy', 'persistentvolumeclaim', 'persistentvolume', 'storageclass', 'configmap', 'secret', 'horizontalpodautoscaler', 'poddisruptionbudget', 'mutatingwebhookconfiguration', 'validatingwebhookconfiguration', 'priorityclass', 'runtimeclass', 'namespace'].includes(type)) {
             try {
                 if (type === 'deployment') {
                     const details = await window.k8s.getDeployment(clusterName, resource.namespace, resource.name);
@@ -482,6 +486,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     setDetailedResource(details);
                 } else if (type === 'clusterrolebinding') {
                     const details = await window.k8s.getClusterRoleBinding(clusterName, resource.name);
+                    setDetailedResource(details);
+                } else if (type === 'clusterrole') {
+                    const details = await window.k8s.getClusterRole(clusterName, resource.name);
                     setDetailedResource(details);
                 } else if (type === 'rolebinding') {
                     // Check if namespace is present, it should be for rolebinding
@@ -691,6 +698,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (activeView === 'namespaces') return namespacesList.length;
         if (activeView === 'serviceaccounts') return serviceAccounts.length;
         if (activeView === 'roles') return roles.length;
+        if (activeView === 'roles') return roles.length;
+        if (activeView === 'clusterroles') return clusterRoles.length;
         if (activeView === 'clusterrolebindings') return clusterRoleBindings.length;
         if (activeView === 'rolebindings') return roleBindings.length;
         if (activeView === 'daemonsets') return daemonSets.length;
@@ -716,19 +725,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     return (
         <div className="flex flex-col h-full relative" >
             {/* Top Bar */}
-            < div className="flex-none p-6 border border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between rounded-2xl" >
-                <div className="flex items-center gap-4 flex-1">
+            < div className="flex-none p-4 sm:p-6 border border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 rounded-2xl" >
+                <div className="flex items-center gap-4 flex-none max-w-full">
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-900/20 flex-none">
                         <Layers className="text-white" size={20} />
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight capitalize whitespace-nowrap">{isCrdView ? currentCrdKind : activeView}</h1>
-                        <div className="flex items-center gap-2 text-sm text-gray-400">
-                            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
+                    <div className="min-w-0">
+                        <h1 className="text-2xl font-bold text-white tracking-tight capitalize whitespace-nowrap truncate">{isCrdView ? currentCrdKind : activeView}</h1>
+                        <div className="flex items-center gap-2 text-sm text-gray-400 flex-wrap">
+                            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 whitespace-nowrap">
                                 <Network size={12} className="text-blue-400" />
                                 {clusterName}
                             </span>
-                            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-xs font-semibold text-gray-300">
+                            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-xs font-semibold text-gray-300 whitespace-nowrap">
                                 {resourceCount} Total
                             </span>
                         </div>
@@ -736,9 +745,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap flex-1 justify-end min-w-[200px]">
                     {/* Search Input */}
-                    <div className="relative group w-64 mr-2">
+                    <div className="relative group w-full sm:w-64">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <Search className="h-4 w-4 text-gray-500 group-focus-within:text-blue-400 transition-colors" />
                         </div>
@@ -752,7 +761,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     </div>
                     {/* Pod View Toggle */}
                     {activeView === 'pods' && (
-                        <div className="flex bg-black/40 p-1 rounded-lg border border-white/10 mr-2">
+                        <div className="flex bg-black/40 p-1 rounded-lg border border-white/10 flex-none">
                             <button
                                 onClick={() => setPodViewMode('list')}
                                 className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all border ${podViewMode === 'list'
@@ -774,11 +783,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         </div>
                     )}
 
-                    <NamespaceSelector
-                        namespaces={namespaces}
-                        selected={selectedNamespaces}
-                        onChange={setSelectedNamespaces}
-                    />
+                    <div className="flex-none">
+                        <NamespaceSelector
+                            namespaces={namespaces}
+                            selected={selectedNamespaces}
+                            onChange={setSelectedNamespaces}
+                        />
+                    </div>
                     {activeView === 'services' && (
                         <button
                             onClick={async () => {
@@ -787,7 +798,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                     // Optionally trigger a refresh or toast
                                 }
                             }}
-                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs border border-red-500/20 rounded flex items-center gap-2 transition-colors"
+                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs border border-red-500/20 rounded flex items-center gap-2 transition-colors whitespace-nowrap"
                         >
                             <Square size={14} fill="currentColor" />
                             Stop All Forwards
@@ -1037,6 +1048,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={roles}
                             onRowClick={(r: any) => handleResourceClick(r, 'role')}
+                            searchQuery={searchQuery}
+                        />
+                    )}
+                    {/* CLUSTER ROLES TABLE */}
+                    {(activeView === 'clusterroles') && (
+                        <GenericResourceView
+                            viewKey="clusterroles"
+                            description="Cluster-wide permissions."
+                            columns={[
+                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                            ]}
+                            data={clusterRoles}
+                            onRowClick={(cr: any) => handleResourceClick(cr, 'clusterrole')}
                             searchQuery={searchQuery}
                         />
                     )}

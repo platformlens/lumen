@@ -138,6 +138,14 @@ function registerIpcHandlers() {
     return k8sService.getClusterRoleBindings(contextName);
   })
 
+  ipcMain.handle('k8s:getClusterRoles', (_, contextName) => {
+    return k8sService.getClusterRoles(contextName);
+  })
+
+  ipcMain.handle('k8s:getClusterRole', (_, contextName, name) => {
+    return k8sService.getClusterRole(contextName, name);
+  })
+
   ipcMain.handle('k8s:getRoles', (_, contextName, namespaces) => {
     return k8sService.getRoles(contextName, namespaces);
   })
