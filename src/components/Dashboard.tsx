@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DeploymentsView } from './dashboard/views/DeploymentsView';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -180,7 +180,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
 
 
-    // Load Namespaces
+    // Track active view to prevent race conditions
+    const activeViewRef = useRef(activeView);
+    useEffect(() => {
+        activeViewRef.current = activeView;
+    }, [activeView]);
+
+    // Load Namespaces & Wipe State on Cluster Change
     useEffect(() => {
         // Explicitly wipe state on cluster change to prevent data leaks from previous cluster
         setPods([]);
@@ -194,7 +200,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         console.log('[Dashboard] State wiped for new cluster:', clusterName);
 
         window.k8s.getNamespaces(clusterName).then(setNamespaces).catch(console.error);
+    }, [clusterName]);
 
+    // Independent Namespace Detail Loading
+    useEffect(() => {
         if (activeView === 'namespaces') {
             setLoading(true);
             window.k8s.getNamespacesDetails(clusterName)
@@ -282,12 +291,94 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             });
         }
 
+        // Deployment Watcher
+        let depCleanup: (() => void) | undefined;
+        let depBatchTimeout: ReturnType<typeof setTimeout> | null = null;
+        const pendingDepUpdates = new Map<string, { type: string; deployment: any }>();
+        const needsDeployments = activeView === 'overview' || activeView === 'deployments';
+
+        if (needsDeployments) {
+            const nsToWatch = selectedNamespaces;
+            window.k8s.watchDeployments(clusterName, nsToWatch);
+
+            const processDepBatch = () => {
+                if (pendingDepUpdates.size === 0) {
+                    depBatchTimeout = null;
+                    return;
+                }
+
+                const updates = new Map(pendingDepUpdates);
+                pendingDepUpdates.clear();
+                depBatchTimeout = null;
+
+                setDeployments(prev => {
+                    const depMap = new Map(prev.map(d => [`${d.metadata.namespace}/${d.metadata.name}`, d]));
+
+                    updates.forEach(({ type, deployment }) => {
+                        const key = `${deployment.metadata.namespace}/${deployment.metadata.name}`;
+                        // We use metadata.namespace/name because `deployment` from watcher is raw object? 
+                        // Wait, previous getDeployments returns mapped object? No, getDeployments returns mapped object { name, namespace, replicas... }
+                        // But watcher returns raw K8s object? 
+                        // Let's check k8s.ts startDeploymentWatch. It returns raw object usually. 
+                        // Actually getDeployments returns simplified object. The watcher returns the FULL object or simplified?
+                        // k8s.ts startDeploymentWatch calls onEvent(type, obj). obj is from the K8s watcher.
+                        // Ideally we should map it to match our state shape. But getDeployments returns simplified objects.
+                        // Deployment state currently holds simplified objects?
+                        // Let's check getDeployments in k8s.ts.
+                        // It maps to { name, namespace, replicas, availableReplicas ... }.
+                        // So we MUST map the watcher object too.
+
+                        const mappedDep = {
+                            name: deployment.metadata.name,
+                            namespace: deployment.metadata.namespace,
+                            replicas: deployment.spec.replicas,
+                            availableReplicas: deployment.status.availableReplicas || 0,
+                            readyReplicas: deployment.status.readyReplicas || 0,
+                            unavailableReplicas: deployment.status.unavailableReplicas || 0,
+                            updatedReplicas: deployment.status.updatedReplicas || 0,
+                            conditions: deployment.status.conditions,
+                            age: deployment.metadata.creationTimestamp,
+                            metadata: deployment.metadata,
+                            spec: deployment.spec,
+                            status: deployment.status
+                        };
+
+                        const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(mappedDep.namespace);
+
+                        if (type === 'ADDED' || type === 'MODIFIED') {
+                            if (isSelected) {
+                                depMap.set(key, mappedDep);
+                            } else if (depMap.has(key)) {
+                                depMap.delete(key);
+                            }
+                        } else if (type === 'DELETED') {
+                            depMap.delete(key);
+                        }
+                    });
+
+                    return Array.from(depMap.values());
+                });
+            };
+
+            depCleanup = window.k8s.onDeploymentChange((type, dep) => {
+                const key = `${dep.metadata.namespace}/${dep.metadata.name}`;
+                pendingDepUpdates.set(key, { type, deployment: dep });
+                if (!depBatchTimeout) {
+                    depBatchTimeout = setTimeout(processDepBatch, 650);
+                }
+            });
+        }
+
         return () => {
             // Only stop watching if we are LEAVING a needsPods state
             // Logic: dependencies change.
             if (cleanup) cleanup();
             if (batchTimeout) clearTimeout(batchTimeout);
             window.k8s.stopWatchPods();
+
+            if (depCleanup) depCleanup();
+            if (depBatchTimeout) clearTimeout(depBatchTimeout);
+            window.k8s.stopWatchDeployments();
         };
     }, [clusterName, selectedNamespaces, (activeView === 'overview' || activeView === 'pods')]);
 
@@ -298,9 +389,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         try {
             const needsPods = activeView === 'overview' || activeView === 'pods';
             // Only set loading if we don't have cached data for the critical path
-            if (needsPods && pods.length === 0) {
-                setLoading(true);
-            } else if (!needsPods) {
+            // For overview, we also need deployments and events
+            if (activeView === 'overview') {
+                if (pods.length === 0 || deployments.length === 0) {
+                    setLoading(true);
+                }
+            } else if (activeView === 'pods') {
+                if (pods.length === 0) setLoading(true);
+            } else {
                 setLoading(true); // Other views always load fresh for now
             }
 
@@ -440,7 +536,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         } catch (e) {
             console.error("Failed to load resources", e);
         } finally {
-            setLoading(false);
+            // Only turn off loading if we are still on the same view that started the load
+            if (activeViewRef.current === activeView) {
+                setLoading(false);
+            }
         }
     }
 
