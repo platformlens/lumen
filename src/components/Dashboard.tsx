@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useTransition } from 'react';
 import { DeploymentsView } from './dashboard/views/DeploymentsView';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -41,6 +41,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [namespaces, setNamespaces] = useState<string[]>([]);
     const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(['all']);
 
+    // Performance: Use transition for non-urgent state updates
+    const [, startTransition] = useTransition();
+
     const [deployments, setDeployments] = useState<any[]>([]);
     const [pods, setPods] = useState<any[]>([]);
     const [replicaSets, setReplicaSets] = useState<any[]>([]);
@@ -56,6 +59,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [statefulSets, setStatefulSets] = useState<any[]>([]);
     const [jobs, setJobs] = useState<any[]>([]);
     const [cronJobs, setCronJobs] = useState<any[]>([]);
+
+    // Performance: Resource cache to prevent unnecessary refetches
+    const resourceCacheRef = useRef<Map<string, { data: any[]; timestamp: number }>>(new Map());
+    const CACHE_TTL = 30000; // 30 seconds
 
     // Network State
     const [endpointSlices, setEndpointSlices] = useState<any[]>([]);
@@ -102,10 +109,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     // Sorting State
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+    // Performance: Debounce search input to reduce re-renders
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery);
+        }, 300); // 300ms debounce
+
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
 
     // Clear search when active view changes
     useEffect(() => {
         setSearchQuery('');
+        setDebouncedSearchQuery('');
     }, [activeView]);
 
 
@@ -125,55 +143,58 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         setSortConfig({ key, direction });
     };
 
-    const getSortedData = (data: any[]) => {
-        if (!sortConfig) return data;
+    // Performance: Memoize sorted data to prevent recalculation on every render
+    const getSortedData = useMemo(() => {
+        return (data: any[]) => {
+            if (!sortConfig) return data;
 
-        return [...data].sort((a, b) => {
-            if (sortConfig.key === 'age') {
-                // Age is timestamp string
-                const dateA = new Date(a.age).getTime();
-                const dateB = new Date(b.age).getTime();
-                return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
-            }
-            if (sortConfig.key === 'restarts') {
-                return sortConfig.direction === 'asc' ? a.restarts - b.restarts : b.restarts - a.restarts;
-            }
-
-            if (sortConfig.key === 'status') {
-                // Determine health: true if available == replicas
-                // We want to sort primarily by health (healthy vs not)
-                // And maybe secondarily by available replicas
-
-                // For deployments/replicasets
-                if ('availableReplicas' in a) {
-                    const isHealthyA = (a.availableReplicas === a.replicas && a.replicas > 0);
-                    const isHealthyB = (b.availableReplicas === b.replicas && b.replicas > 0);
-
-                    if (isHealthyA === isHealthyB) {
-                        // Tie-break with available replicas
-                        return sortConfig.direction === 'asc'
-                            ? (a.availableReplicas || 0) - (b.availableReplicas || 0)
-                            : (b.availableReplicas || 0) - (a.availableReplicas || 0);
-                    }
-
-                    // Healthy (true) > Unhealthy (false)
-                    // ASC: false, true
-                    // DESC: true, false
-                    return sortConfig.direction === 'asc'
-                        ? (isHealthyA ? 1 : -1)
-                        : (isHealthyA ? -1 : 1);
+            return [...data].sort((a, b) => {
+                if (sortConfig.key === 'age') {
+                    // Age is timestamp string
+                    const dateA = new Date(a.age).getTime();
+                    const dateB = new Date(b.age).getTime();
+                    return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
                 }
-            }
+                if (sortConfig.key === 'restarts') {
+                    return sortConfig.direction === 'asc' ? a.restarts - b.restarts : b.restarts - a.restarts;
+                }
 
-            // Default string comparison
-            const valA = a[sortConfig.key]?.toString().toLowerCase() || '';
-            const valB = b[sortConfig.key]?.toString().toLowerCase() || '';
+                if (sortConfig.key === 'status') {
+                    // Determine health: true if available == replicas
+                    // We want to sort primarily by health (healthy vs not)
+                    // And maybe secondarily by available replicas
 
-            if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-            if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-            return 0;
-        });
-    };
+                    // For deployments/replicasets
+                    if ('availableReplicas' in a) {
+                        const isHealthyA = (a.availableReplicas === a.replicas && a.replicas > 0);
+                        const isHealthyB = (b.availableReplicas === b.replicas && b.replicas > 0);
+
+                        if (isHealthyA === isHealthyB) {
+                            // Tie-break with available replicas
+                            return sortConfig.direction === 'asc'
+                                ? (a.availableReplicas || 0) - (b.availableReplicas || 0)
+                                : (b.availableReplicas || 0) - (a.availableReplicas || 0);
+                        }
+
+                        // Healthy (true) > Unhealthy (false)
+                        // ASC: false, true
+                        // DESC: true, false
+                        return sortConfig.direction === 'asc'
+                            ? (isHealthyA ? 1 : -1)
+                            : (isHealthyA ? -1 : 1);
+                    }
+                }
+
+                // Default string comparison
+                const valA = a[sortConfig.key]?.toString().toLowerCase() || '';
+                const valB = b[sortConfig.key]?.toString().toLowerCase() || '';
+
+                if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        };
+    }, [sortConfig]);
 
 
 
@@ -187,6 +208,61 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     useEffect(() => {
         activeViewRef.current = activeView;
     }, [activeView]);
+
+    // Performance: Helper to get current view data for cache check
+    const getCurrentViewData = () => {
+        if (activeView === 'overview') return pods.length > 0 || deployments.length > 0;
+        if (activeView === 'pods') return pods.length > 0;
+        if (activeView === 'deployments') return deployments.length > 0;
+        if (activeView === 'replicasets') return replicaSets.length > 0;
+        if (activeView === 'services') return services.length > 0;
+        if (activeView === 'nodes') return nodes.length > 0;
+        if (activeView === 'daemonsets') return daemonSets.length > 0;
+        if (activeView === 'statefulsets') return statefulSets.length > 0;
+        if (activeView === 'jobs') return jobs.length > 0;
+        if (activeView === 'cronjobs') return cronJobs.length > 0;
+        if (activeView === 'namespaces') return namespacesList.length > 0;
+        if (activeView === 'clusterroles') return clusterRoles.length > 0;
+        if (activeView === 'clusterrolebindings') return clusterRoleBindings.length > 0;
+        if (activeView === 'roles') return roles.length > 0;
+        if (activeView === 'rolebindings') return roleBindings.length > 0;
+        if (activeView === 'serviceaccounts') return serviceAccounts.length > 0;
+        if (activeView === 'endpointslices') return endpointSlices.length > 0;
+        if (activeView === 'endpoints') return endpoints.length > 0;
+        if (activeView === 'ingresses') return ingresses.length > 0;
+        if (activeView === 'ingressclasses') return ingressClasses.length > 0;
+        if (activeView === 'networkpolicies') return networkPolicies.length > 0;
+        if (activeView === 'persistentvolumeclaims') return pvcs.length > 0;
+        if (activeView === 'persistentvolumes') return pvs.length > 0;
+        if (activeView === 'storageclasses') return storageClasses.length > 0;
+        if (activeView === 'configmaps') return configMaps.length > 0;
+        if (activeView === 'secrets') return secrets.length > 0;
+        if (activeView === 'horizontalpodautoscalers') return horizontalPodAutoscalers.length > 0;
+        if (activeView === 'poddisruptionbudgets') return podDisruptionBudgets.length > 0;
+        if (activeView === 'mutatingwebhookconfigurations') return mutatingWebhookConfigurations.length > 0;
+        if (activeView === 'validatingwebhookconfigurations') return validatingWebhookConfigurations.length > 0;
+        if (activeView === 'priorityclasses') return priorityClasses.length > 0;
+        if (activeView === 'runtimeclasses') return runtimeClasses.length > 0;
+        if (activeView === 'crd-definitions') return crdDefinitions.length > 0;
+        return false;
+    };
+
+    // Performance: Check if cache is valid
+    const getCachedData = (cacheKey: string) => {
+        const cached = resourceCacheRef.current.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+            return cached.data;
+        }
+        return null;
+    };
+
+    // Performance: Store data in cache
+    const setCachedData = (cacheKey: string, data: any[]) => {
+        resourceCacheRef.current.set(cacheKey, {
+            data,
+            timestamp: Date.now()
+        });
+    };
 
     // Load Namespaces & Wipe State on Cluster Change
     useEffect(() => {
@@ -220,13 +296,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     }, [clusterName, activeView]);
 
-    // Watcher Effect
+    // Watcher Effect - Performance: Only watch when view is active
     useEffect(() => {
         let cleanup: (() => void) | undefined;
         let batchTimeout: ReturnType<typeof setTimeout> | null = null;
         const pendingUpdates = new Map<string, { type: string; pod: any }>();
 
-        // Only watch if we are in a view that needs pods
+        // Performance: Only watch if we are in a view that needs pods
         const needsPods = activeView === 'overview' || activeView === 'pods';
 
         if (needsPods) {
@@ -245,38 +321,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 pendingUpdates.clear();
                 batchTimeout = null;
 
-                setPods(prev => {
-                    // Use a Map for O(1) updates instead of O(N) array scans
-                    // This reduces complexity from O(Updates * TotalPods) to O(TotalPods + Updates)
-                    const podMap = new Map(prev.map(p => [`${p.namespace}/${p.name}`, p]));
+                // Performance: Use startTransition to mark updates as non-urgent
+                startTransition(() => {
+                    setPods(prev => {
+                        // Performance: Only create Map if we have updates
+                        if (updates.size === 0) return prev;
 
-                    updates.forEach(({ type, pod }) => {
-                        const key = `${pod.namespace}/${pod.name}`;
+                        // Use a Map for O(1) updates instead of O(N) array scans
+                        const podMap = new Map(prev.map(p => [`${p.namespace}/${p.name}`, p]));
 
-                        // Strict Filtering: If not viewing 'all' namespaces, check if pod belongs to selected namespaces
-                        const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(pod.namespace);
+                        updates.forEach(({ type, pod }) => {
+                            const key = `${pod.namespace}/${pod.name}`;
 
-                        if (type === 'ADDED' || type === 'MODIFIED') {
-                            if (isSelected) {
-                                podMap.set(key, pod);
-                            } else {
-                                // Important: If a pod was previously in our list but now its namespace is not selected (unlikely for MODIFIED but possible if we switch views rapidly), remove it.
-                                // Actually, if we are here, we might have received an event for a pod that we shouldn't show.
-                                // If it is in the map, we should remove it? 
-                                // No, if it's not selected, we just don't add it. But if it WAS there, we should delete it to be safe (e.g. namespace change? unlikely for pods).
-                                // More common: we just don't add it.
-                                // But if we have 'all' selected initially, then switch to 'default', watcher might still send events for 'kube-system' briefly.
-                                // If podMap has it, we should remove it if it doesn't match current filter? 
-                                // Yes, let's enforce filter on the whole map or just incoming? 
-                                // Enforcing on incoming actions:
-                                if (podMap.has(key)) podMap.delete(key);
+                            // Strict Filtering: If not viewing 'all' namespaces, check if pod belongs to selected namespaces
+                            const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(pod.namespace);
+
+                            if (type === 'ADDED' || type === 'MODIFIED') {
+                                if (isSelected) {
+                                    podMap.set(key, pod);
+                                } else {
+                                    if (podMap.has(key)) podMap.delete(key);
+                                }
+                            } else if (type === 'DELETED') {
+                                podMap.delete(key);
                             }
-                        } else if (type === 'DELETED') {
-                            podMap.delete(key);
-                        }
-                    });
+                        });
 
-                    return Array.from(podMap.values());
+                        return Array.from(podMap.values());
+                    });
                 });
             };
 
@@ -293,7 +365,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             });
         }
 
-        // Deployment Watcher
+        return () => {
+            // Performance: Clean up watchers when view changes or component unmounts
+            if (cleanup) cleanup();
+            if (batchTimeout) clearTimeout(batchTimeout);
+            if (needsPods) {
+                window.k8s.stopWatchPods();
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clusterName, selectedNamespaces, activeView]); // Performance: Restart when switching to/from pods/overview
+
+    // Deployment Watcher Effect - Separate to avoid unnecessary restarts
+    useEffect(() => {
         let depCleanup: (() => void) | undefined;
         let depBatchTimeout: ReturnType<typeof setTimeout> | null = null;
         const pendingDepUpdates = new Map<string, { type: string; deployment: any }>();
@@ -313,52 +397,46 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 pendingDepUpdates.clear();
                 depBatchTimeout = null;
 
-                setDeployments(prev => {
-                    const depMap = new Map(prev.map(d => [`${d.metadata.namespace}/${d.metadata.name}`, d]));
+                // Performance: Use startTransition to mark updates as non-urgent
+                startTransition(() => {
+                    setDeployments(prev => {
+                        if (updates.size === 0) return prev;
 
-                    updates.forEach(({ type, deployment }) => {
-                        const key = `${deployment.metadata.namespace}/${deployment.metadata.name}`;
-                        // We use metadata.namespace/name because `deployment` from watcher is raw object? 
-                        // Wait, previous getDeployments returns mapped object? No, getDeployments returns mapped object { name, namespace, replicas... }
-                        // But watcher returns raw K8s object? 
-                        // Let's check k8s.ts startDeploymentWatch. It returns raw object usually. 
-                        // Actually getDeployments returns simplified object. The watcher returns the FULL object or simplified?
-                        // k8s.ts startDeploymentWatch calls onEvent(type, obj). obj is from the K8s watcher.
-                        // Ideally we should map it to match our state shape. But getDeployments returns simplified objects.
-                        // Deployment state currently holds simplified objects?
-                        // Let's check getDeployments in k8s.ts.
-                        // It maps to { name, namespace, replicas, availableReplicas ... }.
-                        // So we MUST map the watcher object too.
+                        const depMap = new Map(prev.map(d => [`${d.metadata.namespace}/${d.metadata.name}`, d]));
 
-                        const mappedDep = {
-                            name: deployment.metadata.name,
-                            namespace: deployment.metadata.namespace,
-                            replicas: deployment.spec.replicas,
-                            availableReplicas: deployment.status.availableReplicas || 0,
-                            readyReplicas: deployment.status.readyReplicas || 0,
-                            unavailableReplicas: deployment.status.unavailableReplicas || 0,
-                            updatedReplicas: deployment.status.updatedReplicas || 0,
-                            conditions: deployment.status.conditions,
-                            age: deployment.metadata.creationTimestamp,
-                            metadata: deployment.metadata,
-                            spec: deployment.spec,
-                            status: deployment.status
-                        };
+                        updates.forEach(({ type, deployment }) => {
+                            const key = `${deployment.metadata.namespace}/${deployment.metadata.name}`;
 
-                        const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(mappedDep.namespace);
+                            const mappedDep = {
+                                name: deployment.metadata.name,
+                                namespace: deployment.metadata.namespace,
+                                replicas: deployment.spec.replicas,
+                                availableReplicas: deployment.status.availableReplicas || 0,
+                                readyReplicas: deployment.status.readyReplicas || 0,
+                                unavailableReplicas: deployment.status.unavailableReplicas || 0,
+                                updatedReplicas: deployment.status.updatedReplicas || 0,
+                                conditions: deployment.status.conditions,
+                                age: deployment.metadata.creationTimestamp,
+                                metadata: deployment.metadata,
+                                spec: deployment.spec,
+                                status: deployment.status
+                            };
 
-                        if (type === 'ADDED' || type === 'MODIFIED') {
-                            if (isSelected) {
-                                depMap.set(key, mappedDep);
-                            } else if (depMap.has(key)) {
+                            const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(mappedDep.namespace);
+
+                            if (type === 'ADDED' || type === 'MODIFIED') {
+                                if (isSelected) {
+                                    depMap.set(key, mappedDep);
+                                } else if (depMap.has(key)) {
+                                    depMap.delete(key);
+                                }
+                            } else if (type === 'DELETED') {
                                 depMap.delete(key);
                             }
-                        } else if (type === 'DELETED') {
-                            depMap.delete(key);
-                        }
-                    });
+                        });
 
-                    return Array.from(depMap.values());
+                        return Array.from(depMap.values());
+                    });
                 });
             };
 
@@ -372,165 +450,265 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
 
         return () => {
-            // Only stop watching if we are LEAVING a needsPods state
-            // Logic: dependencies change.
-            if (cleanup) cleanup();
-            if (batchTimeout) clearTimeout(batchTimeout);
-            window.k8s.stopWatchPods();
-
+            // Performance: Clean up watchers when view changes or component unmounts
             if (depCleanup) depCleanup();
             if (depBatchTimeout) clearTimeout(depBatchTimeout);
-            window.k8s.stopWatchDeployments();
+            if (needsDeployments) {
+                window.k8s.stopWatchDeployments();
+            }
         };
-    }, [clusterName, selectedNamespaces, (activeView === 'overview' || activeView === 'pods')]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clusterName, selectedNamespaces, activeView]); // Performance: Restart when switching to/from deployments/overview
 
     // Load Data based on View and Selection
     const loadResources = async () => {
         if (!clusterName) return;
 
-        try {
-            const needsPods = activeView === 'overview' || activeView === 'pods';
-            // Only set loading if we don't have cached data for the critical path
-            // For overview, we also need deployments and events
-            if (activeView === 'overview') {
-                if (pods.length === 0 || deployments.length === 0) {
-                    setLoading(true);
-                }
-            } else if (activeView === 'pods') {
-                if (pods.length === 0) setLoading(true);
-            } else {
-                setLoading(true); // Other views always load fresh for now
-            }
+        // Performance: Generate cache key based on view and namespace selection
+        const cacheKey = `${activeView}-${selectedNamespaces.join(',')}`;
+        const cachedData = getCachedData(cacheKey);
 
+        // Performance: Only show loading if we have no data AND no cache
+        const hasData = getCurrentViewData();
+        if (!hasData && !cachedData) {
+            setLoading(true);
+        }
+
+        try {
             const nsFilter = selectedNamespaces;
             const promises: Promise<any>[] = [];
 
             // Overview needs Pods (pie chart), Deployments (bar chart), and Events
             if (activeView === 'overview') {
-                promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
-                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
-                promises.push(window.k8s.getEvents(clusterName, nsFilter).then(setEvents));
+                promises.push(window.k8s.getPods(clusterName, nsFilter).then(data => {
+                    setPods(data);
+                    setCachedData(`pods-${nsFilter.join(',')}`, data);
+                }));
+                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(data => {
+                    setDeployments(data);
+                    setCachedData(`deployments-${nsFilter.join(',')}`, data);
+                }));
+                promises.push(window.k8s.getEvents(clusterName, nsFilter).then(data => {
+                    setEvents(data);
+                    setCachedData(`events-${nsFilter.join(',')}`, data);
+                }));
             }
 
             if (activeView === 'deployments') {
-                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(setDeployments));
+                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(data => {
+                    setDeployments(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
 
             // Individual Views
             if (activeView === 'nodes') {
-                promises.push(window.k8s.getNodes(clusterName).then(setNodes));
+                promises.push(window.k8s.getNodes(clusterName).then(data => {
+                    setNodes(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
 
             if (activeView === 'pods') {
-                promises.push(window.k8s.getPods(clusterName, nsFilter).then(setPods));
-                promises.push(window.k8s.getNodes(clusterName).then(setNodes));
+                promises.push(window.k8s.getPods(clusterName, nsFilter).then(data => {
+                    setPods(data);
+                    setCachedData(`pods-${nsFilter.join(',')}`, data);
+                }));
+                // Performance: Cache nodes too, they don't change often
+                const nodesCacheKey = 'nodes';
+                const cachedNodes = getCachedData(nodesCacheKey);
+                if (!cachedNodes || nodes.length === 0) {
+                    promises.push(window.k8s.getNodes(clusterName).then(data => {
+                        setNodes(data);
+                        setCachedData(nodesCacheKey, data);
+                    }));
+                }
             }
             if (activeView === 'replicasets') {
-                promises.push(window.k8s.getReplicaSets(clusterName, nsFilter).then(setReplicaSets));
+                promises.push(window.k8s.getReplicaSets(clusterName, nsFilter).then(data => {
+                    setReplicaSets(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'services') {
-                promises.push(window.k8s.getServices(clusterName, nsFilter).then(setServices));
+                promises.push(window.k8s.getServices(clusterName, nsFilter).then(data => {
+                    setServices(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'clusterrolebindings') {
-                promises.push(window.k8s.getClusterRoleBindings(clusterName).then(setClusterRoleBindings));
+                promises.push(window.k8s.getClusterRoleBindings(clusterName).then(data => {
+                    setClusterRoleBindings(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'clusterroles') {
-                promises.push(window.k8s.getClusterRoles(clusterName).then(setClusterRoles));
+                promises.push(window.k8s.getClusterRoles(clusterName).then(data => {
+                    setClusterRoles(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'rolebindings') {
-                promises.push(window.k8s.getRoleBindings(clusterName, nsFilter).then(setRoleBindings));
+                promises.push(window.k8s.getRoleBindings(clusterName, nsFilter).then(data => {
+                    setRoleBindings(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'serviceaccounts') {
-                promises.push(window.k8s.getServiceAccounts(clusterName, nsFilter).then(setServiceAccounts));
+                promises.push(window.k8s.getServiceAccounts(clusterName, nsFilter).then(data => {
+                    setServiceAccounts(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'roles') {
-                promises.push(window.k8s.getRoles(clusterName, nsFilter).then(setRoles));
+                promises.push(window.k8s.getRoles(clusterName, nsFilter).then(data => {
+                    setRoles(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'daemonsets') {
-                promises.push(window.k8s.getDaemonSets(clusterName, nsFilter).then(setDaemonSets));
+                promises.push(window.k8s.getDaemonSets(clusterName, nsFilter).then(data => {
+                    setDaemonSets(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'statefulsets') {
-                promises.push(window.k8s.getStatefulSets(clusterName, nsFilter).then(setStatefulSets));
+                promises.push(window.k8s.getStatefulSets(clusterName, nsFilter).then(data => {
+                    setStatefulSets(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'jobs') {
-                promises.push(window.k8s.getJobs(clusterName, nsFilter).then(setJobs));
+                promises.push(window.k8s.getJobs(clusterName, nsFilter).then(data => {
+                    setJobs(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
             if (activeView === 'cronjobs') {
-                promises.push(window.k8s.getCronJobs(clusterName, nsFilter).then(setCronJobs));
+                promises.push(window.k8s.getCronJobs(clusterName, nsFilter).then(data => {
+                    setCronJobs(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
 
             // Handle CRD Definitions List
             if (activeView === 'crd-definitions') {
-                promises.push(window.k8s.getCRDs(clusterName).then(setCrdDefinitions));
+                promises.push(window.k8s.getCRDs(clusterName).then(data => {
+                    setCrdDefinitions(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
 
             // Handle Dynamic CRD View
             if (isCrdView && crdParams.length >= 4) {
                 const [_, group, version, plural] = crdParams;
-                setCurrentCrdKind(plural); // Just use plural as title for now
-                promises.push(window.k8s.getCustomObjects(clusterName, group, version, plural).then(setCustomObjects));
+                setCurrentCrdKind(plural);
+                promises.push(window.k8s.getCustomObjects(clusterName, group, version, plural).then(data => {
+                    setCustomObjects(data);
+                    setCachedData(cacheKey, data);
+                }));
             }
 
             // Network
             if (activeView === 'endpointslices') {
-                console.log('Fetching EndpointSlices...');
-                window.k8s.getEndpointSlices(clusterName, nsFilter).then(data => { console.log('EndpointSlices:', data); setEndpointSlices(data); });
+                window.k8s.getEndpointSlices(clusterName, nsFilter).then(data => {
+                    setEndpointSlices(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'endpoints') {
-                console.log('Fetching Endpoints...');
-                window.k8s.getEndpoints(clusterName, nsFilter).then(data => { console.log('Endpoints:', data); setEndpoints(data); });
+                window.k8s.getEndpoints(clusterName, nsFilter).then(data => {
+                    setEndpoints(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'ingresses') {
-                console.log('Fetching Ingresses...');
-                window.k8s.getIngresses(clusterName, nsFilter).then(data => { console.log('Ingresses:', data); setIngresses(data); });
+                window.k8s.getIngresses(clusterName, nsFilter).then(data => {
+                    setIngresses(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'ingressclasses') {
-                console.log('Fetching IngressClasses...');
-                window.k8s.getIngressClasses(clusterName).then(data => { console.log('IngressClasses:', data); setIngressClasses(data); });
+                window.k8s.getIngressClasses(clusterName).then(data => {
+                    setIngressClasses(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'networkpolicies') {
-                console.log('Fetching NetworkPolicies...');
-                window.k8s.getNetworkPolicies(clusterName, nsFilter).then(data => { console.log('NetworkPolicies:', data); setNetworkPolicies(data); });
+                window.k8s.getNetworkPolicies(clusterName, nsFilter).then(data => {
+                    setNetworkPolicies(data);
+                    setCachedData(cacheKey, data);
+                });
             }
 
             // Storage
             if (activeView === 'persistentvolumeclaims') {
-                console.log('Fetching PVCs...');
-                window.k8s.getPersistentVolumeClaims(clusterName, nsFilter).then(data => { console.log('PVCs:', data); setPvcs(data); });
+                window.k8s.getPersistentVolumeClaims(clusterName, nsFilter).then(data => {
+                    setPvcs(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'persistentvolumes') {
-                console.log('Fetching PVs...');
-                window.k8s.getPersistentVolumes(clusterName).then(data => { console.log('PVs:', data); setPvs(data); });
+                window.k8s.getPersistentVolumes(clusterName).then(data => {
+                    setPvs(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'storageclasses') {
-                console.log('Fetching StorageClasses...');
-                window.k8s.getStorageClasses(clusterName).then(data => { console.log('StorageClasses:', data); setStorageClasses(data); });
+                window.k8s.getStorageClasses(clusterName).then(data => {
+                    setStorageClasses(data);
+                    setCachedData(cacheKey, data);
+                });
             }
 
             // Config
             if (activeView === 'configmaps') {
-                window.k8s.getConfigMaps(clusterName, nsFilter).then(data => setConfigMaps(data));
+                window.k8s.getConfigMaps(clusterName, nsFilter).then(data => {
+                    setConfigMaps(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'secrets') {
-                window.k8s.getSecrets(clusterName, nsFilter).then(data => setSecrets(data));
+                window.k8s.getSecrets(clusterName, nsFilter).then(data => {
+                    setSecrets(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'horizontalpodautoscalers') {
-                window.k8s.getHorizontalPodAutoscalers(clusterName, nsFilter).then(data => setHorizontalPodAutoscalers(data));
+                window.k8s.getHorizontalPodAutoscalers(clusterName, nsFilter).then(data => {
+                    setHorizontalPodAutoscalers(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'poddisruptionbudgets') {
-                window.k8s.getPodDisruptionBudgets(clusterName, nsFilter).then(data => setPodDisruptionBudgets(data));
+                window.k8s.getPodDisruptionBudgets(clusterName, nsFilter).then(data => {
+                    setPodDisruptionBudgets(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'mutatingwebhookconfigurations') {
-                window.k8s.getMutatingWebhookConfigurations(clusterName).then(data => setMutatingWebhookConfigurations(data));
+                window.k8s.getMutatingWebhookConfigurations(clusterName).then(data => {
+                    setMutatingWebhookConfigurations(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'validatingwebhookconfigurations') {
-                window.k8s.getValidatingWebhookConfigurations(clusterName).then(data => setValidatingWebhookConfigurations(data));
+                window.k8s.getValidatingWebhookConfigurations(clusterName).then(data => {
+                    setValidatingWebhookConfigurations(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'priorityclasses') {
-                window.k8s.getPriorityClasses(clusterName).then(data => setPriorityClasses(data));
+                window.k8s.getPriorityClasses(clusterName).then(data => {
+                    setPriorityClasses(data);
+                    setCachedData(cacheKey, data);
+                });
             }
             if (activeView === 'runtimeclasses') {
-                window.k8s.getRuntimeClasses(clusterName).then(data => setRuntimeClasses(data));
+                window.k8s.getRuntimeClasses(clusterName).then(data => {
+                    setRuntimeClasses(data);
+                    setCachedData(cacheKey, data);
+                });
             }
 
             await Promise.all(promises);
@@ -771,18 +949,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     };
 
-    const pageVariants = {
-        initial: { opacity: 0, y: 10 },
-        in: { opacity: 1, y: 0 },
-        out: { opacity: 0, y: -10 }
-    };
-
-    const pageTransition = {
-        type: "tween",
-        ease: "anticipate",
-        duration: 0.3
-    } as const;
-
     const getResourceCount = () => {
         if (activeView === 'deployments') return deployments.length;
         if (activeView === 'pods') return pods.length;
@@ -908,7 +1074,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         <NodesView
                             nodes={nodes}
                             onRowClick={(node: any) => handleResourceClick(node, 'node')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )
                 }
@@ -939,14 +1105,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={namespacesList}
                             onRowClick={(ns: any) => handleResourceClick({ ...ns, type: 'namespace' }, 'namespace' as any)}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )
                 }
 
                 {
                     (activeView === 'certificates') && (
-                        <CertManagerView clusterName={clusterName} searchQuery={searchQuery} />
+                        <CertManagerView clusterName={clusterName} searchQuery={debouncedSearchQuery} />
                     )
                 }
 
@@ -965,7 +1131,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={customObjects}
                             onRowClick={(obj: any) => handleResourceClick(obj, 'custom-resource')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )
                 }
@@ -986,7 +1152,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={crdDefinitions}
                             onRowClick={(crd: any) => handleResourceClick(crd, 'crd-definition')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )
                 }
@@ -996,11 +1162,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     {activeView === 'overview' && (
                         <motion.div
                             key="overview-dashboard"
-                            initial="initial"
-                            animate="in"
-                            exit="out"
-                            variants={pageVariants}
-                            transition={pageTransition}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
                         >
                             <OverviewView
                                 pods={pods}
@@ -1022,7 +1187,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             isLoading={loading}
                             clusterName={clusterName}
                             selectedNamespaces={selectedNamespaces}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                             onRowClick={(dep) => handleResourceClick(dep, 'deployment')}
                         />
                     )}
@@ -1037,7 +1202,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             sortConfig={sortConfig}
                             onSort={handleSort}
                             onRowClick={(pod: any) => handleResourceClick(pod, 'pod')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                             isLoading={loading}
                         />
                     )}
@@ -1057,7 +1222,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={replicaSets}
                             onRowClick={(rs: any) => handleResourceClick(rs, 'replicaset')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1077,7 +1242,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={services}
                             onRowClick={(svc: any) => handleResourceClick(svc, 'service')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1093,7 +1258,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={clusterRoleBindings}
                             onRowClick={(crb: any) => handleResourceClick(crb, 'clusterrolebinding')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1110,7 +1275,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={roleBindings}
                             onRowClick={(rb: any) => handleResourceClick(rb, 'rolebinding')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1129,7 +1294,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={serviceAccounts}
                             onRowClick={(sa: any) => handleResourceClick(sa, 'serviceaccount')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1146,7 +1311,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={roles}
                             onRowClick={(r: any) => handleResourceClick(r, 'role')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
                     {/* CLUSTER ROLES TABLE */}
@@ -1160,7 +1325,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={clusterRoles}
                             onRowClick={(cr: any) => handleResourceClick(cr, 'clusterrole')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
                     {/* DAEMONSETS TABLE */}
@@ -1180,7 +1345,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={daemonSets}
                             onRowClick={(ds: any) => handleResourceClick(ds, 'daemonset')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1200,7 +1365,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={statefulSets}
                             onRowClick={(sts: any) => handleResourceClick(sts, 'statefulset')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1221,7 +1386,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={jobs}
                             onRowClick={(job: any) => handleResourceClick(job, 'job')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1242,7 +1407,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={cronJobs}
                             onRowClick={(cj: any) => handleResourceClick(cj, 'cronjob')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1262,7 +1427,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={endpointSlices}
                             onRowClick={(es: any) => handleResourceClick(es, 'endpointslice')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1280,7 +1445,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={endpoints}
                             onRowClick={(ep: any) => handleResourceClick(ep, 'endpoint')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1300,7 +1465,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={ingresses}
                             onRowClick={(ing: any) => handleResourceClick(ing, 'ingress')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1319,7 +1484,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={ingressClasses}
                             onRowClick={(ic: any) => handleResourceClick(ic, 'ingressclass')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1338,7 +1503,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={networkPolicies}
                             onRowClick={(np: any) => handleResourceClick(np, 'networkpolicy')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1397,7 +1562,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={storageClasses}
                             onRowClick={(sc: any) => handleResourceClick(sc, 'storageclass')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1414,7 +1579,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={configMaps}
                             onRowClick={(cm: any) => handleResourceClick(cm, 'configmap')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1431,7 +1596,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={secrets}
                             onRowClick={(secret: any) => handleResourceClick(secret, 'secret')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1450,7 +1615,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={horizontalPodAutoscalers}
                             onRowClick={(hpa: any) => handleResourceClick(hpa, 'horizontalpodautoscaler')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1468,7 +1633,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={podDisruptionBudgets}
                             onRowClick={(pdb: any) => handleResourceClick(pdb, 'poddisruptionbudget')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1483,7 +1648,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={mutatingWebhookConfigurations}
                             onRowClick={(mwc: any) => handleResourceClick(mwc, 'mutatingwebhookconfiguration')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1498,7 +1663,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={validatingWebhookConfigurations}
                             onRowClick={(vwc: any) => handleResourceClick(vwc, 'validatingwebhookconfiguration')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1515,7 +1680,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={priorityClasses}
                             onRowClick={(pc: any) => handleResourceClick(pc, 'priorityclass')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
 
@@ -1530,7 +1695,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             ]}
                             data={runtimeClasses}
                             onRowClick={(rc: any) => handleResourceClick(rc, 'runtimeclass')}
-                            searchQuery={searchQuery}
+                            searchQuery={debouncedSearchQuery}
                         />
                     )}
                 </AnimatePresence>

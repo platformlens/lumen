@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useTransition } from 'react'
 import { Sparkles, Pin, Server, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Sidebar } from './components/features/sidebar/Sidebar'
 import { SecondarySidebar } from './components/features/sidebar/SecondarySidebar'
@@ -45,6 +45,16 @@ function App() {
 
     // Dashboard Sub-views
     const [resourceView, setResourceView] = useState<string>('overview')
+
+    // Performance: Use transition to make view changes non-blocking
+    const [isPendingViewChange, startViewTransition] = useTransition();
+
+    const handleViewChange = (view: string) => {
+        // Make view change non-blocking - UI stays responsive
+        startViewTransition(() => {
+            setResourceView(view);
+        });
+    };
 
     // AI State
     const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
@@ -531,7 +541,7 @@ function App() {
                             <SecondarySidebar
                                 mode={activeView === 'settings' ? 'settings' : activeView === 'clusters' ? 'clusters' : 'resources'}
                                 activeView={resourceView}
-                                onSelectView={setResourceView}
+                                onSelectView={handleViewChange}
                                 selectedCluster={selectedCluster}
                                 onSelectCluster={handleClusterSelect}
                                 connectionStatus={connectionStatus}
@@ -576,7 +586,7 @@ function App() {
                                             clusterName={selectedCluster}
                                             activeView={resourceView}
                                             onOpenLogs={handleOpenLogs}
-                                            onNavigate={setResourceView}
+                                            onNavigate={handleViewChange}
                                             onOpenYaml={handleOpenYaml}
                                             onExplain={handleOpenAI}
                                         />
