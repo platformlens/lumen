@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-    X, Server, HardDrive, Network, Shield, Clock, Box
+    X, Server, HardDrive, Network, Shield, Box
 } from 'lucide-react';
 
 interface Ec2InstanceDetailsProps {
@@ -67,8 +67,8 @@ export const Ec2InstanceDetails: React.FC<Ec2InstanceDetailsProps> = ({ instance
                         <div className="flex items-center gap-2 mt-1">
                             <span className="text-gray-400 font-mono text-sm">{instance.InstanceId}</span>
                             <span className={`px-2 py-0.5 rounded text-xs border ${instance.State?.Name === 'running'
-                                    ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                                    : 'bg-gray-500/10 border-gray-500/30 text-gray-400'
+                                ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                                : 'bg-gray-500/10 border-gray-500/30 text-gray-400'
                                 }`}>
                                 {instance.State?.Name}
                             </span>

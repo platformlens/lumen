@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Send, History, MessageSquare, Trash2, Clock, ChevronRight } from 'lucide-react';
+import { X, Send, MessageSquare, Trash2, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 interface AIHistoryItem {
     id: string;

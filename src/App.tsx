@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useTransition } from 'react'
-import { Sparkles, Pin, Server, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Sparkles, Pin } from 'lucide-react';
 import { Sidebar } from './components/features/sidebar/Sidebar'
 import { SecondarySidebar } from './components/features/sidebar/SecondarySidebar'
 import { Dashboard } from './components/Dashboard'
@@ -47,7 +47,7 @@ function App() {
     const [resourceView, setResourceView] = useState<string>('overview')
 
     // Performance: Use transition to make view changes non-blocking
-    const [isPendingViewChange, startViewTransition] = useTransition();
+    const [, startViewTransition] = useTransition();
 
     const handleViewChange = (view: string) => {
         // Make view change non-blocking - UI stays responsive
