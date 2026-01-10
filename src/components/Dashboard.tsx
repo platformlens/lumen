@@ -25,6 +25,7 @@ import { ResourceTopology } from './resources/visualizers/ResourceTopology';
 import { ScaleModal } from './shared/ScaleModal';
 import { NodesView } from './dashboard/views/NodesView';
 import { CertManagerView } from './dashboard/views/CertManagerView';
+import { AwsView } from './dashboard/views/AwsView';
 
 interface DashboardProps {
     clusterName: string;
@@ -909,6 +910,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                             onRowClick={(node: any) => handleResourceClick(node, 'node')}
                             searchQuery={searchQuery}
                         />
+                    )
+                }
+
+                {
+                    (activeView === 'aws') && (
+                        <AwsView clusterName={clusterName} />
                     )
                 }
 

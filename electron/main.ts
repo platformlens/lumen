@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { K8sService } from './k8s'
 import { TerminalService } from './terminal'
+import { AwsService } from './aws'
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
@@ -70,8 +71,59 @@ loadStore(); // Start loading immediately
 
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
+const awsService = new AwsService()
 
 function registerIpcHandlers() {
+  // --- AWS Handlers ---
+  ipcMain.handle('aws:getEksCluster', async (_, region, clusterName) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.getEksCluster(region, clusterName, creds);
+  });
+
+  ipcMain.handle('aws:getVpcDetails', async (_, region, vpcId) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.getVpcDetails(region, vpcId, creds);
+  });
+
+  ipcMain.handle('aws:getSubnets', async (_, region, vpcId) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.getSubnets(region, vpcId, creds);
+  });
+
+  ipcMain.handle('aws:getInstanceDetails', async (_, region, instanceId) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.getInstanceDetails(region, instanceId, creds);
+  });
+
+  ipcMain.handle('aws:getEc2Instances', async (_, region, vpcId, clusterName) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.getEc2Instances(region, vpcId, clusterName, creds);
+  });
+
+  ipcMain.handle('aws:getPodIdentities', async (_, region, clusterName) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.getPodIdentities(region, clusterName, creds);
+  });
+
+  ipcMain.handle('aws:checkAuth', async (_, region) => {
+    const { default: Store } = await import('electron-store');
+    const store = new Store();
+    const creds = store.get('awsCreds');
+    return awsService.checkAuth(region, creds);
+  });
+
   ipcMain.handle('k8s:getClusters', () => {
     console.log('IPC: k8s:getClusters called');
     return k8sService.getClusters();

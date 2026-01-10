@@ -433,6 +433,14 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         onClick={() => onSelectView('namespaces')}
                                     />
                                 )}
+                                {isEks && (!searchQuery || filterMatches('AWS')) && (
+                                    <NavItem
+                                        icon={<Shield size={18} />} // Or another icon like 'Cloud' or 'Globe'
+                                        label="AWS"
+                                        active={activeView === 'aws'}
+                                        onClick={() => onSelectView('aws')}
+                                    />
+                                )}
                             </div>
 
                             {/* Standard Groups */}

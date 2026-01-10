@@ -221,5 +221,16 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.on('terminal:exit', listener);
       return () => ipcRenderer.off('terminal:exit', listener);
     }
+  },
+
+  // --- AWS ---
+  aws: {
+    getEksCluster: (region: string, clusterName: string) => ipcRenderer.invoke('aws:getEksCluster', region, clusterName),
+    getVpcDetails: (region: string, vpcId: string) => ipcRenderer.invoke('aws:getVpcDetails', region, vpcId),
+    getSubnets: (region: string, vpcId: string) => ipcRenderer.invoke('aws:getSubnets', region, vpcId),
+    getInstanceDetails: (region: string, instanceId: string) => ipcRenderer.invoke('aws:getInstanceDetails', region, instanceId),
+    getEc2Instances: (region: string, vpcId: string, clusterName?: string) => ipcRenderer.invoke('aws:getEc2Instances', region, vpcId, clusterName),
+    getPodIdentities: (region: string, clusterName: string) => ipcRenderer.invoke('aws:getPodIdentities', region, clusterName),
+    checkAuth: (region: string) => ipcRenderer.invoke('aws:checkAuth', region),
   }
 })

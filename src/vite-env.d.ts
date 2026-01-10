@@ -139,6 +139,17 @@ declare global {
                 onData: (callback: (id: string, data: string) => void) => () => void;
                 onExit: (callback: (id: string, exitCode: number) => void) => () => void;
             };
+
+            aws: {
+                getEksCluster: (region: string, clusterName: string) => Promise<any>;
+                getVpcDetails: (region: string, vpcId: string) => Promise<any>;
+                getSubnets: (region: string, vpcId: string) => Promise<any[]>;
+                getInstanceDetails: (region: string, instanceId: string) => Promise<any>;
+                getEc2Instances: (region: string, vpcId: string, clusterName?: string) => Promise<any[]>;
+                getDbInstances?: (region: string, vpcId: string) => Promise<any[]>; // Not yet implemented in preload, but preparing
+                getPodIdentities: (region: string, clusterName: string) => Promise<any[]>;
+                checkAuth: (region: string) => Promise<{ isAuthenticated: boolean; identity?: string; account?: string; error?: string }>;
+            };
         }
     }
 }
