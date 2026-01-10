@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useTransition } from 'react';
 import { DeploymentsView } from './dashboard/views/DeploymentsView';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import {
     Activity,
     Layers,
@@ -1157,548 +1157,538 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     )
                 }
 
-                <AnimatePresence mode="wait">
-                    {/* OVERVIEW DASHBOARD */}
-                    {activeView === 'overview' && (
-                        <motion.div
-                            key="overview-dashboard"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            transition={{ duration: 0.2 }}
-                        >
-                            <OverviewView
-                                pods={pods}
-                                deployments={deployments}
-                                events={events}
-                                isLoading={loading}
-                                onNavigate={onNavigate}
-                                onSwitchToVisualPods={() => setPodViewMode('visual')}
-                            />
-                        </motion.div>
-                    )}
-
-                    {/* DEPLOYMENTS TABLE */}
-                    {/* DEPLOYMENTS TABLE */}
-                    {/* DEPLOYMENTS TABLE */}
-                    {(activeView === 'deployments') && (
-                        <DeploymentsView
-                            deployments={deployments}
-                            isLoading={loading}
-                            clusterName={clusterName}
-                            selectedNamespaces={selectedNamespaces}
-                            searchQuery={debouncedSearchQuery}
-                            onRowClick={(dep) => handleResourceClick(dep, 'deployment')}
-                        />
-                    )}
-
-                    {/* PODS TABLE */}
-                    {(activeView === 'pods') && (
-                        <PodsView
-                            viewMode={podViewMode}
+                {/* OVERVIEW DASHBOARD */}
+                {activeView === 'overview' && (
+                    <div className="mb-8">
+                        <OverviewView
                             pods={pods}
-                            sortedPods={getSortedData(pods)}
-                            nodes={nodes}
-                            sortConfig={sortConfig}
-                            onSort={handleSort}
-                            onRowClick={(pod: any) => handleResourceClick(pod, 'pod')}
-                            searchQuery={debouncedSearchQuery}
+                            deployments={deployments}
+                            events={events}
                             isLoading={loading}
+                            onNavigate={onNavigate}
+                            onSwitchToVisualPods={() => setPodViewMode('visual')}
                         />
-                    )}
+                    </div>
+                )}
 
-                    {/* REPLICA SETS TABLE */}
-                    {/* REPLICA SETS TABLE */}
-                    {(activeView === 'replicasets') && (
-                        <GenericResourceView
-                            viewKey="replicasets"
-                            description="Ensures a specified number of pod replicas are running at any given time."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Desired', dataKey: 'desired', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
-                                { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> }
-                            ]}
-                            data={replicaSets}
-                            onRowClick={(rs: any) => handleResourceClick(rs, 'replicaset')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* DEPLOYMENTS TABLE */}
+                {(activeView === 'deployments') && (
+                    <DeploymentsView
+                        deployments={deployments}
+                        isLoading={loading}
+                        clusterName={clusterName}
+                        selectedNamespaces={selectedNamespaces}
+                        searchQuery={debouncedSearchQuery}
+                        onRowClick={(dep) => handleResourceClick(dep, 'deployment')}
+                    />
+                )}
 
-                    {/* SERVICES TABLE */}
-                    {/* SERVICES TABLE */}
-                    {(activeView === 'services') && (
-                        <GenericResourceView
-                            viewKey="services"
-                            description="Network services for your application components."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Type', dataKey: 'type', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400">{t}</span> },
-                                { label: 'Cluster IP', dataKey: 'clusterIP', width: 120, flexGrow: 0, cellRenderer: (ip) => <span className="text-gray-400 font-mono text-xs">{ip}</span> },
-                                { label: 'Ports', dataKey: 'ports', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400 font-mono text-xs">{p}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
-                            ]}
-                            data={services}
-                            onRowClick={(svc: any) => handleResourceClick(svc, 'service')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* PODS TABLE */}
+                {(activeView === 'pods') && (
+                    <PodsView
+                        viewMode={podViewMode}
+                        pods={pods}
+                        sortedPods={getSortedData(pods)}
+                        nodes={nodes}
+                        sortConfig={sortConfig}
+                        onSort={handleSort}
+                        onRowClick={(pod: any) => handleResourceClick(pod, 'pod')}
+                        searchQuery={debouncedSearchQuery}
+                        isLoading={loading}
+                    />
+                )}
 
-                    {/* CLUSTER ROLE BINDINGS TABLE */}
-                    {/* CLUSTER ROLE BINDINGS TABLE */}
-                    {(activeView === 'clusterrolebindings') && (
-                        <GenericResourceView
-                            viewKey="clusterrolebindings"
-                            description="Cluster-wide access control and permission bindings."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
-                            ]}
-                            data={clusterRoleBindings}
-                            onRowClick={(crb: any) => handleResourceClick(crb, 'clusterrolebinding')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* REPLICA SETS TABLE */}
+                {/* REPLICA SETS TABLE */}
+                {(activeView === 'replicasets') && (
+                    <GenericResourceView
+                        viewKey="replicasets"
+                        description="Ensures a specified number of pod replicas are running at any given time."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Desired', dataKey: 'desired', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
+                            { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> }
+                        ]}
+                        data={replicaSets}
+                        onRowClick={(rs: any) => handleResourceClick(rs, 'replicaset')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* ROLE BINDINGS TABLE */}
-                    {/* ROLE BINDINGS TABLE */}
-                    {(activeView === 'rolebindings') && (
-                        <GenericResourceView
-                            viewKey="rolebindings"
-                            description="Namespace-scoped permissions and access control."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
-                            ]}
-                            data={roleBindings}
-                            onRowClick={(rb: any) => handleResourceClick(rb, 'rolebinding')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* SERVICES TABLE */}
+                {/* SERVICES TABLE */}
+                {(activeView === 'services') && (
+                    <GenericResourceView
+                        viewKey="services"
+                        description="Network services for your application components."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Type', dataKey: 'type', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400">{t}</span> },
+                            { label: 'Cluster IP', dataKey: 'clusterIP', width: 120, flexGrow: 0, cellRenderer: (ip) => <span className="text-gray-400 font-mono text-xs">{ip}</span> },
+                            { label: 'Ports', dataKey: 'ports', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400 font-mono text-xs">{p}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                        ]}
+                        data={services}
+                        onRowClick={(svc: any) => handleResourceClick(svc, 'service')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
+
+                {/* CLUSTER ROLE BINDINGS TABLE */}
+                {/* CLUSTER ROLE BINDINGS TABLE */}
+                {(activeView === 'clusterrolebindings') && (
+                    <GenericResourceView
+                        viewKey="clusterrolebindings"
+                        description="Cluster-wide access control and permission bindings."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                        ]}
+                        data={clusterRoleBindings}
+                        onRowClick={(crb: any) => handleResourceClick(crb, 'clusterrolebinding')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
+
+                {/* ROLE BINDINGS TABLE */}
+                {/* ROLE BINDINGS TABLE */}
+                {(activeView === 'rolebindings') && (
+                    <GenericResourceView
+                        viewKey="rolebindings"
+                        description="Namespace-scoped permissions and access control."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                        ]}
+                        data={roleBindings}
+                        onRowClick={(rb: any) => handleResourceClick(rb, 'rolebinding')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
 
-                    {/* SERVICE ACCOUNTS TABLE */}
-                    {/* SERVICE ACCOUNTS TABLE */}
-                    {(activeView === 'serviceaccounts') && (
-                        <GenericResourceView
-                            viewKey="serviceaccounts"
-                            description="Identities for processes that run in a Pod."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Secrets', dataKey: 'secrets', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
-                            ]}
-                            data={serviceAccounts}
-                            onRowClick={(sa: any) => handleResourceClick(sa, 'serviceaccount')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* SERVICE ACCOUNTS TABLE */}
+                {/* SERVICE ACCOUNTS TABLE */}
+                {(activeView === 'serviceaccounts') && (
+                    <GenericResourceView
+                        viewKey="serviceaccounts"
+                        description="Identities for processes that run in a Pod."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Secrets', dataKey: 'secrets', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                        ]}
+                        data={serviceAccounts}
+                        onRowClick={(sa: any) => handleResourceClick(sa, 'serviceaccount')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* ROLES TABLE */}
-                    {/* ROLES TABLE */}
-                    {(activeView === 'roles') && (
-                        <GenericResourceView
-                            viewKey="roles"
-                            description="Sets of permissions within a specific namespace."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
-                            ]}
-                            data={roles}
-                            onRowClick={(r: any) => handleResourceClick(r, 'role')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
-                    {/* CLUSTER ROLES TABLE */}
-                    {(activeView === 'clusterroles') && (
-                        <GenericResourceView
-                            viewKey="clusterroles"
-                            description="Cluster-wide permissions."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
-                            ]}
-                            data={clusterRoles}
-                            onRowClick={(cr: any) => handleResourceClick(cr, 'clusterrole')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
-                    {/* DAEMONSETS TABLE */}
-                    {/* DAEMONSETS TABLE */}
-                    {(activeView === 'daemonsets') && (
-                        <GenericResourceView
-                            viewKey="daemonsets"
-                            description="Ensures that all (or some) Nodes run a copy of a Pod."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Desired', dataKey: 'desired', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
-                                { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
-                                { label: 'Available', dataKey: 'available', width: 80, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={daemonSets}
-                            onRowClick={(ds: any) => handleResourceClick(ds, 'daemonset')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* ROLES TABLE */}
+                {/* ROLES TABLE */}
+                {(activeView === 'roles') && (
+                    <GenericResourceView
+                        viewKey="roles"
+                        description="Sets of permissions within a specific namespace."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                        ]}
+                        data={roles}
+                        onRowClick={(r: any) => handleResourceClick(r, 'role')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
+                {/* CLUSTER ROLES TABLE */}
+                {(activeView === 'clusterroles') && (
+                    <GenericResourceView
+                        viewKey="clusterroles"
+                        description="Cluster-wide permissions."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                        ]}
+                        data={clusterRoles}
+                        onRowClick={(cr: any) => handleResourceClick(cr, 'clusterrole')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
+                {/* DAEMONSETS TABLE */}
+                {/* DAEMONSETS TABLE */}
+                {(activeView === 'daemonsets') && (
+                    <GenericResourceView
+                        viewKey="daemonsets"
+                        description="Ensures that all (or some) Nodes run a copy of a Pod."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Desired', dataKey: 'desired', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
+                            { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
+                            { label: 'Available', dataKey: 'available', width: 80, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={daemonSets}
+                        onRowClick={(ds: any) => handleResourceClick(ds, 'daemonset')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* STATEFULSETS TABLE */}
-                    {/* STATEFULSETS TABLE */}
-                    {(activeView === 'statefulsets') && (
-                        <GenericResourceView
-                            viewKey="statefulsets"
-                            description="Manages the deployment and scaling of a set of Pods, and provides guarantees about the ordering and uniqueness of these Pods."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Replicas', dataKey: 'replicas', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
-                                { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
-                                { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={statefulSets}
-                            onRowClick={(sts: any) => handleResourceClick(sts, 'statefulset')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* STATEFULSETS TABLE */}
+                {/* STATEFULSETS TABLE */}
+                {(activeView === 'statefulsets') && (
+                    <GenericResourceView
+                        viewKey="statefulsets"
+                        description="Manages the deployment and scaling of a set of Pods, and provides guarantees about the ordering and uniqueness of these Pods."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Replicas', dataKey: 'replicas', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
+                            { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
+                            { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={statefulSets}
+                        onRowClick={(sts: any) => handleResourceClick(sts, 'statefulset')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* JOBS TABLE */}
-                    {/* JOBS TABLE */}
-                    {(activeView === 'jobs') && (
-                        <GenericResourceView
-                            viewKey="jobs"
-                            description="A Job creates one or more Pods and will continue to retry execution of the Pods until a specified number of them successfully terminate."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Completions', dataKey: 'completions', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Succeeded', dataKey: 'succeeded', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-green-400">{s}</span> },
-                                { label: 'Active', dataKey: 'active', width: 100, flexGrow: 0, cellRenderer: (a) => <span className="text-blue-400">{a}</span> },
-                                { label: 'Failed', dataKey: 'failed', width: 100, flexGrow: 0, cellRenderer: (f) => <span className="text-red-400">{f}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={jobs}
-                            onRowClick={(job: any) => handleResourceClick(job, 'job')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* JOBS TABLE */}
+                {/* JOBS TABLE */}
+                {(activeView === 'jobs') && (
+                    <GenericResourceView
+                        viewKey="jobs"
+                        description="A Job creates one or more Pods and will continue to retry execution of the Pods until a specified number of them successfully terminate."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Completions', dataKey: 'completions', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Succeeded', dataKey: 'succeeded', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-green-400">{s}</span> },
+                            { label: 'Active', dataKey: 'active', width: 100, flexGrow: 0, cellRenderer: (a) => <span className="text-blue-400">{a}</span> },
+                            { label: 'Failed', dataKey: 'failed', width: 100, flexGrow: 0, cellRenderer: (f) => <span className="text-red-400">{f}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={jobs}
+                        onRowClick={(job: any) => handleResourceClick(job, 'job')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* CRONJOBS TABLE */}
-                    {/* CRONJOBS TABLE */}
-                    {(activeView === 'cronjobs') && (
-                        <GenericResourceView
-                            viewKey="cronjobs"
-                            description="Runs Jobs on a time-based schedule."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Schedule', dataKey: 'schedule', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400 font-mono text-xs">{s}</span> },
-                                { label: 'Suspend', dataKey: 'suspend', width: 80, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s ? 'True' : 'False'}</span> },
-                                { label: 'Active', dataKey: 'active', width: 80, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
-                                { label: 'Last Schedule', dataKey: 'lastScheduleTime', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400">{t ? <TimeAgo timestamp={t} /> : '-'}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={cronJobs}
-                            onRowClick={(cj: any) => handleResourceClick(cj, 'cronjob')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* CRONJOBS TABLE */}
+                {/* CRONJOBS TABLE */}
+                {(activeView === 'cronjobs') && (
+                    <GenericResourceView
+                        viewKey="cronjobs"
+                        description="Runs Jobs on a time-based schedule."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Schedule', dataKey: 'schedule', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400 font-mono text-xs">{s}</span> },
+                            { label: 'Suspend', dataKey: 'suspend', width: 80, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s ? 'True' : 'False'}</span> },
+                            { label: 'Active', dataKey: 'active', width: 80, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
+                            { label: 'Last Schedule', dataKey: 'lastScheduleTime', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400">{t ? <TimeAgo timestamp={t} /> : '-'}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={cronJobs}
+                        onRowClick={(cj: any) => handleResourceClick(cj, 'cronjob')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* NETWORK: ENDPOINT SLICES */}
-                    {/* NETWORK: ENDPOINT SLICES */}
-                    {(activeView === 'endpointslices') && (
-                        <GenericResourceView
-                            viewKey="endpointslices"
-                            description="Scalable and extensible way to group network endpoints together."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Address Type', dataKey: 'addressType', width: 120, flexGrow: 0, cellRenderer: (at) => <span className="text-gray-400">{at}</span> },
-                                { label: 'Ports', dataKey: 'ports', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400">{p}</span> },
-                                { label: 'Endpoints', dataKey: 'endpoints', flexGrow: 1, cellRenderer: (e) => <span className="text-gray-400">{e}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={endpointSlices}
-                            onRowClick={(es: any) => handleResourceClick(es, 'endpointslice')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* NETWORK: ENDPOINT SLICES */}
+                {/* NETWORK: ENDPOINT SLICES */}
+                {(activeView === 'endpointslices') && (
+                    <GenericResourceView
+                        viewKey="endpointslices"
+                        description="Scalable and extensible way to group network endpoints together."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Address Type', dataKey: 'addressType', width: 120, flexGrow: 0, cellRenderer: (at) => <span className="text-gray-400">{at}</span> },
+                            { label: 'Ports', dataKey: 'ports', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400">{p}</span> },
+                            { label: 'Endpoints', dataKey: 'endpoints', flexGrow: 1, cellRenderer: (e) => <span className="text-gray-400">{e}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={endpointSlices}
+                        onRowClick={(es: any) => handleResourceClick(es, 'endpointslice')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* NETWORK: ENDPOINTS */}
-                    {/* NETWORK: ENDPOINTS */}
-                    {(activeView === 'endpoints') && (
-                        <GenericResourceView
-                            viewKey="endpoints"
-                            description="A list of IP addresses and ports for a Service."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Subsets', dataKey: 'subsets', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={endpoints}
-                            onRowClick={(ep: any) => handleResourceClick(ep, 'endpoint')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* NETWORK: ENDPOINTS */}
+                {/* NETWORK: ENDPOINTS */}
+                {(activeView === 'endpoints') && (
+                    <GenericResourceView
+                        viewKey="endpoints"
+                        description="A list of IP addresses and ports for a Service."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Subsets', dataKey: 'subsets', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={endpoints}
+                        onRowClick={(ep: any) => handleResourceClick(ep, 'endpoint')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* NETWORK: INGRESSES */}
-                    {/* NETWORK: INGRESSES */}
-                    {(activeView === 'ingresses') && (
-                        <GenericResourceView
-                            viewKey="ingresses"
-                            description="Manages external access to the services in a cluster, typically HTTP."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Class', dataKey: 'class', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Hosts', dataKey: 'hosts', flexGrow: 1, cellRenderer: (h) => <span className="text-gray-400 font-mono text-xs">{h}</span> },
-                                { label: 'Address', dataKey: 'address', width: 120, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={ingresses}
-                            onRowClick={(ing: any) => handleResourceClick(ing, 'ingress')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* NETWORK: INGRESSES */}
+                {/* NETWORK: INGRESSES */}
+                {(activeView === 'ingresses') && (
+                    <GenericResourceView
+                        viewKey="ingresses"
+                        description="Manages external access to the services in a cluster, typically HTTP."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Class', dataKey: 'class', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Hosts', dataKey: 'hosts', flexGrow: 1, cellRenderer: (h) => <span className="text-gray-400 font-mono text-xs">{h}</span> },
+                            { label: 'Address', dataKey: 'address', width: 120, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={ingresses}
+                        onRowClick={(ing: any) => handleResourceClick(ing, 'ingress')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* NETWORK: INGRESS CLASSES */}
-                    {/* NETWORK: INGRESS CLASSES */}
-                    {(activeView === 'ingressclasses') && (
-                        <GenericResourceView
-                            viewKey="ingressclasses"
-                            description="Defines a type of Ingress controller."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Controller', dataKey: 'controller', flexGrow: 1, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'API Group', dataKey: 'apiGroup', width: 120, flexGrow: 0, cellRenderer: (g) => <span className="text-gray-400">{g || '-'}</span> },
-                                { label: 'Kind', dataKey: 'kind', width: 100, flexGrow: 0, cellRenderer: (k) => <span className="text-gray-400">{k || '-'}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={ingressClasses}
-                            onRowClick={(ic: any) => handleResourceClick(ic, 'ingressclass')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* NETWORK: INGRESS CLASSES */}
+                {/* NETWORK: INGRESS CLASSES */}
+                {(activeView === 'ingressclasses') && (
+                    <GenericResourceView
+                        viewKey="ingressclasses"
+                        description="Defines a type of Ingress controller."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Controller', dataKey: 'controller', flexGrow: 1, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'API Group', dataKey: 'apiGroup', width: 120, flexGrow: 0, cellRenderer: (g) => <span className="text-gray-400">{g || '-'}</span> },
+                            { label: 'Kind', dataKey: 'kind', width: 100, flexGrow: 0, cellRenderer: (k) => <span className="text-gray-400">{k || '-'}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={ingressClasses}
+                        onRowClick={(ic: any) => handleResourceClick(ic, 'ingressclass')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* NETWORK: NETWORK POLICIES */}
-                    {/* NETWORK: NETWORK POLICIES */}
-                    {(activeView === 'networkpolicies') && (
-                        <GenericResourceView
-                            viewKey="networkpolicies"
-                            description="Controls how groups of Pods are allowed to communicate with each other and other network endpoints."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Pod Selector', dataKey: 'podSelector', flexGrow: 1, cellRenderer: (ps) => <span className="text-gray-400">{ps}</span> },
-                                { label: 'Policy Types', dataKey: 'policyTypes', flexGrow: 1, cellRenderer: (pt) => <span className="text-gray-400">{pt}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={networkPolicies}
-                            onRowClick={(np: any) => handleResourceClick(np, 'networkpolicy')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* NETWORK: NETWORK POLICIES */}
+                {/* NETWORK: NETWORK POLICIES */}
+                {(activeView === 'networkpolicies') && (
+                    <GenericResourceView
+                        viewKey="networkpolicies"
+                        description="Controls how groups of Pods are allowed to communicate with each other and other network endpoints."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Pod Selector', dataKey: 'podSelector', flexGrow: 1, cellRenderer: (ps) => <span className="text-gray-400">{ps}</span> },
+                            { label: 'Policy Types', dataKey: 'policyTypes', flexGrow: 1, cellRenderer: (pt) => <span className="text-gray-400">{pt}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={networkPolicies}
+                        onRowClick={(np: any) => handleResourceClick(np, 'networkpolicy')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* STORAGE: PVC */}
-                    {/* STORAGE: PVC */}
-                    {(activeView === 'persistentvolumeclaims') && (
-                        <GenericResourceView
-                            viewKey="pvcs"
-                            description="A request for storage by a user."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
-                                { label: 'Volume', dataKey: 'volume', flexGrow: 1, cellRenderer: (v) => <span className="text-gray-400">{v}</span> },
-                                { label: 'Capacity', dataKey: 'capacity', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Access Modes', dataKey: 'accessModes', flexGrow: 1, cellRenderer: (am) => <span className="text-gray-400">{am}</span> },
-                                { label: 'Storage Class', dataKey: 'storageClass', flexGrow: 1, cellRenderer: (sc) => <span className="text-gray-400">{sc}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={pvcs}
-                            onRowClick={(pvc: any) => handleResourceClick(pvc, 'persistentvolumeclaim')}
-                        />
-                    )}
+                {/* STORAGE: PVC */}
+                {/* STORAGE: PVC */}
+                {(activeView === 'persistentvolumeclaims') && (
+                    <GenericResourceView
+                        viewKey="pvcs"
+                        description="A request for storage by a user."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
+                            { label: 'Volume', dataKey: 'volume', flexGrow: 1, cellRenderer: (v) => <span className="text-gray-400">{v}</span> },
+                            { label: 'Capacity', dataKey: 'capacity', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Access Modes', dataKey: 'accessModes', flexGrow: 1, cellRenderer: (am) => <span className="text-gray-400">{am}</span> },
+                            { label: 'Storage Class', dataKey: 'storageClass', flexGrow: 1, cellRenderer: (sc) => <span className="text-gray-400">{sc}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={pvcs}
+                        onRowClick={(pvc: any) => handleResourceClick(pvc, 'persistentvolumeclaim')}
+                    />
+                )}
 
-                    {/* STORAGE: PV */}
-                    {(activeView === 'persistentvolumes') && (
-                        <GenericResourceView
-                            viewKey="persistentvolumes"
-                            description="A piece of storage in the cluster that has been provisioned by an administrator or dynamically provisioned using Storage Classes."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Capacity', dataKey: 'capacity', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Access Modes', dataKey: 'accessModes', flexGrow: 1, cellRenderer: (am) => <span className="text-gray-400">{am}</span> },
-                                { label: 'Reclaim', dataKey: 'reclaimPolicy', width: 100, flexGrow: 0, cellRenderer: (rp) => <span className="text-gray-400">{rp}</span> },
-                                { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
-                                { label: 'Claim', dataKey: 'claim', flexGrow: 1, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                                { label: 'Storage Class', dataKey: 'storageClass', flexGrow: 1, cellRenderer: (sc) => <span className="text-gray-400">{sc}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={pvs}
-                            onRowClick={(pv: any) => handleResourceClick(pv, 'persistentvolume')}
-                        />
-                    )}
+                {/* STORAGE: PV */}
+                {(activeView === 'persistentvolumes') && (
+                    <GenericResourceView
+                        viewKey="persistentvolumes"
+                        description="A piece of storage in the cluster that has been provisioned by an administrator or dynamically provisioned using Storage Classes."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Capacity', dataKey: 'capacity', width: 100, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Access Modes', dataKey: 'accessModes', flexGrow: 1, cellRenderer: (am) => <span className="text-gray-400">{am}</span> },
+                            { label: 'Reclaim', dataKey: 'reclaimPolicy', width: 100, flexGrow: 0, cellRenderer: (rp) => <span className="text-gray-400">{rp}</span> },
+                            { label: 'Status', dataKey: 'status', width: 100, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s}</span> },
+                            { label: 'Claim', dataKey: 'claim', flexGrow: 1, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
+                            { label: 'Storage Class', dataKey: 'storageClass', flexGrow: 1, cellRenderer: (sc) => <span className="text-gray-400">{sc}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={pvs}
+                        onRowClick={(pv: any) => handleResourceClick(pv, 'persistentvolume')}
+                    />
+                )}
 
-                    {/* STORAGE: STORAGE CLASSES */}
-                    {(activeView === 'storageclasses') && (
-                        <GenericResourceView
-                            viewKey="storageclasses"
-                            description="Describes the classes of storage offered by the cluster."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Provisioner', dataKey: 'provisioner', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400">{p}</span> },
-                                { label: 'Reclaim Policy', dataKey: 'reclaimPolicy', width: 120, flexGrow: 0, cellRenderer: (rp) => <span className="text-gray-400">{rp}</span> },
-                                { label: 'Volume Binding Mode', dataKey: 'volumeBindingMode', width: 150, flexGrow: 0, cellRenderer: (vbm) => <span className="text-gray-400">{vbm}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={storageClasses}
-                            onRowClick={(sc: any) => handleResourceClick(sc, 'storageclass')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* STORAGE: STORAGE CLASSES */}
+                {(activeView === 'storageclasses') && (
+                    <GenericResourceView
+                        viewKey="storageclasses"
+                        description="Describes the classes of storage offered by the cluster."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Provisioner', dataKey: 'provisioner', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400">{p}</span> },
+                            { label: 'Reclaim Policy', dataKey: 'reclaimPolicy', width: 120, flexGrow: 0, cellRenderer: (rp) => <span className="text-gray-400">{rp}</span> },
+                            { label: 'Volume Binding Mode', dataKey: 'volumeBindingMode', width: 150, flexGrow: 0, cellRenderer: (vbm) => <span className="text-gray-400">{vbm}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={storageClasses}
+                        onRowClick={(sc: any) => handleResourceClick(sc, 'storageclass')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {/* CONFIG RESOURCES */}
-                    {(activeView === 'configmaps') && (
-                        <GenericResourceView
-                            viewKey="configmaps"
-                            description="ConfigMaps allow you to decouple configuration artifacts from image content."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Data Keys', dataKey: 'data', flexGrow: 1, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={configMaps}
-                            onRowClick={(cm: any) => handleResourceClick(cm, 'configmap')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {/* CONFIG RESOURCES */}
+                {(activeView === 'configmaps') && (
+                    <GenericResourceView
+                        viewKey="configmaps"
+                        description="ConfigMaps allow you to decouple configuration artifacts from image content."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Data Keys', dataKey: 'data', flexGrow: 1, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={configMaps}
+                        onRowClick={(cm: any) => handleResourceClick(cm, 'configmap')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'secrets') && (
-                        <GenericResourceView
-                            viewKey="secrets"
-                            description="Secrets let you store and manage sensitive information."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Type', dataKey: 'type', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400 text-xs">{t}</span> },
-                                { label: 'Data Keys', dataKey: 'data', flexGrow: 1, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={secrets}
-                            onRowClick={(secret: any) => handleResourceClick(secret, 'secret')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {(activeView === 'secrets') && (
+                    <GenericResourceView
+                        viewKey="secrets"
+                        description="Secrets let you store and manage sensitive information."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Type', dataKey: 'type', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400 text-xs">{t}</span> },
+                            { label: 'Data Keys', dataKey: 'data', flexGrow: 1, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={secrets}
+                        onRowClick={(secret: any) => handleResourceClick(secret, 'secret')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'horizontalpodautoscalers') && (
-                        <GenericResourceView
-                            viewKey="horizontalpodautoscalers"
-                            description="Automatically scales the number of pods based on observed metrics."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Reference', dataKey: 'reference', flexGrow: 1, cellRenderer: (r) => <span className="text-blue-400 text-sm">{r}</span> },
-                                { label: 'Min Pods', dataKey: 'minPods', width: 80, flexGrow: 0, cellRenderer: (min) => <span className="text-gray-400">{min}</span> },
-                                { label: 'Max Pods', dataKey: 'maxPods', width: 80, flexGrow: 0, cellRenderer: (max) => <span className="text-gray-400">{max}</span> },
-                                { label: 'Replicas', dataKey: 'replicas', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={horizontalPodAutoscalers}
-                            onRowClick={(hpa: any) => handleResourceClick(hpa, 'horizontalpodautoscaler')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {(activeView === 'horizontalpodautoscalers') && (
+                    <GenericResourceView
+                        viewKey="horizontalpodautoscalers"
+                        description="Automatically scales the number of pods based on observed metrics."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Reference', dataKey: 'reference', flexGrow: 1, cellRenderer: (r) => <span className="text-blue-400 text-sm">{r}</span> },
+                            { label: 'Min Pods', dataKey: 'minPods', width: 80, flexGrow: 0, cellRenderer: (min) => <span className="text-gray-400">{min}</span> },
+                            { label: 'Max Pods', dataKey: 'maxPods', width: 80, flexGrow: 0, cellRenderer: (max) => <span className="text-gray-400">{max}</span> },
+                            { label: 'Replicas', dataKey: 'replicas', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={horizontalPodAutoscalers}
+                        onRowClick={(hpa: any) => handleResourceClick(hpa, 'horizontalpodautoscaler')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'poddisruptionbudgets') && (
-                        <GenericResourceView
-                            viewKey="poddisruptionbudgets"
-                            description="Limits the number of pods that can be down simultaneously from voluntary disruptions."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                                { label: 'Min Available', dataKey: 'minAvailable', width: 100, flexGrow: 0, cellRenderer: (ma) => <span className="text-gray-400">{ma || '-'}</span> },
-                                { label: 'Max Unavailable', dataKey: 'maxUnavailable', width: 100, flexGrow: 0, cellRenderer: (mu) => <span className="text-gray-400">{mu || '-'}</span> },
-                                { label: 'Allowed Disruptions', dataKey: 'allowed', width: 120, flexGrow: 0, cellRenderer: (ad) => <span className="text-gray-400">{ad}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={podDisruptionBudgets}
-                            onRowClick={(pdb: any) => handleResourceClick(pdb, 'poddisruptionbudget')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {(activeView === 'poddisruptionbudgets') && (
+                    <GenericResourceView
+                        viewKey="poddisruptionbudgets"
+                        description="Limits the number of pods that can be down simultaneously from voluntary disruptions."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
+                            { label: 'Min Available', dataKey: 'minAvailable', width: 100, flexGrow: 0, cellRenderer: (ma) => <span className="text-gray-400">{ma || '-'}</span> },
+                            { label: 'Max Unavailable', dataKey: 'maxUnavailable', width: 100, flexGrow: 0, cellRenderer: (mu) => <span className="text-gray-400">{mu || '-'}</span> },
+                            { label: 'Allowed Disruptions', dataKey: 'allowed', width: 120, flexGrow: 0, cellRenderer: (ad) => <span className="text-gray-400">{ad}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={podDisruptionBudgets}
+                        onRowClick={(pdb: any) => handleResourceClick(pdb, 'poddisruptionbudget')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'mutatingwebhookconfigurations') && (
-                        <GenericResourceView
-                            viewKey="mutatingwebhookconfigurations"
-                            description="Defines admission webhooks that can mutate objects before they are stored."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Webhooks', dataKey: 'webhooks', flexGrow: 1, cellRenderer: (w) => <span className="text-gray-400">{w}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={mutatingWebhookConfigurations}
-                            onRowClick={(mwc: any) => handleResourceClick(mwc, 'mutatingwebhookconfiguration')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {(activeView === 'mutatingwebhookconfigurations') && (
+                    <GenericResourceView
+                        viewKey="mutatingwebhookconfigurations"
+                        description="Defines admission webhooks that can mutate objects before they are stored."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Webhooks', dataKey: 'webhooks', flexGrow: 1, cellRenderer: (w) => <span className="text-gray-400">{w}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={mutatingWebhookConfigurations}
+                        onRowClick={(mwc: any) => handleResourceClick(mwc, 'mutatingwebhookconfiguration')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'validatingwebhookconfigurations') && (
-                        <GenericResourceView
-                            viewKey="validatingwebhookconfigurations"
-                            description="Defines admission webhooks that can validate objects before they are stored."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Webhooks', dataKey: 'webhooks', flexGrow: 1, cellRenderer: (w) => <span className="text-gray-400">{w}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={validatingWebhookConfigurations}
-                            onRowClick={(vwc: any) => handleResourceClick(vwc, 'validatingwebhookconfiguration')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {(activeView === 'validatingwebhookconfigurations') && (
+                    <GenericResourceView
+                        viewKey="validatingwebhookconfigurations"
+                        description="Defines admission webhooks that can validate objects before they are stored."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Webhooks', dataKey: 'webhooks', flexGrow: 1, cellRenderer: (w) => <span className="text-gray-400">{w}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={validatingWebhookConfigurations}
+                        onRowClick={(vwc: any) => handleResourceClick(vwc, 'validatingwebhookconfiguration')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'priorityclasses') && (
-                        <GenericResourceView
-                            viewKey="priorityclasses"
-                            description="Defines the priority of pods relative to other pods."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Value', dataKey: 'value', width: 100, flexGrow: 0, cellRenderer: (v) => <span className="text-gray-400">{v}</span> },
-                                { label: 'Global Default', dataKey: 'globalDefault', width: 100, flexGrow: 0, cellRenderer: (gd) => <span className="text-gray-400">{gd ? 'Yes' : 'No'}</span> },
-                                { label: 'Description', dataKey: 'description', flexGrow: 1, cellRenderer: (d) => <span className="text-gray-400 text-sm max-w-xs truncate">{d || '-'}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={priorityClasses}
-                            onRowClick={(pc: any) => handleResourceClick(pc, 'priorityclass')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
+                {(activeView === 'priorityclasses') && (
+                    <GenericResourceView
+                        viewKey="priorityclasses"
+                        description="Defines the priority of pods relative to other pods."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Value', dataKey: 'value', width: 100, flexGrow: 0, cellRenderer: (v) => <span className="text-gray-400">{v}</span> },
+                            { label: 'Global Default', dataKey: 'globalDefault', width: 100, flexGrow: 0, cellRenderer: (gd) => <span className="text-gray-400">{gd ? 'Yes' : 'No'}</span> },
+                            { label: 'Description', dataKey: 'description', flexGrow: 1, cellRenderer: (d) => <span className="text-gray-400 text-sm max-w-xs truncate">{d || '-'}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={priorityClasses}
+                        onRowClick={(pc: any) => handleResourceClick(pc, 'priorityclass')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
-                    {(activeView === 'runtimeclasses') && (
-                        <GenericResourceView
-                            viewKey="runtimeclasses"
-                            description="Defines different classes of runtimes that may be used to run containers."
-                            columns={[
-                                { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                                { label: 'Handler', dataKey: 'handler', flexGrow: 1, cellRenderer: (h) => <span className="text-gray-400">{h}</span> },
-                                { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                            ]}
-                            data={runtimeClasses}
-                            onRowClick={(rc: any) => handleResourceClick(rc, 'runtimeclass')}
-                            searchQuery={debouncedSearchQuery}
-                        />
-                    )}
-                </AnimatePresence>
+                {(activeView === 'runtimeclasses') && (
+                    <GenericResourceView
+                        viewKey="runtimeclasses"
+                        description="Defines different classes of runtimes that may be used to run containers."
+                        columns={[
+                            { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
+                            { label: 'Handler', dataKey: 'handler', flexGrow: 1, cellRenderer: (h) => <span className="text-gray-400">{h}</span> },
+                            { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
+                        ]}
+                        data={runtimeClasses}
+                        onRowClick={(rc: any) => handleResourceClick(rc, 'runtimeclass')}
+                        searchQuery={debouncedSearchQuery}
+                    />
+                )}
 
 
 
