@@ -31,15 +31,123 @@ export class K8sService {
     private activeForwards: Map<string, ActiveForward> = new Map();
     private activeWatchers: Map<string, any> = new Map();
     private activeLogStreams: Map<string, any> = new Map();
+    private lastReloadTime: number = 0;
+    private currentContext: string = '';
+    private readonly RELOAD_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
     constructor() {
         this.kc = new KubeConfig();
         try {
             this.kc.loadFromDefault();
+            this.lastReloadTime = Date.now();
             console.log('KubeConfig loaded from default.');
         } catch (err) {
             console.error('Error loading KubeConfig:', err);
         }
+    }
+
+    /**
+     * Clear AWS CLI credential cache
+     * This forces the AWS CLI to fetch fresh credentials on next use
+     */
+    private async clearAwsCredentialCache(): Promise<void> {
+        try {
+            const os = await import('os');
+            const fs = await import('fs');
+            const path = await import('path');
+
+            const homeDir = os.homedir();
+            const awsCacheDir = path.join(homeDir, '.aws', 'cli', 'cache');
+            const awsSsoCacheDir = path.join(homeDir, '.aws', 'sso', 'cache');
+
+            // Clear CLI cache
+            if (fs.existsSync(awsCacheDir)) {
+                const files = fs.readdirSync(awsCacheDir);
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        fs.unlinkSync(path.join(awsCacheDir, file));
+                        console.log(`[k8s] Deleted AWS CLI cache file: ${file}`);
+                    }
+                }
+            }
+
+            // Clear SSO cache
+            if (fs.existsSync(awsSsoCacheDir)) {
+                const files = fs.readdirSync(awsSsoCacheDir);
+                for (const file of files) {
+                    if (file.endsWith('.json')) {
+                        fs.unlinkSync(path.join(awsSsoCacheDir, file));
+                        console.log(`[k8s] Deleted AWS SSO cache file: ${file}`);
+                    }
+                }
+            }
+
+            console.log('[k8s] AWS credential cache cleared');
+        } catch (error) {
+            console.error('[k8s] Error clearing AWS credential cache:', error);
+        }
+    }
+
+    /**
+     * Reload KubeConfig from default location
+     * This is important for AWS EKS clusters where credentials may expire or change
+     */
+    private reloadKubeConfig() {
+        try {
+            // Create a completely new KubeConfig instance to avoid any caching
+            this.kc = new KubeConfig();
+            this.kc.loadFromDefault();
+            this.lastReloadTime = Date.now();
+            console.log('[k8s] KubeConfig reloaded from default with new instance.');
+        } catch (err) {
+            console.error('[k8s] Error reloading KubeConfig:', err);
+        }
+    }
+
+    /**
+     * Check if an error is a 401 authentication error
+     */
+    private is401Error(error: any): boolean {
+        return error?.code === 401 ||
+            error?.statusCode === 401 ||
+            error?.message?.includes('401') ||
+            error?.message?.includes('Unauthorized');
+    }
+
+    /**
+     * Set context and reload config - ALWAYS reload on context switch to get fresh tokens
+     */
+    private async setContextWithSmartReload(contextName: string) {
+        const now = Date.now();
+        const timeSinceLastReload = now - this.lastReloadTime;
+        const isContextSwitch = this.currentContext !== contextName;
+
+        // ALWAYS reload on context switch to pick up fresh tokens
+        // Also reload if 10 minutes have passed
+        if (isContextSwitch || timeSinceLastReload > this.RELOAD_INTERVAL_MS) {
+            console.log(`[k8s] Reloading config - Context switch: ${isContextSwitch}, Time since reload: ${Math.round(timeSinceLastReload / 1000)}s`);
+
+            // Clear AWS credential cache to force fresh token generation
+            await this.clearAwsCredentialCache();
+
+            this.reloadKubeConfig();
+
+            // After reloading, set the context and force credential refresh
+            this.kc.setCurrentContext(contextName);
+
+            // Force the client to refresh credentials by creating a new API client
+            // This ensures the exec auth plugin runs to get fresh tokens
+            try {
+                const testApi = this.kc.makeApiClient(CoreV1Api);
+                console.log('[k8s] API client created with fresh credentials');
+            } catch (err) {
+                console.error('[k8s] Error creating API client:', err);
+            }
+        } else {
+            this.kc.setCurrentContext(contextName);
+        }
+
+        this.currentContext = contextName;
     }
 
     getActivePortForwards() {
@@ -265,7 +373,7 @@ export class K8sService {
     }
 
     async getNamespaces(contextName: string) {
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
         // Error propagation is required for connection verification
         const res = await k8sApi.listNamespace();
@@ -275,7 +383,7 @@ export class K8sService {
 
     async getNamespacesDetails(contextName: string) {
         console.log(`[k8s] getNamespacesDetails for ${contextName}`);
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
         try {
             const res = await k8sApi.listNamespace();
@@ -297,7 +405,7 @@ export class K8sService {
     }
 
     async getDeployments(contextName: string, namespaces: string[] = []) {
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const k8sApi = this.kc.makeApiClient(AppsV1Api);
 
         let items: any[] = [];
@@ -403,7 +511,7 @@ export class K8sService {
     }
 
     async getPods(contextName: string, namespaces: string[] = []) {
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
 
         let items: any[] = [];
@@ -489,7 +597,7 @@ export class K8sService {
 
         const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
         console.log(`[k8s] Starting watch for pods in ${activeWatchersKey(namespaces)}`);
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
 
         const path = (namespaces.length === 0 || namespaces.includes('all'))
@@ -555,7 +663,7 @@ export class K8sService {
 
         const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
         console.log(`[k8s] Starting watch for deployments in ${activeWatchersKey(namespaces)}`);
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
 
         const path = (namespaces.length === 0 || namespaces.includes('all'))
@@ -1141,7 +1249,7 @@ export class K8sService {
     }
     async getNodes(contextName: string) {
         console.log(`Getting Nodes for ${contextName}`);
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
         try {
             const res = await k8sApi.listNode();
@@ -1186,11 +1294,71 @@ export class K8sService {
         }
     }
 
+    async startNodeWatch(contextName: string, onEvent: (event: string, node: any) => void) {
+        this.stopNodeWatch();
+
+        console.log(`[k8s] Starting watch for nodes`);
+        await this.setContextWithSmartReload(contextName);
+        const watch = new Watch(this.kc);
+
+        const path = '/api/v1/nodes';
+
+        try {
+            const req = await watch.watch(
+                path,
+                {},
+                (type, apiObj, _watchObj) => {
+                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
+                        if (!apiObj || !apiObj.metadata) return;
+
+                        const node = {
+                            name: apiObj.metadata.name,
+                            status: apiObj.status?.conditions?.find((c: any) => c.type === 'Ready')?.status === 'True' ? 'Ready' : 'NotReady',
+                            roles: Object.keys(apiObj.metadata.labels || {})
+                                .filter((k: string) => k.startsWith('node-role.kubernetes.io/'))
+                                .map((k: string) => k.split('/')[1])
+                                .join(', ') || 'worker',
+                            version: apiObj.status?.nodeInfo?.kubeletVersion,
+                            age: apiObj.metadata.creationTimestamp,
+                            cpu: apiObj.status?.capacity?.cpu,
+                            memory: apiObj.status?.capacity?.memory,
+                            metadata: apiObj.metadata,
+                            spec: apiObj.spec,
+                            statusObj: apiObj.status
+                        };
+                        onEvent(type, node);
+                    }
+                },
+                (err) => {
+                    // Ignore abort errors as they are expected when stopping the watch
+                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
+                        console.log('[k8s] Node watch aborted (expected)');
+                        return;
+                    }
+                    if (err) console.error('Node Watch exited with error', err);
+                }
+            );
+
+            this.activeWatchers.set('nodes', req);
+        } catch (err) {
+            console.error('[k8s] Failed to start node watch:', err);
+        }
+    }
+
+    stopNodeWatch() {
+        if (this.activeWatchers.has('nodes')) {
+            console.log('[k8s] Stopping node watch');
+            const req = this.activeWatchers.get('nodes');
+            if (req && req.abort) req.abort();
+            this.activeWatchers.delete('nodes');
+        }
+    }
+
 
 
     async getCRDs(contextName: string) {
         console.log(`Getting CRDs for ${contextName}`);
-        this.kc.setCurrentContext(contextName);
+        await this.setContextWithSmartReload(contextName);
         const k8sApi = this.kc.makeApiClient(ApiextensionsV1Api);
         try {
             const res = await k8sApi.listCustomResourceDefinition();
@@ -2223,6 +2391,221 @@ export class K8sService {
             throw error;
         }
     }
+
+    /**
+     * Generic method to get YAML for any Kubernetes resource
+     * @param contextName - Kubernetes context name
+     * @param apiVersion - API version (e.g., 'v1', 'apps/v1', 'networking.k8s.io/v1')
+     * @param kind - Resource kind (e.g., 'Pod', 'Deployment', 'Service')
+     * @param name - Resource name
+     * @param namespace - Namespace (optional, for cluster-scoped resources)
+     */
+    public async getResourceYaml(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<string> {
+        console.log(`[k8s] getResourceYaml for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+        this.kc.setCurrentContext(contextName);
+
+        try {
+            // Build the API path based on apiVersion, kind, and namespace
+            let path: string;
+            const plural = this.pluralizeKind(kind);
+
+            if (apiVersion === 'v1') {
+                // Core API
+                if (namespace) {
+                    path = `/api/v1/namespaces/${namespace}/${plural}/${name}`;
+                } else {
+                    path = `/api/v1/${plural}/${name}`;
+                }
+            } else {
+                // Named group API
+                if (namespace) {
+                    path = `/apis/${apiVersion}/namespaces/${namespace}/${plural}/${name}`;
+                } else {
+                    path = `/apis/${apiVersion}/${plural}/${name}`;
+                }
+            }
+
+            console.log(`[k8s] Fetching resource from path: ${path}`);
+
+            // Use the low-level request API
+            const cluster = this.kc.getCurrentCluster();
+            if (!cluster) {
+                throw new Error('No current cluster configured');
+            }
+
+            const https = await import('https');
+            const url = new URL(path, cluster.server);
+
+            // Apply authentication and TLS options from kubeconfig
+            const requestOptions: any = {};
+            await this.kc.applyToHTTPSOptions(requestOptions);
+
+            return new Promise<string>((resolve, reject) => {
+                const req = https.request({
+                    hostname: url.hostname,
+                    port: url.port || 443,
+                    path: url.pathname,
+                    method: 'GET',
+                    ...requestOptions
+                }, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                            try {
+                                const resource = JSON.parse(data);
+                                resolve(yaml.dump(resource));
+                            } catch (e) {
+                                reject(new Error(`Failed to parse response: ${e}`));
+                            }
+                        } else {
+                            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                        }
+                    });
+                });
+
+                req.on('error', (e) => reject(e));
+                req.end();
+            });
+        } catch (error: any) {
+            console.error(`Error getting resource YAML:`, error);
+            throw new Error(`Failed to get ${kind} YAML: ${error.message || error}`);
+        }
+    }
+
+    /**
+     * Generic method to update YAML for any Kubernetes resource
+     * @param contextName - Kubernetes context name
+     * @param apiVersion - API version (e.g., 'v1', 'apps/v1', 'networking.k8s.io/v1')
+     * @param kind - Resource kind (e.g., 'Pod', 'Deployment', 'Service')
+     * @param name - Resource name
+     * @param yamlContent - New YAML content
+     * @param namespace - Namespace (optional, for cluster-scoped resources)
+     */
+    public async updateResourceYaml(contextName: string, apiVersion: string, kind: string, name: string, yamlContent: string, namespace?: string): Promise<any> {
+        console.log(`[k8s] updateResourceYaml for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+        this.kc.setCurrentContext(contextName);
+
+        let newObj: any;
+        try {
+            newObj = yaml.load(yamlContent);
+        } catch (e) {
+            throw new Error(`Invalid YAML: ${e}`);
+        }
+
+        try {
+            // Build the API path based on apiVersion, kind, and namespace
+            let path: string;
+            const plural = this.pluralizeKind(kind);
+
+            if (apiVersion === 'v1') {
+                // Core API
+                if (namespace) {
+                    path = `/api/v1/namespaces/${namespace}/${plural}/${name}`;
+                } else {
+                    path = `/api/v1/${plural}/${name}`;
+                }
+            } else {
+                // Named group API
+                if (namespace) {
+                    path = `/apis/${apiVersion}/namespaces/${namespace}/${plural}/${name}`;
+                } else {
+                    path = `/apis/${apiVersion}/${plural}/${name}`;
+                }
+            }
+
+            console.log(`[k8s] Updating resource at path: ${path}`);
+
+            // Use the low-level request API
+            const cluster = this.kc.getCurrentCluster();
+            if (!cluster) {
+                throw new Error('No current cluster configured');
+            }
+
+            const https = await import('https');
+            const url = new URL(path, cluster.server);
+            const body = JSON.stringify(newObj);
+
+            // Apply authentication and TLS options from kubeconfig
+            const requestOptions: any = {};
+            await this.kc.applyToHTTPSOptions(requestOptions);
+
+            return new Promise<any>((resolve, reject) => {
+                const req = https.request({
+                    hostname: url.hostname,
+                    port: url.port || 443,
+                    path: url.pathname,
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Content-Length': Buffer.byteLength(body),
+                        ...(requestOptions.headers || {})
+                    },
+                    ...requestOptions
+                }, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                            try {
+                                const resource = JSON.parse(data);
+                                resolve(resource);
+                            } catch (e) {
+                                reject(new Error(`Failed to parse response: ${e}`));
+                            }
+                        } else {
+                            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                        }
+                    });
+                });
+
+                req.on('error', (e) => reject(e));
+                req.write(body);
+                req.end();
+            });
+        } catch (error: any) {
+            console.error(`Error updating resource YAML:`, error);
+            throw new Error(`Failed to update ${kind} YAML: ${error.message || error}`);
+        }
+    }
+
+    /**
+     * Helper method to pluralize Kubernetes resource kinds
+     * This is a simple implementation - Kubernetes uses specific plural forms
+     */
+    private pluralizeKind(kind: string): string {
+        const lowerKind = kind.toLowerCase();
+
+        // Special cases
+        const specialPlurals: Record<string, string> = {
+            'endpoints': 'endpoints',
+            'endpointslice': 'endpointslices',
+            'ingress': 'ingresses',
+            'ingressclass': 'ingressclasses',
+            'networkpolicy': 'networkpolicies',
+            'poddisruptionbudget': 'poddisruptionbudgets',
+            'priorityclass': 'priorityclasses',
+            'runtimeclass': 'runtimeclasses',
+            'storageclass': 'storageclasses',
+            'mutatingwebhookconfiguration': 'mutatingwebhookconfigurations',
+            'validatingwebhookconfiguration': 'validatingwebhookconfigurations',
+            'horizontalpodautoscaler': 'horizontalpodautoscalers',
+        };
+
+        if (specialPlurals[lowerKind]) {
+            return specialPlurals[lowerKind];
+        }
+
+        // Default pluralization rules
+        if (lowerKind.endsWith('s')) {
+            return lowerKind + 'es';
+        } else if (lowerKind.endsWith('y')) {
+            return lowerKind.slice(0, -1) + 'ies';
+        } else {
+            return lowerKind + 's';
+        }
+    }
+
     public decodeCertificate(certData: string): CertificateInfo | null {
         try {
             const cert = new crypto.X509Certificate(certData);

@@ -10,6 +10,7 @@ interface JobDetailsProps {
     onExplain?: () => void;
     isExplaining?: boolean;
     onShowTopology?: () => void;
+    onOpenYaml?: () => void;
     clusterName?: string;
 }
 

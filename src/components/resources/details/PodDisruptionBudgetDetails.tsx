@@ -6,6 +6,7 @@ interface PodDisruptionBudgetDetailsProps {
     onExplain?: () => void;
     isExplaining?: boolean;
     explanation?: string | null;
+    onOpenYaml?: () => void;
 }
 
 export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProps> = ({
@@ -49,8 +50,8 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                         <button
                             onClick={() => setShowRaw(!showRaw)}
                             className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showRaw
-                                    ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent'
-                                    : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent'
+                                ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent'
+                                : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent'
                                 } hover:shadow-lg hover:scale-105 active:scale-95`}
                         >
                             <Code size={10} /> {showRaw ? 'Hide' : 'Show'} Raw
@@ -247,10 +248,10 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                                     {status.conditions.map((condition: any, index: number) => (
                                         <div key={index} className="flex items-start gap-3 p-2 bg-black/20 rounded">
                                             <div className={`mt-0.5 ${condition.status === 'True'
-                                                    ? 'text-green-400'
-                                                    : condition.status === 'False'
-                                                        ? 'text-red-400'
-                                                        : 'text-yellow-400'
+                                                ? 'text-green-400'
+                                                : condition.status === 'False'
+                                                    ? 'text-red-400'
+                                                    : 'text-yellow-400'
                                                 }`}>
                                                 {condition.status === 'True' ? (
                                                     <CheckCircle size={16} />
@@ -264,10 +265,10 @@ export const PodDisruptionBudgetDetails: React.FC<PodDisruptionBudgetDetailsProp
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-sm font-medium text-white">{condition.type}</span>
                                                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${condition.status === 'True'
-                                                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                                            : condition.status === 'False'
-                                                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                                                                : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                                                        ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                                        : condition.status === 'False'
+                                                            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                                            : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
                                                         }`}>
                                                         {condition.status}
                                                     </span>

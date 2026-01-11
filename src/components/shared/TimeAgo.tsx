@@ -26,8 +26,14 @@ export const TimeAgo: React.FC<TimeAgoProps> = ({ timestamp }) => {
                 setLabel(`${diffInSeconds}s`);
             } else if (diffInSeconds < 3600) {
                 setLabel(`${Math.floor(diffInSeconds / 60)}m`);
-            } else {
+            } else if (diffInSeconds < 86400) {
+                // Less than 24 hours - show hours
                 setLabel(`${Math.floor(diffInSeconds / 3600)}h`);
+            } else {
+                // Between 24 and 48 hours - show days and hours
+                const days = Math.floor(diffInSeconds / 86400);
+                const hours = Math.floor((diffInSeconds % 86400) / 3600);
+                setLabel(`${days}d${hours}h`);
             }
         };
 

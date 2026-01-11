@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Box, Activity, Tag, List } from 'lucide-react';
+import { Box, Activity, Tag, List, Edit } from 'lucide-react';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
 import { ContainerResources } from './ContainerResources';
 
@@ -10,10 +10,11 @@ interface DeploymentDetailsProps {
     onExplain?: () => void;
     isExplaining?: boolean;
     onShowTopology?: () => void;
+    onOpenYaml?: () => void;
     clusterName?: string;
 }
 
-export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment, explanation, onExplain, isExplaining, onShowTopology, clusterName }) => {
+export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment, explanation, onExplain, isExplaining, onShowTopology, onOpenYaml, clusterName }) => {
     const [showTopology, setShowTopology] = useState(false);
     if (!deployment) return null;
 
@@ -39,7 +40,14 @@ export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider">Metadata</h3>
                     <div className="flex items-center gap-2">
-
+                        {onOpenYaml && (
+                            <button
+                                onClick={onOpenYaml}
+                                className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95"
+                            >
+                                <Edit size={12} /> Edit YAML
+                            </button>
+                        )}
                         {onShowTopology && (
                             <button
                                 onClick={() => setShowTopology(!showTopology)}

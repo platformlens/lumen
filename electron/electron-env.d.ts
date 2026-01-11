@@ -88,6 +88,11 @@ interface Window {
     getPodDisruptionBudget: (contextName: string, namespace: string, name: string) => Promise<any>
     getPdbYaml: (contextName: string, namespace: string, name: string) => Promise<string>
     updatePdbYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => Promise<any>
+
+    // Generic resource YAML operations
+    getResourceYaml: (contextName: string, apiVersion: string, kind: string, name: string, namespace?: string) => Promise<string>
+    updateResourceYaml: (contextName: string, apiVersion: string, kind: string, name: string, yamlContent: string, namespace?: string) => Promise<any>
+
     getMutatingWebhookConfigurations: (contextName: string) => Promise<any[]>
     getMutatingWebhookConfiguration: (contextName: string, name: string) => Promise<any>
     getValidatingWebhookConfigurations: (contextName: string) => Promise<any[]>
@@ -126,6 +131,9 @@ interface Window {
     watchDeployments: (contextName: string, namespaces: string[]) => void
     stopWatchDeployments: () => void
     onDeploymentChange: (callback: (type: string, deployment: any) => void) => (() => void)
+    watchNodes: (contextName: string) => void
+    stopWatchNodes: () => void
+    onNodeChange: (callback: (type: string, node: any) => void) => (() => void)
     streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => void
     stopStreamPodLogs: (namespace: string, name: string, containerName: string) => Promise<void>
     onPodLogChunk: (callback: (streamId: string, chunk: string) => void) => (() => void)
@@ -180,6 +188,7 @@ interface Window {
       getDbInstances?: (region: string, vpcId: string) => Promise<any[]>
       getPodIdentities: (region: string, clusterName: string) => Promise<any[]>
       checkAuth: (region: string) => Promise<{ isAuthenticated: boolean; identity?: string; account?: string; error?: string }>
+      clearCache: () => Promise<boolean>
     }
 
     // --- Terminal ---
@@ -190,6 +199,11 @@ interface Window {
       dispose: (id: string) => void
       onData: (callback: (id: string, data: string) => void) => () => void
       onExit: (callback: (id: string, exitCode: number) => void) => () => void
+    }
+
+    // --- App ---
+    app: {
+      restart: () => Promise<void>
     }
   }
 }

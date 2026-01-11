@@ -12,6 +12,7 @@ interface ServiceDetailsProps {
     onExplain?: () => void;
     isExplaining?: boolean;
     onShowTopology?: () => void;
+    onOpenYaml?: () => void;
 }
 
 export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, clusterName, explanation, onExplain, isExplaining, onShowTopology }) => {
@@ -51,8 +52,8 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
                             <button
                                 onClick={() => setShowTopology(!showTopology)}
                                 className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showTopology
-                                        ? 'bg-pink-600/80 hover:bg-pink-500 text-white border-transparent'
-                                        : 'bg-gradient-to-r from-purple-600/80 to-pink-600/80 hover:from-purple-500 hover:to-pink-500 text-white border-transparent'
+                                    ? 'bg-pink-600/80 hover:bg-pink-500 text-white border-transparent'
+                                    : 'bg-gradient-to-r from-purple-600/80 to-pink-600/80 hover:from-purple-500 hover:to-pink-500 text-white border-transparent'
                                     } hover:shadow-lg hover:scale-105 active:scale-95`}
                             >
                                 <span className="text-xs">{showTopology ? '✖️' : '🔗'}</span> {showTopology ? 'Hide' : 'Display'} Topology

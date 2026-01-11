@@ -29,6 +29,7 @@ interface DrawerDetailsRendererProps {
     onNavigate: (kind: string, name: string) => void;
     onOpenLogs: (pod: any, containerName: string) => void;
     onShowTopology?: () => void;
+    onOpenYaml?: (resource: any) => void;
 }
 
 export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
@@ -38,20 +39,21 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
     onExplain,
     onNavigate,
     onOpenLogs,
-    onShowTopology
+    onShowTopology,
+    onOpenYaml
 }) => {
     if (!selectedResource || !detailedResource) return null;
 
     const handleExplain = () => onExplain(selectedResource);
+    const handleOpenYaml = onOpenYaml ? () => onOpenYaml(selectedResource) : undefined;
 
     switch (selectedResource.type) {
         case 'deployment':
             return (
                 <DeploymentDetails
                     deployment={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -60,9 +62,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <ReplicaSetDetails
                     replicaSet={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onNavigate={onNavigate}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
@@ -72,9 +73,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <DaemonSetDetails
                     daemonSet={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -83,9 +83,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <StatefulSetDetails
                     statefulSet={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -94,9 +93,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <JobDetails
                     job={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -105,9 +103,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <CronJobDetails
                     cronJob={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
                 />
@@ -117,9 +114,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                 <ServiceDetails
                     resource={detailedResource}
                     clusterName={clusterName}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                 />
             );
@@ -127,10 +123,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <PodDetails
                     pod={detailedResource}
-
                     onOpenLogs={(container) => onOpenLogs(detailedResource, container)}
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                     onNavigate={onNavigate}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
@@ -153,16 +148,15 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <NamespaceDetails
                     namespace={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'crd-definition':
             return (
                 <CrdDetails
                     crd={detailedResource}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'custom-resource':
@@ -170,9 +164,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                 return (
                     <NodePoolDetails
                         nodePool={detailedResource}
-
                         onExplain={handleExplain}
-
+                        onOpenYaml={handleOpenYaml}
                     />
                 );
 
@@ -181,9 +174,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'endpointslice':
@@ -198,18 +190,16 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'secret':
             return (
                 <SecretDetails
                     secret={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'horizontalpodautoscaler':
@@ -219,27 +209,24 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'poddisruptionbudget':
             return (
                 <PodDisruptionBudgetDetails
                     podDisruptionBudget={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         case 'priorityclass':
             return (
                 <PriorityClassDetails
                     priorityClass={detailedResource}
-
                     onExplain={handleExplain}
-
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         default:

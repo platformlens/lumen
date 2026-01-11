@@ -24,6 +24,12 @@ export const useResourceSorting = () => {
             if (sortConfig.key === 'restarts') {
                 return sortConfig.direction === 'asc' ? a.restarts - b.restarts : b.restarts - a.restarts;
             }
+            if (sortConfig.key === 'replicas') {
+                // Sort by total replicas (desired count)
+                const replicasA = a.replicas || 0;
+                const replicasB = b.replicas || 0;
+                return sortConfig.direction === 'asc' ? replicasA - replicasB : replicasB - replicasA;
+            }
 
             if (sortConfig.key === 'status') {
                 // Determine health: true if available == replicas

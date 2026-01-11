@@ -6,6 +6,7 @@ interface SecretDetailsProps {
     explanation?: string | null;
     onExplain?: () => void;
     isExplaining?: boolean;
+    onOpenYaml?: () => void;
 }
 
 interface DecodedCert {

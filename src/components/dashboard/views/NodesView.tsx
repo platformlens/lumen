@@ -18,6 +18,7 @@ interface NodesViewProps {
 
 export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQuery = '' }) => {
     const [showStats, setShowStats] = React.useState(false);
+    const [sortConfig, setSortConfig] = React.useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
     // Filter Logic
     const filteredNodes = useMemo(() => {
@@ -33,6 +34,62 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
         });
     }, [nodes, searchQuery]);
 
+    // Sort Logic
+    const sortedNodes = useMemo(() => {
+        if (!sortConfig) return filteredNodes;
+
+        const sorted = [...filteredNodes].sort((a, b) => {
+            let aValue: any;
+            let bValue: any;
+
+            switch (sortConfig.key) {
+                case 'name':
+                    aValue = a.name || '';
+                    bValue = b.name || '';
+                    break;
+                case 'status':
+                    aValue = a.status || '';
+                    bValue = b.status || '';
+                    break;
+                case 'age':
+                    aValue = new Date(a.age).getTime();
+                    bValue = new Date(b.age).getTime();
+                    break;
+                case 'instanceType':
+                    aValue = getNodeProviderInfo(a).instanceType || '';
+                    bValue = getNodeProviderInfo(b).instanceType || '';
+                    break;
+                case 'zone':
+                    aValue = getNodeProviderInfo(a).zone || '';
+                    bValue = getNodeProviderInfo(b).zone || '';
+                    break;
+                case 'capacityType':
+                    aValue = getNodeProviderInfo(a).capacityType || '';
+                    bValue = getNodeProviderInfo(b).capacityType || '';
+                    break;
+                default:
+                    return 0;
+            }
+
+            if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        return sorted;
+    }, [filteredNodes, sortConfig]);
+
+    const handleSort = (key: string) => {
+        setSortConfig(prev => {
+            if (prev?.key === key) {
+                // Toggle direction
+                return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+            }
+            // New column, default to ascending
+            return { key, direction: 'asc' };
+        });
+    };
+
     // Calculate Stats based on FILTERED nodes
     const { stats, chartData } = useMemo(() => {
         let onDemand = 0;
@@ -43,7 +100,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
         const zoneMap = new Map<string, number>();
         const typeMap = new Map<string, number>();
 
-        filteredNodes.forEach(node => {
+        sortedNodes.forEach(node => {
             const info = getNodeProviderInfo(node);
             if (info.isSpot) spot++;
             else onDemand++;
@@ -79,7 +136,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             stats: { onDemand, spot, ready, notReady },
             chartData: { capacity: capacityData, zones: zoneData, types: typeData }
         };
-    }, [filteredNodes]);
+    }, [sortedNodes]);
 
     const columns: IColumn[] = [
         {
@@ -100,6 +157,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
         {
             label: 'Instance Type',
             dataKey: 'instanceType',
+            sortable: true,
             width: 140,
             cellRenderer: (_, node) => {
                 const info = getNodeProviderInfo(node);
@@ -109,6 +167,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
         {
             label: 'Zone',
             dataKey: 'zone',
+            sortable: true,
             width: 140,
             cellRenderer: (_, node) => {
                 const info = getNodeProviderInfo(node);
@@ -118,6 +177,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
         {
             label: 'Capacity',
             dataKey: 'capacityType',
+            sortable: true,
             width: 120,
             cellRenderer: (_, node) => {
                 const info = getNodeProviderInfo(node);
@@ -287,8 +347,10 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             <div className="flex-1 min-h-0">
                 <VirtualizedTable
                     columns={columns}
-                    data={filteredNodes}
+                    data={sortedNodes}
                     onRowClick={onRowClick}
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
                 />
             </div>
         </motion.div>

@@ -8,6 +8,7 @@ interface NodePoolDetailsProps {
     explanation?: string | null;
     onExplain?: () => void;
     isExplaining?: boolean;
+    onOpenYaml?: () => void;
 }
 
 export const NodePoolDetails: React.FC<NodePoolDetailsProps> = ({ nodePool, explanation, onExplain, isExplaining }) => {

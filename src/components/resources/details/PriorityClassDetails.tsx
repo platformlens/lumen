@@ -6,6 +6,7 @@ interface PriorityClassDetailsProps {
     onExplain?: () => void;
     isExplaining?: boolean;
     explanation?: string | null;
+    onOpenYaml?: () => void;
 }
 
 export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
@@ -49,8 +50,8 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                         <button
                             onClick={() => setShowRaw(!showRaw)}
                             className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showRaw
-                                    ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent'
-                                    : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent'
+                                ? 'bg-green-600/80 hover:bg-green-500 text-white border-transparent'
+                                : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent'
                                 } hover:shadow-lg hover:scale-105 active:scale-95`}
                         >
                             <Code size={10} /> {showRaw ? 'Hide' : 'Show'} Raw
@@ -174,8 +175,8 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                         </div>
                         <div className="flex items-center gap-2">
                             <span className={`px-3 py-1 rounded-full text-sm font-medium ${preemptionPolicy === 'PreemptLowerPriority'
-                                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                                    : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
                                 }`}>
                                 {preemptionPolicy || 'PreemptLowerPriority'}
                             </span>
@@ -197,8 +198,8 @@ export const PriorityClassDetails: React.FC<PriorityClassDetailsProps> = ({
                         </div>
                         <div className="flex items-center gap-2">
                             <span className={`px-3 py-1 rounded-full text-sm font-medium ${globalDefault
-                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                    : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
                                 }`}>
                                 {globalDefault ? 'Yes' : 'No'}
                             </span>

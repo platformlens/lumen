@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 interface CrdDetailsProps {
     crd: any;
     explanation?: string | null;
+    onOpenYaml?: () => void;
 }
 
 export const CrdDetails: React.FC<CrdDetailsProps> = ({ crd, explanation }) => {
@@ -35,11 +36,11 @@ export const CrdDetails: React.FC<CrdDetailsProps> = ({ crd, explanation }) => {
                 <div className="flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
-                           <FileJson size={20} className="text-purple-400" />
-                           {metadata.name}
+                            <FileJson size={20} className="text-purple-400" />
+                            {metadata.name}
                         </h3>
                         <div className="flex items-center gap-2 mt-1">
-                             <span className="px-2 py-0.5 rounded text-xs font-medium border bg-blue-500/10 text-blue-400 border-blue-500/20">
+                            <span className="px-2 py-0.5 rounded text-xs font-medium border bg-blue-500/10 text-blue-400 border-blue-500/20">
                                 {spec.group}
                             </span>
                             <span className="text-xs text-gray-500">
@@ -48,7 +49,7 @@ export const CrdDetails: React.FC<CrdDetailsProps> = ({ crd, explanation }) => {
                         </div>
                     </div>
                 </div>
-                 {explanation && (
+                {explanation && (
                     <div className="mt-4 p-4 rounded-lg bg-purple-500/10 border border-purple-500/20 animate-in fade-in slide-in-from-top-2 duration-300">
                         <h4 className="flex items-center gap-2 text-sm font-semibold text-purple-300 mb-2">
                             <Sparkles size={14} />
@@ -95,7 +96,7 @@ export const CrdDetails: React.FC<CrdDetailsProps> = ({ crd, explanation }) => {
             </div>
 
             {/* Versions */}
-             <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                 <h4 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
                     <Clock size={16} /> Stored Versions
                 </h4>

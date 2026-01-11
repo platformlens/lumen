@@ -19,6 +19,51 @@ interface DashboardHeaderProps {
 }
 
 /**
+ * Convert view name to display title
+ */
+const getViewTitle = (view: string): string => {
+    const titleMap: Record<string, string> = {
+        'overview': 'Overview',
+        'pods': 'Pods',
+        'deployments': 'Deployments',
+        'replicasets': 'ReplicaSets',
+        'services': 'Services',
+        'nodes': 'Nodes',
+        'namespaces': 'Namespaces',
+        'daemonsets': 'DaemonSets',
+        'statefulsets': 'StatefulSets',
+        'jobs': 'Jobs',
+        'cronjobs': 'CronJobs',
+        'configmaps': 'ConfigMaps',
+        'secrets': 'Secrets',
+        'persistentvolumeclaims': 'Persistent Volume Claims',
+        'persistentvolumes': 'Persistent Volumes',
+        'storageclasses': 'Storage Classes',
+        'ingresses': 'Ingresses',
+        'ingressclasses': 'Ingress Classes',
+        'endpointslices': 'Endpoint Slices',
+        'endpoints': 'Endpoints',
+        'networkpolicies': 'Network Policies',
+        'serviceaccounts': 'Service Accounts',
+        'roles': 'Roles',
+        'rolebindings': 'Role Bindings',
+        'clusterroles': 'Cluster Roles',
+        'clusterrolebindings': 'Cluster Role Bindings',
+        'horizontalpodautoscalers': 'Horizontal Pod Autoscalers',
+        'poddisruptionbudgets': 'Pod Disruption Budgets',
+        'mutatingwebhookconfigurations': 'Mutating Webhook Configs',
+        'validatingwebhookconfigurations': 'Validating Webhook Configs',
+        'priorityclasses': 'Priority Classes',
+        'runtimeclasses': 'Runtime Classes',
+        'crd-definitions': 'CRD Definitions',
+        'certificates': 'Certificates',
+        'aws': 'AWS',
+    };
+
+    return titleMap[view] || view.charAt(0).toUpperCase() + view.slice(1);
+};
+
+/**
  * Dashboard header component with search, filters, and view controls
  * Memoized to prevent unnecessary re-renders
  */
@@ -44,8 +89,8 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
                     <Layers className="text-white" size={20} />
                 </div>
                 <div className="min-w-0">
-                    <h1 className="text-2xl font-bold text-white tracking-tight capitalize whitespace-nowrap truncate">
-                        {isCrdView ? currentCrdKind : activeView}
+                    <h1 className="text-2xl font-bold text-white tracking-tight whitespace-nowrap truncate">
+                        {isCrdView ? currentCrdKind : getViewTitle(activeView)}
                     </h1>
                     <div className="flex items-center gap-2 text-sm text-gray-400 flex-wrap">
                         <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 whitespace-nowrap">

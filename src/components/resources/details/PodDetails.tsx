@@ -17,6 +17,7 @@ interface PodDetailsProps {
     isExplaining?: boolean;
     onNavigate?: (kind: string, name: string) => void;
     onShowTopology?: () => void;
+    onOpenYaml?: () => void;
     clusterName?: string;
 }
 

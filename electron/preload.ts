@@ -117,6 +117,10 @@ contextBridge.exposeInMainWorld('k8s', {
   getPdbYaml: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getPdbYaml', contextName, namespace, name),
   updatePdbYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => ipcRenderer.invoke('k8s:updatePdbYaml', contextName, namespace, name, yamlContent),
 
+  // Generic resource YAML operations
+  getResourceYaml: (contextName: string, apiVersion: string, kind: string, name: string, namespace?: string) => ipcRenderer.invoke('k8s:getResourceYaml', contextName, apiVersion, kind, name, namespace),
+  updateResourceYaml: (contextName: string, apiVersion: string, kind: string, name: string, yamlContent: string, namespace?: string) => ipcRenderer.invoke('k8s:updateResourceYaml', contextName, apiVersion, kind, name, yamlContent, namespace),
+
   getMutatingWebhookConfigurations: (contextName: string) => ipcRenderer.invoke('k8s:getMutatingWebhookConfigurations', contextName),
   getMutatingWebhookConfiguration: (contextName: string, name: string) => ipcRenderer.invoke('k8s:getMutatingWebhookConfiguration', contextName, name),
 
@@ -163,6 +167,8 @@ contextBridge.exposeInMainWorld('k8s', {
   stopWatchPods: () => ipcRenderer.send('k8s:stopWatchPods'),
   watchDeployments: (contextName: string, namespaces: string[]) => ipcRenderer.send('k8s:watchDeployments', contextName, namespaces),
   stopWatchDeployments: () => ipcRenderer.send('k8s:stopWatchDeployments'),
+  watchNodes: (contextName: string) => ipcRenderer.send('k8s:watchNodes', contextName),
+  stopWatchNodes: () => ipcRenderer.send('k8s:stopWatchNodes'),
   onDeploymentChange: (callback: (type: string, deployment: any) => void) => {
     const listener = (_: any, type: string, deployment: any) => callback(type, deployment);
     ipcRenderer.on('k8s:deploymentChange', listener);
@@ -173,6 +179,11 @@ contextBridge.exposeInMainWorld('k8s', {
     ipcRenderer.on('k8s:podChange', listener);
     // Return unsubscribe function
     return () => ipcRenderer.off('k8s:podChange', listener);
+  },
+  onNodeChange: (callback: (type: string, node: any) => void) => {
+    const listener = (_: any, type: string, node: any) => callback(type, node);
+    ipcRenderer.on('k8s:nodeChange', listener);
+    return () => ipcRenderer.off('k8s:nodeChange', listener);
   },
   streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => ipcRenderer.send('k8s:streamPodLogs', contextName, namespace, name, containerName),
   stopStreamPodLogs: (namespace: string, name: string, containerName: string) => ipcRenderer.invoke('k8s:stopStreamPodLogs', namespace, name, containerName),
@@ -232,5 +243,11 @@ contextBridge.exposeInMainWorld('k8s', {
     getEc2Instances: (region: string, vpcId: string, clusterName?: string) => ipcRenderer.invoke('aws:getEc2Instances', region, vpcId, clusterName),
     getPodIdentities: (region: string, clusterName: string) => ipcRenderer.invoke('aws:getPodIdentities', region, clusterName),
     checkAuth: (region: string) => ipcRenderer.invoke('aws:checkAuth', region),
+    clearCache: () => ipcRenderer.invoke('aws:clearCache'),
+  },
+
+  // --- App ---
+  app: {
+    restart: () => ipcRenderer.invoke('app:restart'),
   }
 })

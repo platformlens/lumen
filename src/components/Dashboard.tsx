@@ -448,6 +448,68 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clusterName, selectedNamespaces, activeView]); // Performance: Restart when switching to/from deployments/overview
 
+    // Node Watcher Effect - Separate to avoid unnecessary restarts
+    useEffect(() => {
+        let nodeCleanup: (() => void) | undefined;
+        let nodeBatchTimeout: ReturnType<typeof setTimeout> | null = null;
+        const pendingNodeUpdates = new Map<string, { type: string; node: any }>();
+        const needsNodes = activeView === 'nodes';
+
+        if (needsNodes) {
+            window.k8s.watchNodes(clusterName);
+
+            const processNodeBatch = () => {
+                if (pendingNodeUpdates.size === 0) {
+                    nodeBatchTimeout = null;
+                    return;
+                }
+
+                const updates = new Map(pendingNodeUpdates);
+                pendingNodeUpdates.clear();
+                nodeBatchTimeout = null;
+
+                // Performance: Use startTransition to mark updates as non-urgent
+                startTransition(() => {
+                    setNodes(prev => {
+                        if (updates.size === 0) return prev;
+
+                        const nodeMap = new Map(prev.map(n => [n.name, n]));
+
+                        updates.forEach(({ type, node }) => {
+                            const key = node.name;
+
+                            if (type === 'ADDED' || type === 'MODIFIED') {
+                                nodeMap.set(key, node);
+                            } else if (type === 'DELETED') {
+                                nodeMap.delete(key);
+                            }
+                        });
+
+                        return Array.from(nodeMap.values());
+                    });
+                });
+            };
+
+            nodeCleanup = window.k8s.onNodeChange((type, node) => {
+                const key = node.name;
+                pendingNodeUpdates.set(key, { type, node });
+                if (!nodeBatchTimeout) {
+                    nodeBatchTimeout = setTimeout(processNodeBatch, 650);
+                }
+            });
+        }
+
+        return () => {
+            // Performance: Clean up watchers when view changes or component unmounts
+            if (nodeCleanup) nodeCleanup();
+            if (nodeBatchTimeout) clearTimeout(nodeBatchTimeout);
+            if (needsNodes) {
+                window.k8s.stopWatchNodes();
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clusterName, activeView]); // Performance: Restart when switching to/from nodes view
+
     // Load Data based on View and Selection
     const loadResources = async () => {
         if (!clusterName) return;
@@ -1056,8 +1118,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 }}
                 title={selectedResource?.name || 'Details'}
                 headerActions={
-                    < div className="flex items-center gap-2" >
-                        {(selectedResource?.type === 'deployment' || selectedResource?.type === 'poddisruptionbudget') && onOpenYaml && (
+                    <div className="flex items-center gap-2">
+                        {onOpenYaml && (
                             <button
                                 onClick={() => {
                                     onOpenYaml(selectedResource);
@@ -1145,6 +1207,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                     onNavigate={handleNavigate}
                                     onOpenLogs={handleOpenLogs}
                                     onShowTopology={() => setDrawerTab('topology')}
+                                    onOpenYaml={onOpenYaml}
                                 />
                             )}
                         </>

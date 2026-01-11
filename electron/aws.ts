@@ -4,11 +4,70 @@ import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 
 export class AwsService {
+    // Cache clients by region to avoid recreating them, but allow refresh
+    private ec2Clients: Map<string, EC2Client> = new Map();
+    private eksClients: Map<string, EKSClient> = new Map();
+    private stsClients: Map<string, STSClient> = new Map();
+    private lastCredentialRefresh: number = 0;
+    private readonly CREDENTIAL_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+    /**
+     * Clear all cached clients to force credential refresh
+     * Call this when switching AWS accounts/profiles
+     * 
+     * NOTE: This only clears our application-level cache. The AWS SDK's
+     * credential provider chain caches credentials at the Node.js process level,
+     * which cannot be cleared without restarting the application.
+     * 
+     * If you've switched AWS accounts/profiles, you may need to restart the app
+     * to pick up the new credentials.
+     */
+    public clearClientCache() {
+        console.log('[AwsService] Clearing client cache');
+        console.log('[AwsService] WARNING: AWS SDK credential cache persists at process level - may need app restart for account switches');
+        this.ec2Clients.clear();
+        this.eksClients.clear();
+        this.stsClients.clear();
+        this.lastCredentialRefresh = Date.now();
+    }
+
+    /**
+     * Check if credentials should be refreshed
+     */
+    private shouldRefreshCredentials(): boolean {
+        const timeSinceRefresh = Date.now() - this.lastCredentialRefresh;
+        return timeSinceRefresh > this.CREDENTIAL_REFRESH_INTERVAL;
+    }
+
+    /**
+     * Create a fresh credential provider that doesn't use cached credentials
+     */
+    private getFreshCredentialProvider() {
+        // Force a new credential provider chain each time to avoid caching
+        return fromNodeProviderChain({
+            // Disable caching by creating a new provider each time
+            clientConfig: { region: 'us-east-1' }
+        });
+    }
+
     private getEc2Client(region: string, creds: any) {
+        // Always clear cache if we should refresh
+        if (this.shouldRefreshCredentials()) {
+            this.clearClientCache();
+        }
+
+        // Check cache first
+        const cacheKey = `${region}-${creds?.accessKeyId || 'default'}`;
+        if (this.ec2Clients.has(cacheKey)) {
+            return this.ec2Clients.get(cacheKey)!;
+        }
+
+        // Create new client
+        let client: EC2Client;
         // Robust check: ensure strings and not empty
         if (creds && typeof creds.accessKeyId === 'string' && creds.accessKeyId.trim() !== '' &&
             typeof creds.secretAccessKey === 'string' && creds.secretAccessKey.trim() !== '') {
-            return new EC2Client({
+            client = new EC2Client({
                 region,
                 credentials: {
                     accessKeyId: creds.accessKeyId,
@@ -16,14 +75,33 @@ export class AwsService {
                     sessionToken: creds.sessionToken
                 }
             });
+        } else {
+            // Use fresh credential provider to avoid caching
+            client = new EC2Client({
+                region,
+                credentials: this.getFreshCredentialProvider()
+            });
         }
-        return new EC2Client({ region, credentials: fromNodeProviderChain() });
+
+        this.ec2Clients.set(cacheKey, client);
+        return client;
     }
 
     private getEksClient(region: string, creds: any) {
+        // Always clear cache if we should refresh
+        if (this.shouldRefreshCredentials()) {
+            this.clearClientCache();
+        }
+
+        const cacheKey = `${region}-${creds?.accessKeyId || 'default'}`;
+        if (this.eksClients.has(cacheKey)) {
+            return this.eksClients.get(cacheKey)!;
+        }
+
+        let client: EKSClient;
         if (creds && typeof creds.accessKeyId === 'string' && creds.accessKeyId.trim() !== '' &&
             typeof creds.secretAccessKey === 'string' && creds.secretAccessKey.trim() !== '') {
-            return new EKSClient({
+            client = new EKSClient({
                 region,
                 credentials: {
                     accessKeyId: creds.accessKeyId,
@@ -31,14 +109,33 @@ export class AwsService {
                     sessionToken: creds.sessionToken
                 }
             });
+        } else {
+            // Use fresh credential provider to avoid caching
+            client = new EKSClient({
+                region,
+                credentials: this.getFreshCredentialProvider()
+            });
         }
-        return new EKSClient({ region, credentials: fromNodeProviderChain() });
+
+        this.eksClients.set(cacheKey, client);
+        return client;
     }
 
     private getStsClient(region: string, creds: any) {
+        // Always clear cache if we should refresh
+        if (this.shouldRefreshCredentials()) {
+            this.clearClientCache();
+        }
+
+        const cacheKey = `${region}-${creds?.accessKeyId || 'default'}`;
+        if (this.stsClients.has(cacheKey)) {
+            return this.stsClients.get(cacheKey)!;
+        }
+
+        let client: STSClient;
         if (creds && typeof creds.accessKeyId === 'string' && creds.accessKeyId.trim() !== '' &&
             typeof creds.secretAccessKey === 'string' && creds.secretAccessKey.trim() !== '') {
-            return new STSClient({
+            client = new STSClient({
                 region,
                 credentials: {
                     accessKeyId: creds.accessKeyId,
@@ -46,8 +143,16 @@ export class AwsService {
                     sessionToken: creds.sessionToken
                 }
             });
+        } else {
+            // Use fresh credential provider to avoid caching
+            client = new STSClient({
+                region,
+                credentials: this.getFreshCredentialProvider()
+            });
         }
-        return new STSClient({ region, credentials: fromNodeProviderChain() });
+
+        this.stsClients.set(cacheKey, client);
+        return client;
     }
 
     async checkAuth(region: string, creds: any) {
@@ -55,6 +160,7 @@ export class AwsService {
             const client = this.getStsClient(region, creds);
             const command = new GetCallerIdentityCommand({});
             const response = await client.send(command);
+            console.log(`[AwsService] Auth check successful - Account: ${response.Account}, Identity: ${response.Arn}`);
             return {
                 isAuthenticated: true,
                 identity: response.Arn,
@@ -72,12 +178,25 @@ export class AwsService {
     async getEksCluster(region: string, clusterName: string, creds: any) {
         try {
             console.log(`[AwsService] getEksCluster region=${region} name=${clusterName}`);
+
+            // First verify auth to see which account we're using
+            const authCheck = await this.checkAuth(region, creds);
+            if (!authCheck.isAuthenticated) {
+                throw new Error(`Not authenticated to AWS in region ${region}: ${authCheck.error}`);
+            }
+
             const client = this.getEksClient(region, creds);
             const command = new DescribeClusterCommand({ name: clusterName });
             const response = await client.send(command);
             return response.cluster;
         } catch (error: any) {
             console.error("[AwsService] Error getting EKS cluster:", error);
+
+            // Provide more helpful error messages
+            if (error.name === 'ResourceNotFoundException') {
+                throw new Error(`EKS cluster '${clusterName}' not found in region ${region}. The cluster may be in a different AWS account or have a different name in EKS. Try running: aws eks list-clusters --region ${region}`);
+            }
+
             throw new Error(`Failed to get EKS cluster: ${error.message}`);
         }
     }

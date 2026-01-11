@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { AutoSizer, Table, Column, SortDirection, SortDirectionType } from 'react-virtualized';
 import 'react-virtualized/styles.css';
 
@@ -92,6 +92,9 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
     rowHeight = 52, // Slightly increased to standard comfortable touch/click size (was ~53px in HTML table with padding)
     headerHeight = 40
 }) => {
+    // Ref to the Table component to force recompute on resize
+    const tableRef = useRef<Table>(null);
+
     // Calculate the total minimum width required by all columns
     const minTableWidth = columns.reduce((acc, col) => acc + (col.width || 100), 0);
 
@@ -136,8 +139,14 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
                         // Otherwise, use the container width to allow flex columns to expand.
                         const tableWidth = Math.max(width, minTableWidth);
 
+                        // Force table to recompute when size changes
+                        if (tableRef.current) {
+                            tableRef.current.recomputeRowHeights();
+                        }
+
                         return (
                             <Table
+                                ref={tableRef}
                                 width={tableWidth}
                                 height={height}
                                 headerHeight={headerHeight}

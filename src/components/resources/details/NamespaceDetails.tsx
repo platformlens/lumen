@@ -8,6 +8,7 @@ interface NamespaceDetailsProps {
     explanation?: string | null;
     onExplain?: () => void;
     isExplaining?: boolean;
+    onOpenYaml?: () => void;
 }
 
 export const NamespaceDetails: React.FC<NamespaceDetailsProps> = ({ namespace, explanation }) => {

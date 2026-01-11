@@ -8,6 +8,7 @@ interface GenericResourceDetailsProps {
     explanation?: string | null;
     onExplain?: () => void;
     isExplaining?: boolean;
+    onOpenYaml?: () => void;
 }
 
 export const GenericResourceDetails: React.FC<GenericResourceDetailsProps> = ({ resource, explanation }) => {
@@ -38,11 +39,11 @@ export const GenericResourceDetails: React.FC<GenericResourceDetailsProps> = ({ 
                 <div className="flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
-                           <FileJson size={20} className="text-purple-400" />
-                           {metadata.name}
+                            <FileJson size={20} className="text-purple-400" />
+                            {metadata.name}
                         </h3>
                         <div className="flex items-center gap-2 mt-1">
-                             <span className="px-2 py-0.5 rounded text-xs font-medium border bg-blue-500/10 text-blue-400 border-blue-500/20">
+                            <span className="px-2 py-0.5 rounded text-xs font-medium border bg-blue-500/10 text-blue-400 border-blue-500/20">
                                 {resource.kind}
                             </span>
                             <span className="text-xs text-gray-500">
@@ -55,28 +56,28 @@ export const GenericResourceDetails: React.FC<GenericResourceDetailsProps> = ({ 
 
             {/* Labels & Annotations */}
             <div>
-                 <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
-                    <Tag size={14}/> Labels
-                 </h3>
-                 <div className="flex flex-wrap gap-2 mb-6">
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
+                    <Tag size={14} /> Labels
+                </h3>
+                <div className="flex flex-wrap gap-2 mb-6">
                     {metadata.labels ? Object.entries(metadata.labels).map(([k, v]) => (
                         <div key={k} className="bg-blue-500/10 text-blue-400 px-2 py-1 rounded text-xs border border-blue-500/20 font-mono">
                             {k}: {String(v)}
                         </div>
                     )) : <span className="text-gray-500 italic">No labels</span>}
-                 </div>
+                </div>
 
-                 <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
-                    <List size={14}/> Annotations
-                 </h3>
-                 <div className="space-y-1">
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
+                    <List size={14} /> Annotations
+                </h3>
+                <div className="space-y-1">
                     {metadata.annotations ? Object.entries(metadata.annotations).map(([k, v]) => (
                         <div key={k} className="grid grid-cols-1 gap-1 border-b border-white/10 pb-2 mb-2 last:border-0">
                             <span className="text-gray-400 font-mono text-xs">{k}</span>
                             <span className="text-gray-300 break-all text-xs">{String(v)}</span>
                         </div>
                     )) : <span className="text-gray-500 italic">No annotations</span>}
-                 </div>
+                </div>
             </div>
 
             {/* Full Content */}

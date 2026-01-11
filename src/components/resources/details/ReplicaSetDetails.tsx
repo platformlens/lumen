@@ -10,6 +10,7 @@ interface ReplicaSetDetailsProps {
     isExplaining?: boolean;
     onNavigate?: (kind: string, name: string) => void;
     onShowTopology?: () => void;
+    onOpenYaml?: () => void;
     clusterName?: string;
 }
 
@@ -33,7 +34,7 @@ export const ReplicaSetDetails: React.FC<ReplicaSetDetailsProps> = ({ replicaSet
                     </div>
                 </div>
             )}
-            
+
             {/* Metadata Section */}
             <div>
                 <div className="flex items-center justify-between mb-3">
@@ -42,39 +43,38 @@ export const ReplicaSetDetails: React.FC<ReplicaSetDetailsProps> = ({ replicaSet
                         {onShowTopology && (
                             <button
                                 onClick={() => setShowTopology(!showTopology)}
-                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${
-                                    showTopology 
-                                        ? 'bg-pink-600/80 hover:bg-pink-500 text-white border-transparent' 
+                                className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border ${showTopology
+                                        ? 'bg-pink-600/80 hover:bg-pink-500 text-white border-transparent'
                                         : 'bg-gradient-to-r from-purple-600/80 to-pink-600/80 hover:from-purple-500 hover:to-pink-500 text-white border-transparent'
-                                } hover:shadow-lg hover:scale-105 active:scale-95`}
+                                    } hover:shadow-lg hover:scale-105 active:scale-95`}
                             >
                                 <span className="text-xs">{showTopology ? '✖️' : '🔗'}</span> {showTopology ? 'Hide' : 'Display'} Topology
                             </button>
                         )}
                         {onExplain && (
-                        <button
-                            onClick={onExplain}
-                            disabled={isExplaining}
-                            className={`
+                            <button
+                                onClick={onExplain}
+                                disabled={isExplaining}
+                                className={`
                                 flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
                                 transition-all duration-300 border
-                                ${isExplaining 
-                                    ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait' 
-                                    : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
-                                }
+                                ${isExplaining
+                                        ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 cursor-wait'
+                                        : 'bg-gradient-to-r from-blue-600/80 to-purple-600/80 hover:from-blue-500 hover:to-purple-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
+                                    }
                             `}
-                        >
-                            {isExplaining ? (
-                                <>
-                                    <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                    Analyzing...
-                                </>
-                            ) : (
-                                <>
-                                    <span className="text-xs">✨</span> Explain
-                                </>
-                            )}
-                        </button>
+                            >
+                                {isExplaining ? (
+                                    <>
+                                        <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Analyzing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="text-xs">✨</span> Explain
+                                    </>
+                                )}
+                            </button>
                         )}
                     </div>
                 </div>
@@ -95,14 +95,14 @@ export const ReplicaSetDetails: React.FC<ReplicaSetDetailsProps> = ({ replicaSet
                         <span className="text-gray-400">UID</span>
                         <span className="col-span-2 text-gray-500 font-mono text-xs">{metadata.uid}</span>
                     </div>
-                     {/* Owner References */}
-                     {metadata.ownerReferences && (
+                    {/* Owner References */}
+                    {metadata.ownerReferences && (
                         <div className="grid grid-cols-3 gap-4">
                             <span className="text-gray-400">Controlled By</span>
                             <div className="col-span-2 space-y-1">
                                 {metadata.ownerReferences.map((ref: any) => (
-                                    <div 
-                                        key={ref.uid} 
+                                    <div
+                                        key={ref.uid}
                                         className={`flex items-center gap-2 text-xs ${onNavigate ? 'cursor-pointer hover:bg-white/5 p-1 -ml-1 rounded' : ''}`}
                                         onClick={() => onNavigate && onNavigate(ref.kind, ref.name)}
                                     >
@@ -125,105 +125,105 @@ export const ReplicaSetDetails: React.FC<ReplicaSetDetailsProps> = ({ replicaSet
 
             {/* Labels & Annotations */}
             <div>
-                 <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
-                    <Tag size={14}/> Labels
-                 </h3>
-                 <div className="flex flex-wrap gap-2 mb-6">
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
+                    <Tag size={14} /> Labels
+                </h3>
+                <div className="flex flex-wrap gap-2 mb-6">
                     {metadata.labels ? Object.entries(metadata.labels).map(([k, v]) => (
                         <div key={k} className="bg-blue-500/10 text-blue-400 px-2 py-1 rounded text-xs border border-blue-500/20 font-mono">
                             {k}: {String(v)}
                         </div>
                     )) : <span className="text-gray-500 italic">No labels</span>}
-                 </div>
+                </div>
 
-                 <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
-                    <List size={14}/> Annotations
-                 </h3>
-                 <div className="space-y-1">
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
+                    <List size={14} /> Annotations
+                </h3>
+                <div className="space-y-1">
                     {metadata.annotations ? Object.entries(metadata.annotations).map(([k, v]) => (
                         <div key={k} className="grid grid-cols-1 gap-1 border-b border-white/10 pb-2 mb-2 last:border-0">
                             <span className="text-gray-400 font-mono text-xs">{k}</span>
                             <span className="text-gray-300 break-all">{String(v)}</span>
                         </div>
                     )) : <span className="text-gray-500 italic">No annotations</span>}
-                 </div>
+                </div>
             </div>
 
             {/* Spec */}
             <div>
                 <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
-                    <Activity size={14}/> Spec
+                    <Activity size={14} /> Spec
                 </h3>
                 <div className="bg-white/5 rounded-md overflow-hidden border border-white/10">
-                     {/* Replicas */}
-                     <div className="p-3 border-b border-white/10 flex justify-between">
+                    {/* Replicas */}
+                    <div className="p-3 border-b border-white/10 flex justify-between">
                         <span className="text-gray-400">Replicas</span>
                         <span className="text-white">
                             {status?.readyReplicas || 0} / {spec?.replicas || 0}
                             <span className="text-gray-500 text-xs ml-2">(Ready / Desired)</span>
                         </span>
-                     </div>
-                     
-                     {/* Selector */}
-                     <div className="p-3">
+                    </div>
+
+                    {/* Selector */}
+                    <div className="p-3">
                         <span className="text-gray-400 block mb-1">Selector</span>
                         <div className="flex flex-wrap gap-1">
-                             {spec?.selector?.matchLabels && Object.entries(spec.selector.matchLabels).map(([k, v]) => (
+                            {spec?.selector?.matchLabels && Object.entries(spec.selector.matchLabels).map(([k, v]) => (
                                 <span key={k} className="bg-white/10 text-gray-300 px-1.5 py-0.5 rounded text-xs font-mono">{k}={String(v)}</span>
-                             ))}
+                            ))}
                         </div>
-                     </div>
+                    </div>
                 </div>
             </div>
 
             {/* Pod Template */}
             {spec?.template && (
                 <div>
-                     <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
-                        <Box size={14}/> Pod Template
-                     </h3>
-                     <div className="space-y-4">
-                         {spec.template.spec?.containers.map((c: any) => (
-                             <div key={c.name} className="bg-white/5 border border-white/10 rounded-md p-4">
-                                 <div className="flex items-center gap-2 mb-3">
-                                     <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                     <span className="font-bold text-white">{c.name}</span>
-                                     <span className="text-gray-500 text-xs bg-white/10 px-2 py-0.5 rounded">{c.image}</span>
-                                 </div>
-                                 
-                                 {/* Env Vars */}
-                                 {c.env && (
-                                     <div className="mb-3">
-                                         <span className="text-gray-500 text-xs uppercase font-bold block mb-2">Environment</span>
-                                         <div className="grid grid-cols-1 gap-1">
-                                             {c.env.map((e: any) => (
-                                                 <div key={e.name} className="flex gap-2 text-xs font-mono">
-                                                     <span className="text-blue-400">{e.name}</span>
-                                                     <span className="text-gray-400">=</span>
-                                                     <span className="text-green-400 truncate">{e.value || "fromRef..."}</span>
-                                                 </div>
-                                             ))}
-                                         </div>
-                                     </div>
-                                 )}
+                    <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3 flex items-center gap-2">
+                        <Box size={14} /> Pod Template
+                    </h3>
+                    <div className="space-y-4">
+                        {spec.template.spec?.containers.map((c: any) => (
+                            <div key={c.name} className="bg-white/5 border border-white/10 rounded-md p-4">
+                                <div className="flex items-center gap-2 mb-3">
+                                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                    <span className="font-bold text-white">{c.name}</span>
+                                    <span className="text-gray-500 text-xs bg-white/10 px-2 py-0.5 rounded">{c.image}</span>
+                                </div>
 
-                                 {/* Mounted Volumes */}
-                                 {c.volumeMounts && (
-                                     <div>
-                                         <span className="text-gray-500 text-xs uppercase font-bold block mb-2">Volume Mounts</span>
-                                         <div className="space-y-1">
-                                             {c.volumeMounts.map((vm: any) => (
-                                                 <div key={vm.name} className="flex items-center gap-2 text-xs bg-white/5 px-2 py-1 rounded">
-                                                     <span className="text-gray-300">{vm.mountPath}</span>
-                                                     <span className="text-gray-500">({vm.name})</span>
-                                                 </div>
-                                             ))}
-                                         </div>
-                                     </div>
-                                 )}
-                             </div>
-                         ))}
-                     </div>
+                                {/* Env Vars */}
+                                {c.env && (
+                                    <div className="mb-3">
+                                        <span className="text-gray-500 text-xs uppercase font-bold block mb-2">Environment</span>
+                                        <div className="grid grid-cols-1 gap-1">
+                                            {c.env.map((e: any) => (
+                                                <div key={e.name} className="flex gap-2 text-xs font-mono">
+                                                    <span className="text-blue-400">{e.name}</span>
+                                                    <span className="text-gray-400">=</span>
+                                                    <span className="text-green-400 truncate">{e.value || "fromRef..."}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Mounted Volumes */}
+                                {c.volumeMounts && (
+                                    <div>
+                                        <span className="text-gray-500 text-xs uppercase font-bold block mb-2">Volume Mounts</span>
+                                        <div className="space-y-1">
+                                            {c.volumeMounts.map((vm: any) => (
+                                                <div key={vm.name} className="flex items-center gap-2 text-xs bg-white/5 px-2 py-1 rounded">
+                                                    <span className="text-gray-300">{vm.mountPath}</span>
+                                                    <span className="text-gray-500">({vm.name})</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
         </div>

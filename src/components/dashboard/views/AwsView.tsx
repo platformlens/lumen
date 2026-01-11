@@ -82,6 +82,10 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
     const fetchData = async () => {
         setLoading(true);
         setError(null);
+
+        // Clear AWS client cache to ensure fresh credentials
+        await window.k8s.aws.clearCache();
+
         try {
             // 1. Get Nodes (No AWS Auth)
             const nodes = await window.k8s.getNodes(clusterName);
@@ -137,6 +141,7 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
                             const clusterTag = tags.find((t: any) => t.Key?.startsWith('kubernetes.io/cluster/'));
                             if (clusterTag) {
                                 derivedClusterName = clusterTag.Key.replace('kubernetes.io/cluster/', '');
+                                console.log(`[AwsView] Derived EKS cluster name from instance tags: ${derivedClusterName}`);
                             }
                         }
                     } catch (e) {
@@ -145,34 +150,85 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
                 }
             }
 
+            // If we still don't have the cluster name from tags, try common patterns
+            if (derivedClusterName === clusterName) {
+                // Try appending -eks suffix (common pattern)
+                console.log(`[AwsView] Trying cluster name with -eks suffix: ${clusterName}-eks`);
+                derivedClusterName = `${clusterName}-eks`;
+            }
+
             // 4. Fetch EKS Cluster
-            try {
-                const clusterDetails = await window.k8s.aws.getEksCluster(detectedRegion, derivedClusterName);
-                if (clusterDetails) {
-                    setEksCluster(clusterDetails);
-                    if (!vpcId && clusterDetails.resourcesVpcConfig?.vpcId) {
-                        vpcId = clusterDetails.resourcesVpcConfig.vpcId;
+            // Try multiple cluster name variations
+            const clusterNameVariations = [
+                derivedClusterName,  // From instance tags or with -eks suffix
+                clusterName,         // Original context name
+                `${clusterName}-eks` // Common pattern if not already tried
+            ].filter((name, index, self) => self.indexOf(name) === index); // Remove duplicates
+
+            let clusterDetails = null;
+            let successfulClusterName = '';
+
+            for (const nameToTry of clusterNameVariations) {
+                try {
+                    console.log(`[AwsView] Trying EKS cluster name: ${nameToTry}`);
+                    clusterDetails = await window.k8s.aws.getEksCluster(detectedRegion, nameToTry);
+                    if (clusterDetails) {
+                        successfulClusterName = nameToTry;
+                        setEksCluster(clusterDetails);
+                        if (!vpcId && clusterDetails.resourcesVpcConfig?.vpcId) {
+                            vpcId = clusterDetails.resourcesVpcConfig.vpcId;
+                        }
+                        console.log(`[AwsView] Successfully found EKS cluster with name: ${nameToTry}`);
+                        break;
                     }
-                }
-            } catch (e: any) {
-                console.warn("Failed to get EKS Cluster details", e);
-                if (e.message?.includes("ExpiredTokenException")) {
-                    throw new Error("AWS Credentials have expired. Please refresh your tokens.");
+                } catch (e: any) {
+                    console.warn(`Failed to get EKS cluster with name '${nameToTry}':`, e.message);
+                    // Continue trying other variations
                 }
             }
+
+            if (!clusterDetails) {
+                console.warn(`Could not find EKS cluster. Tried names: ${clusterNameVariations.join(', ')}`);
+                setError(`Cannot find EKS cluster in ${detectedRegion}. Tried: ${clusterNameVariations.join(', ')}. Please ensure your AWS credentials have access to this region and account.`);
+                setLoading(false);
+                return;
+            }
+
+            // Use the successful cluster name for subsequent calls
+            derivedClusterName = successfulClusterName;
 
             // 5. Fetch Resources
             const promises = [];
             if (vpcId) {
-                promises.push(window.k8s.aws.getVpcDetails(detectedRegion, vpcId).then(setVpc));
-                promises.push(window.k8s.aws.getSubnets(detectedRegion, vpcId).then(setSubnets));
-                promises.push(window.k8s.aws.getEc2Instances(detectedRegion, vpcId, derivedClusterName).then(setInstances));
+                promises.push(
+                    window.k8s.aws.getVpcDetails(detectedRegion, vpcId)
+                        .then(setVpc)
+                        .catch(e => console.warn("Failed to get VPC details:", e))
+                );
+                promises.push(
+                    window.k8s.aws.getSubnets(detectedRegion, vpcId)
+                        .then(setSubnets)
+                        .catch(e => console.warn("Failed to get subnets:", e))
+                );
+                promises.push(
+                    window.k8s.aws.getEc2Instances(detectedRegion, vpcId, derivedClusterName)
+                        .then(setInstances)
+                        .catch(e => console.warn("Failed to get EC2 instances:", e))
+                );
             }
 
             // 6. Pod Identities
-            promises.push(window.k8s.aws.getPodIdentities(detectedRegion, derivedClusterName).then(setPodIdentities));
+            promises.push(
+                window.k8s.aws.getPodIdentities(detectedRegion, derivedClusterName)
+                    .then(setPodIdentities)
+                    .catch(e => {
+                        console.warn("Failed to get pod identities:", e);
+                        // Don't fail the whole view if pod identities fail
+                        setPodIdentities([]);
+                    })
+            );
 
-            await Promise.all(promises);
+            await Promise.allSettled(promises);
 
         } catch (err: any) {
             console.error("Error loading AWS data", err);
@@ -223,17 +279,40 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
             <div className="flex flex-col items-center justify-center h-full text-center p-8">
                 <Shield size={48} className="text-gray-600 mb-4" />
                 <h2 className="text-xl font-semibold text-white mb-2">AWS Credentials Required</h2>
-                <div className="mt-4 text-xs text-gray-500">
+                <p className="text-gray-400 mb-6 max-w-md">
+                    Unable to authenticate with AWS. This could be due to:
+                </p>
+                <ul className="text-left text-gray-400 mb-6 space-y-2">
+                    <li>• Missing or expired AWS credentials</li>
+                    <li>• Switched AWS accounts/profiles</li>
+                    <li>• Insufficient permissions</li>
+                </ul>
+                <div className="flex gap-3">
                     <button
                         onClick={async () => {
-                            await window.k8s.saveAwsCreds({});
-                            setAuthStatus('authenticated');
+                            await window.k8s.aws.clearCache();
+                            setAuthStatus('checking');
                             fetchData();
                         }}
-                        className="text-red-400 hover:text-red-300 underline"
+                        className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors"
                     >
-                        Clear Saved Credentials & Retry
+                        Retry
                     </button>
+                    <button
+                        onClick={async () => {
+                            await window.k8s.app.restart();
+                        }}
+                        className="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 rounded-lg transition-colors"
+                    >
+                        Restart App
+                    </button>
+                </div>
+                <div className="mt-6 text-xs text-gray-500 max-w-md">
+                    <p className="mb-2">
+                        <strong>Note:</strong> AWS SDK caches credentials at the process level.
+                        If you've switched AWS accounts or profiles, you may need to restart the app
+                        to pick up the new credentials.
+                    </p>
                 </div>
             </div>
         );
@@ -248,15 +327,40 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
     }
 
     if (error) {
+        const isAuthError = error.includes('ExpiredToken') ||
+            error.includes('security token') ||
+            error.includes('credentials') ||
+            error.includes('401');
+
         return (
-            <div className="p-8">
-                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-3 text-red-400">
-                    <AlertCircle size={20} />
-                    <span>{error}</span>
-                    <button onClick={fetchData} className="ml-auto p-2 hover:bg-red-500/20 rounded-lg">
+            <div className="p-8 space-y-4">
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-start gap-3 text-red-400">
+                    <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                        <p className="font-semibold mb-1">Error Loading AWS Resources</p>
+                        <p className="text-sm">{error}</p>
+                    </div>
+                    <button onClick={fetchData} className="p-2 hover:bg-red-500/20 rounded-lg flex-shrink-0">
                         <RefreshCw size={16} />
                     </button>
                 </div>
+
+                {isAuthError && (
+                    <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-4">
+                        <p className="text-orange-300 text-sm mb-3">
+                            <strong>Credential Issue Detected:</strong> If you've recently switched AWS accounts or profiles,
+                            the app may need to be restarted to pick up new credentials.
+                        </p>
+                        <button
+                            onClick={async () => {
+                                await window.k8s.app.restart();
+                            }}
+                            className="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 rounded-lg transition-colors text-sm"
+                        >
+                            Restart App
+                        </button>
+                    </div>
+                )}
             </div>
         );
     }

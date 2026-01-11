@@ -108,6 +108,19 @@ function registerIpcHandlers() {
     return awsService.checkAuth(region, creds);
   });
 
+  ipcMain.handle('aws:clearCache', async () => {
+    console.log('[main] Clearing AWS client cache');
+    awsService.clearClientCache();
+    return true;
+  });
+
+  // --- App Handlers ---
+  ipcMain.handle('app:restart', async () => {
+    console.log('[main] Restarting application');
+    app.relaunch();
+    app.quit();
+  });
+
   ipcMain.handle('k8s:getClusters', () => {
     console.log('IPC: k8s:getClusters called');
     return k8sService.getClusters();
@@ -593,6 +606,16 @@ function registerIpcHandlers() {
     k8sService.stopDeploymentWatch();
   })
 
+  ipcMain.on('k8s:watchNodes', (event, contextName) => {
+    k8sService.startNodeWatch(contextName, (type, node) => {
+      event.sender.send('k8s:nodeChange', type, node);
+    });
+  })
+
+  ipcMain.on('k8s:stopWatchNodes', () => {
+    k8sService.stopNodeWatch();
+  })
+
   ipcMain.on('k8s:streamPodLogs', (event, contextName, namespace, name, containerName) => {
     const streamId = `${namespace}-${name}-${containerName}`;
     console.log(`IPC: streaming logs for ${streamId}`);
@@ -729,6 +752,10 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getPodDisruptionBudget', (_, contextName, namespace, name) => { return k8sService.getPodDisruptionBudget(contextName, namespace, name); });
   ipcMain.handle('k8s:getPdbYaml', (_, contextName, namespace, name) => { return k8sService.getPdbYaml(contextName, namespace, name); });
   ipcMain.handle('k8s:updatePdbYaml', (_, contextName, namespace, name, yamlContent) => { return k8sService.updatePdbYaml(contextName, namespace, name, yamlContent); });
+
+  // Generic resource YAML operations
+  ipcMain.handle('k8s:getResourceYaml', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.getResourceYaml(contextName, apiVersion, kind, name, namespace); });
+  ipcMain.handle('k8s:updateResourceYaml', (_, contextName, apiVersion, kind, name, yamlContent, namespace) => { return k8sService.updateResourceYaml(contextName, apiVersion, kind, name, yamlContent, namespace); });
 
   ipcMain.handle('k8s:getMutatingWebhookConfigurations', (_, contextName) => { return k8sService.getMutatingWebhookConfigurations(contextName); });
   ipcMain.handle('k8s:getMutatingWebhookConfiguration', (_, contextName, name) => { return k8sService.getMutatingWebhookConfiguration(contextName, name); });
