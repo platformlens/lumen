@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
 import { PortForwardModal } from '../../shared/PortForwardModal';
@@ -13,10 +13,13 @@ interface ServiceDetailsProps {
     isExplaining?: boolean;
     onShowTopology?: () => void;
     onOpenYaml?: () => void;
+    onNavigate?: (kind: string, name: string) => void;
 }
 
-export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, clusterName, explanation, onExplain, isExplaining, onShowTopology }) => {
+export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, clusterName, explanation, onExplain, isExplaining, onShowTopology, onNavigate }) => {
     const [showTopology, setShowTopology] = useState(false);
+    const [endpoints, setEndpoints] = useState<any>(null);
+    const [loadingEndpoints, setLoadingEndpoints] = useState(false);
 
     const {
         selectedPort,
@@ -26,10 +29,46 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
         handleStopForward
     } = usePortForwarding(resource, 'Service', clusterName);
 
+    // Fetch endpoints for this service
+    useEffect(() => {
+        if (!clusterName || !resource?.metadata?.name || !resource?.metadata?.namespace) return;
+
+        const fetchEndpoints = async () => {
+            setLoadingEndpoints(true);
+            try {
+                const ep = await window.k8s.getEndpoint(
+                    clusterName,
+                    resource.metadata.namespace,
+                    resource.metadata.name
+                );
+                setEndpoints(ep);
+            } catch (err) {
+                console.error('Failed to fetch endpoints:', err);
+                setEndpoints(null);
+            } finally {
+                setLoadingEndpoints(false);
+            }
+        };
+
+        fetchEndpoints();
+    }, [clusterName, resource?.metadata?.name, resource?.metadata?.namespace]);
+
     if (!resource) return null;
 
+    const handlePodClick = (podName: string) => {
+        if (onNavigate) {
+            onNavigate('Pod', podName);
+        }
+    };
+
+    const handleNodeClick = (nodeName: string) => {
+        if (onNavigate) {
+            onNavigate('Node', nodeName);
+        }
+    };
+
     return (
-        <div className="space-y-6">
+        <div className="space-y-8 text-sm">
             {/* AI Explanation Section (if present) */}
             {explanation && (
                 <div className="bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-blue-500/30 rounded-lg p-4 mb-6 relative overflow-hidden">
@@ -46,7 +85,7 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
             {/* Metadata Section */}
             <div>
                 <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Metadata</h3>
+                    <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider">Metadata</h3>
                     <div className="flex items-center gap-2">
                         {onShowTopology && (
                             <button
@@ -86,7 +125,7 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
                         )}
                     </div>
                 </div>
-                <div className="bg-[#1e1e1e] rounded-lg p-4 space-y-3">
+                <div className="bg-white/5 rounded-md p-4 border border-white/10 space-y-2">
                     <div className="grid grid-cols-3 gap-4">
                         <div className="text-gray-400">Name</div>
                         <div className="col-span-2 text-white font-mono text-sm">{resource.metadata?.name}</div>
@@ -117,8 +156,8 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
 
             {/* Spec Section */}
             <div>
-                <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3">Spec</h3>
-                <div className="bg-[#1e1e1e] rounded-lg p-4 space-y-3">
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3">Spec</h3>
+                <div className="bg-white/5 rounded-md p-4 border border-white/10 space-y-2">
                     <div className="grid grid-cols-3 gap-4">
                         <div className="text-gray-400">Type</div>
                         <div className="col-span-2 text-white font-mono text-sm">{resource.spec?.type}</div>
@@ -144,7 +183,7 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
 
             {/* Ports Section */}
             <div>
-                <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-3">Ports</h3>
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3">Ports</h3>
                 <div className="bg-white/5 rounded-lg overflow-hidden border border-white/10">
                     <div className="grid grid-cols-5 bg-white/5 p-3 text-xs font-medium text-gray-400 border-b border-white/10">
                         <div>Name</div>
@@ -175,6 +214,141 @@ export const ServiceDetails: React.FC<ServiceDetailsProps> = ({ resource, cluste
                     })}
                     {(!resource.spec?.ports || resource.spec.ports.length === 0) && (
                         <div className="p-4 text-center text-gray-500 text-sm col-span-5">No ports defined.</div>
+                    )}
+                </div>
+            </div>
+
+            {/* Endpoints Section */}
+            <div>
+                <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider mb-3">Endpoints</h3>
+                <div className="bg-white/5 rounded-md p-4 border border-white/10">
+                    {loadingEndpoints ? (
+                        <div className="text-center text-gray-500 text-sm py-4">Loading endpoints...</div>
+                    ) : !endpoints ? (
+                        <div className="text-center text-gray-500 text-sm py-4">No endpoints found</div>
+                    ) : (
+                        <div className="space-y-4">
+                            {endpoints.subsets && endpoints.subsets.length > 0 ? (
+                                endpoints.subsets.map((subset: any, subsetIdx: number) => (
+                                    <div key={subsetIdx} className="space-y-3">
+                                        {/* Addresses */}
+                                        {subset.addresses && subset.addresses.length > 0 && (
+                                            <div>
+                                                <div className="text-xs font-medium text-green-400 mb-2 flex items-center gap-2">
+                                                    <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                                                    Ready Addresses ({subset.addresses.length})
+                                                </div>
+                                                <div className="space-y-2">
+                                                    {subset.addresses.map((addr: any, addrIdx: number) => (
+                                                        <div key={addrIdx} className="bg-white/5 rounded p-2.5 border border-white/10">
+                                                            <div className="space-y-1.5 text-sm">
+                                                                <div>
+                                                                    <span className="text-gray-400">IP:</span>
+                                                                    <span className="ml-2 font-mono text-green-400">{addr.ip}</span>
+                                                                </div>
+                                                                {addr.targetRef && (
+                                                                    <div>
+                                                                        <span className="text-gray-400">Target:</span>
+                                                                        {addr.targetRef.kind === 'Pod' ? (
+                                                                            <button
+                                                                                onClick={() => handlePodClick(addr.targetRef.name)}
+                                                                                className="ml-2 font-mono text-blue-400 hover:text-blue-300 hover:underline cursor-pointer transition-colors"
+                                                                            >
+                                                                                {addr.targetRef.kind}/{addr.targetRef.name}
+                                                                            </button>
+                                                                        ) : (
+                                                                            <span className="ml-2 font-mono text-blue-400">{addr.targetRef.kind}/{addr.targetRef.name}</span>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                                {addr.nodeName && (
+                                                                    <div>
+                                                                        <span className="text-gray-400">Node:</span>
+                                                                        <button
+                                                                            onClick={() => handleNodeClick(addr.nodeName)}
+                                                                            className="ml-2 font-mono text-purple-400 hover:text-purple-300 hover:underline cursor-pointer transition-colors"
+                                                                        >
+                                                                            {addr.nodeName}
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Not Ready Addresses */}
+                                        {subset.notReadyAddresses && subset.notReadyAddresses.length > 0 && (
+                                            <div>
+                                                <div className="text-xs font-medium text-yellow-400 mb-2 flex items-center gap-2">
+                                                    <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
+                                                    Not Ready Addresses ({subset.notReadyAddresses.length})
+                                                </div>
+                                                <div className="space-y-2">
+                                                    {subset.notReadyAddresses.map((addr: any, addrIdx: number) => (
+                                                        <div key={addrIdx} className="bg-white/5 rounded p-2.5 border border-yellow-500/20">
+                                                            <div className="space-y-1.5 text-sm">
+                                                                <div>
+                                                                    <span className="text-gray-400">IP:</span>
+                                                                    <span className="ml-2 font-mono text-yellow-400">{addr.ip}</span>
+                                                                </div>
+                                                                {addr.targetRef && (
+                                                                    <div>
+                                                                        <span className="text-gray-400">Target:</span>
+                                                                        {addr.targetRef.kind === 'Pod' ? (
+                                                                            <button
+                                                                                onClick={() => handlePodClick(addr.targetRef.name)}
+                                                                                className="ml-2 font-mono text-blue-400 hover:text-blue-300 hover:underline cursor-pointer transition-colors"
+                                                                            >
+                                                                                {addr.targetRef.kind}/{addr.targetRef.name}
+                                                                            </button>
+                                                                        ) : (
+                                                                            <span className="ml-2 font-mono text-blue-400">{addr.targetRef.kind}/{addr.targetRef.name}</span>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                                {addr.nodeName && (
+                                                                    <div>
+                                                                        <span className="text-gray-400">Node:</span>
+                                                                        <button
+                                                                            onClick={() => handleNodeClick(addr.nodeName)}
+                                                                            className="ml-2 font-mono text-purple-400 hover:text-purple-300 hover:underline cursor-pointer transition-colors"
+                                                                        >
+                                                                            {addr.nodeName}
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Ports for this subset */}
+                                        {subset.ports && subset.ports.length > 0 && (
+                                            <div className="text-xs text-gray-400">
+                                                <span className="font-medium">Ports:</span>
+                                                <span className="ml-2">
+                                                    {subset.ports.map((p: any, i: number) => (
+                                                        <span key={i} className="font-mono text-blue-400">
+                                                            {p.name ? `${p.name}:` : ''}{p.port}/{p.protocol}
+                                                            {i < subset.ports.length - 1 ? ', ' : ''}
+                                                        </span>
+                                                    ))}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center text-gray-500 text-sm py-4">
+                                    No endpoint subsets available. The service may not have any backing pods.
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>

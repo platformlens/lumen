@@ -34,24 +34,8 @@ interface DrawerProps {
 export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children, headerActions }) => {
   const drawerRef = useRef<HTMLDivElement>(null);
 
-  // Close on click outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (drawerRef.current && !drawerRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen, onClose]);
-
   return (
-    <AnimatePresence>
+    <AnimatePresence mode="wait">
       {isOpen && (
         <>
           {/* Backdrop */}
@@ -59,7 +43,9 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/50 z-40"
+            transition={{ duration: 0.2 }}
+            className="absolute inset-0 bg-black/50 z-40 pointer-events-auto"
+            onClick={onClose}
           />
 
           {/* Drawer */}
@@ -69,7 +55,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute top-2 right-2 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-2xl overflow-hidden bottom-4"
+            className="absolute top-2 right-2 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-2xl overflow-hidden bottom-4 pointer-events-auto"
           >
             {/* Header */}
             <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5">

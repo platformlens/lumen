@@ -951,32 +951,74 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         let resource;
         const lowerKind = kind.toLowerCase();
 
+        // For pods and namespaced resources, use the current resource's namespace
+        // (e.g., when navigating from a Service to a Pod, use the Service's namespace)
+        const currentNamespace = selectedResource?.metadata?.namespace || selectedResource?.namespace;
+
         // Check if we have the resource in state
         if (lowerKind === 'replicaset') {
-            resource = replicaSets.find(r => r.name === name && r.namespace === selectedResource?.namespace);
+            resource = replicaSets.find(r => r.name === name && r.namespace === currentNamespace);
         } else if (lowerKind === 'deployment') {
-            resource = deployments.find(d => d.metadata.name === name && d.metadata.namespace === selectedResource?.namespace);
+            resource = deployments.find(d => d.metadata.name === name && d.metadata.namespace === currentNamespace);
+        } else if (lowerKind === 'pod') {
+            const pod = pods.find(p => p.metadata.name === name && p.metadata.namespace === currentNamespace);
+            if (pod) {
+                // Normalize pod structure to have flat namespace and name properties
+                resource = {
+                    ...pod,
+                    namespace: pod.metadata.namespace,
+                    name: pod.metadata.name,
+                    type: 'pod'
+                };
+            }
+        } else if (lowerKind === 'node') {
+            const node = nodes.find(n => n.metadata?.name === name);
+            if (node) {
+                // Normalize node structure
+                resource = {
+                    ...node,
+                    name: node.metadata.name,
+                    type: 'node'
+                };
+            }
         }
 
         // If not found in state, try to fetch it directly
         if (!resource) {
             console.log(`Resource ${kind}/${name} not found in state, fetching directly...`);
             try {
-                const namespace = selectedResource?.namespace || 'default'; // Fallback or current context
+                const namespace = currentNamespace || 'default'; // Fallback
                 if (lowerKind === 'replicaset') {
                     const fetched = await window.k8s.getReplicaSet(clusterName, namespace, name);
                     if (fetched) {
-                        // Normalize if needed or just use results. getReplicaSet returns the raw object or body?
-                        // k8s.ts getReplicaSet returns body.
-                        // We might need to construct the shape expected by UI if it relies on specific mapped fields
-                        // But let's check ReplicaSetDetails. It uses metadata, spec, status directly.
                         resource = fetched;
-                        // Add a type property so handleResourceClick handles it
                         resource.type = 'replicaset';
                     }
                 } else if (lowerKind === 'deployment') {
                     const fetched = await window.k8s.getDeployment(clusterName, namespace, name);
-                    if (fetched) resource = fetched;
+                    if (fetched) {
+                        resource = fetched;
+                        resource.type = 'deployment';
+                    }
+                } else if (lowerKind === 'pod') {
+                    const fetched = await window.k8s.getPod(clusterName, namespace, name);
+                    if (fetched) {
+                        resource = {
+                            ...fetched,
+                            namespace: fetched.metadata.namespace,
+                            name: fetched.metadata.name,
+                            type: 'pod'
+                        };
+                    }
+                } else if (lowerKind === 'node') {
+                    const fetched = await window.k8s.getNode(clusterName, name);
+                    if (fetched) {
+                        resource = {
+                            ...fetched,
+                            name: fetched.metadata.name,
+                            type: 'node'
+                        };
+                    }
                 }
             } catch (err) {
                 console.error(`Failed to fetch ${kind}/${name}`, err);

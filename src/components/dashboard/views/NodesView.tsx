@@ -12,13 +12,96 @@ import {
 
 interface NodesViewProps {
     nodes: any[];
+    pods: any[];
     onRowClick?: (node: any) => void;
     searchQuery?: string;
 }
 
-export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQuery = '' }) => {
+export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, searchQuery = '' }) => {
     const [showStats, setShowStats] = React.useState(false);
     const [sortConfig, setSortConfig] = React.useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+    // Calculate resource requests per node (optimized with caching)
+    const nodeUtilization = useMemo(() => {
+        const utilMap = new Map<string, { cpuRequested: number; memoryRequested: number; cpuCapacity: number; memoryCapacity: number }>();
+
+        // Cache for parsed values to avoid re-parsing same strings
+        const cpuCache = new Map<string, number>();
+        const memCache = new Map<string, number>();
+
+        // Helper to parse resource values with caching
+        const parseCpu = (cpu: string): number => {
+            if (!cpu) return 0;
+            if (cpuCache.has(cpu)) return cpuCache.get(cpu)!;
+
+            let result: number;
+            if (cpu.endsWith('m')) {
+                result = parseInt(cpu);
+            } else {
+                result = parseFloat(cpu) * 1000; // Convert cores to millicores
+            }
+            cpuCache.set(cpu, result);
+            return result;
+        };
+
+        const parseMemory = (mem: string): number => {
+            if (!mem) return 0;
+            if (memCache.has(mem)) return memCache.get(mem)!;
+
+            const units: Record<string, number> = {
+                'Ki': 1024,
+                'Mi': 1024 * 1024,
+                'Gi': 1024 * 1024 * 1024,
+                'K': 1000,
+                'M': 1000 * 1000,
+                'G': 1000 * 1000 * 1000
+            };
+
+            let result = 0;
+            for (const [suffix, multiplier] of Object.entries(units)) {
+                if (mem.endsWith(suffix)) {
+                    result = parseFloat(mem.slice(0, -suffix.length)) * multiplier;
+                    break;
+                }
+            }
+            if (result === 0) result = parseFloat(mem);
+
+            memCache.set(mem, result);
+            return result;
+        };
+
+        // Initialize with node capacities
+        nodes.forEach(node => {
+            const nodeName = node.metadata?.name || node.name;
+            // Node data has cpu/memory at top level from getNodes()
+            utilMap.set(nodeName, {
+                cpuRequested: 0,
+                memoryRequested: 0,
+                cpuCapacity: parseCpu(node.cpu || '0'),
+                memoryCapacity: parseMemory(node.memory || '0')
+            });
+        });
+
+        // Sum up pod requests per node
+        pods.forEach(pod => {
+            const nodeName = pod.spec?.nodeName || pod.nodeName;
+            if (!nodeName) return;
+
+            const util = utilMap.get(nodeName);
+            if (!util) return;
+
+            const containers = pod.spec?.containers || [];
+            containers.forEach((container: any) => {
+                const requests = container.resources?.requests;
+                if (!requests) return;
+
+                util.cpuRequested += parseCpu(requests.cpu || '0');
+                util.memoryRequested += parseMemory(requests.memory || '0');
+            });
+        });
+
+        return utilMap;
+    }, [nodes, pods]);
 
     // Filter Logic
     const filteredNodes = useMemo(() => {
@@ -64,8 +147,25 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
                     bValue = getNodeProviderInfo(b).zone || '';
                     break;
                 case 'capacityType':
-                    aValue = getNodeProviderInfo(a).capacityType || '';
-                    bValue = getNodeProviderInfo(b).capacityType || '';
+                    // Sort by isSpot boolean: On-Demand (false) = 0, Spot (true) = 1
+                    aValue = getNodeProviderInfo(a).isSpot ? 1 : 0;
+                    bValue = getNodeProviderInfo(b).isSpot ? 1 : 0;
+                    break;
+                case 'cpuUtil':
+                    {
+                        const aUtil = nodeUtilization.get(a.metadata?.name || a.name);
+                        const bUtil = nodeUtilization.get(b.metadata?.name || b.name);
+                        aValue = aUtil ? (aUtil.cpuRequested / aUtil.cpuCapacity) : 0;
+                        bValue = bUtil ? (bUtil.cpuRequested / bUtil.cpuCapacity) : 0;
+                    }
+                    break;
+                case 'memUtil':
+                    {
+                        const aUtil = nodeUtilization.get(a.metadata?.name || a.name);
+                        const bUtil = nodeUtilization.get(b.metadata?.name || b.name);
+                        aValue = aUtil ? (aUtil.memoryRequested / aUtil.memoryCapacity) : 0;
+                        bValue = bUtil ? (bUtil.memoryRequested / bUtil.memoryCapacity) : 0;
+                    }
                     break;
                 default:
                     return 0;
@@ -88,6 +188,43 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             // New column, default to ascending
             return { key, direction: 'asc' };
         });
+    };
+
+    // Utilization Bar Component
+    const UtilizationBar: React.FC<{ percentage: number; type: 'cpu' | 'memory' }> = ({ percentage, type }) => {
+        const isUnderutilized = percentage < 30;
+        const isHigh = percentage > 80;
+
+        let barColor = 'bg-blue-500';
+        let bgColor = 'bg-blue-500/20';
+
+        if (type === 'memory') {
+            barColor = 'bg-purple-500';
+            bgColor = 'bg-purple-500/20';
+        }
+
+        if (isUnderutilized) {
+            barColor = type === 'cpu' ? 'bg-yellow-500' : 'bg-yellow-500';
+            bgColor = type === 'cpu' ? 'bg-yellow-500/20' : 'bg-yellow-500/20';
+        } else if (isHigh) {
+            barColor = 'bg-red-500';
+            bgColor = 'bg-red-500/20';
+        }
+
+        return (
+            <div className="flex items-center gap-2 w-full">
+                <div className={`flex-1 h-2 ${bgColor} rounded-full overflow-hidden`}>
+                    <div
+                        className={`h-full ${barColor} transition-all duration-300`}
+                        style={{ width: `${Math.min(percentage, 100)}%` }}
+                    />
+                </div>
+                <span className={`text-[10px] font-mono w-10 text-right ${isUnderutilized ? 'text-yellow-400' : isHigh ? 'text-red-400' : 'text-gray-400'
+                    }`}>
+                    {percentage.toFixed(0)}%
+                </span>
+            </div>
+        );
     };
 
     // Calculate Stats based on FILTERED nodes
@@ -143,22 +280,50 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             label: 'Name',
             dataKey: 'name',
             sortable: true,
-            flexGrow: 1.5,
-            width: 200,
+            flexGrow: 1.2,
+            width: 180,
             cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span>
         },
         {
             label: 'Status',
             dataKey: 'status',
             sortable: true,
-            width: 100,
+            width: 90,
             cellRenderer: (status) => <StatusBadge condition={status === 'Ready'} />
+        },
+        {
+            label: 'CPU Requests',
+            dataKey: 'cpuUtil',
+            sortable: true,
+            flexGrow: 1,
+            width: 140,
+            cellRenderer: (_, node) => {
+                const nodeName = node.metadata?.name || node.name;
+                const util = nodeUtilization.get(nodeName);
+                if (!util || util.cpuCapacity === 0) return <span className="text-gray-500 text-xs">N/A</span>;
+                const percentage = (util.cpuRequested / util.cpuCapacity) * 100;
+                return <UtilizationBar percentage={percentage} type="cpu" />;
+            }
+        },
+        {
+            label: 'Memory Requests',
+            dataKey: 'memUtil',
+            sortable: true,
+            flexGrow: 1,
+            width: 140,
+            cellRenderer: (_, node) => {
+                const nodeName = node.metadata?.name || node.name;
+                const util = nodeUtilization.get(nodeName);
+                if (!util || util.memoryCapacity === 0) return <span className="text-gray-500 text-xs">N/A</span>;
+                const percentage = (util.memoryRequested / util.memoryCapacity) * 100;
+                return <UtilizationBar percentage={percentage} type="memory" />;
+            }
         },
         {
             label: 'Instance Type',
             dataKey: 'instanceType',
             sortable: true,
-            width: 140,
+            width: 120,
             cellRenderer: (_, node) => {
                 const info = getNodeProviderInfo(node);
                 return <span className="font-mono text-xs text-gray-400">{info.instanceType}</span>;
@@ -168,7 +333,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             label: 'Zone',
             dataKey: 'zone',
             sortable: true,
-            width: 140,
+            width: 120,
             cellRenderer: (_, node) => {
                 const info = getNodeProviderInfo(node);
                 return <span className="text-gray-400 text-xs">{info.zone}</span>;
@@ -178,7 +343,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             label: 'Capacity',
             dataKey: 'capacityType',
             sortable: true,
-            width: 120,
+            width: 100,
             cellRenderer: (_, node) => {
                 const info = getNodeProviderInfo(node);
                 return (
@@ -195,7 +360,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
             label: 'Age',
             dataKey: 'age',
             sortable: true,
-            width: 100,
+            width: 90,
             cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span>
         }
     ];

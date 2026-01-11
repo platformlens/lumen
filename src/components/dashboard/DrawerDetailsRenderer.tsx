@@ -120,6 +120,7 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                     onExplain={handleExplain}
                     onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
+                    onNavigate={onNavigate}
                 />
             );
         case 'pod':
@@ -146,7 +147,13 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
         case 'clusterrole':
             return <RoleDetails resource={detailedResource} />;
         case 'node':
-            return <NodeDetails node={detailedResource} />;
+            return (
+                <NodeDetails
+                    node={detailedResource}
+                    clusterName={clusterName}
+                    onNavigate={onNavigate}
+                />
+            );
         case 'namespace':
             return (
                 <NamespaceDetails

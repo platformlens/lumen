@@ -147,6 +147,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
         return (
             <NodesView
                 nodes={nodes}
+                pods={pods}
                 onRowClick={(node: any) => onResourceClick(node, 'node')}
                 searchQuery={searchQuery}
             />
