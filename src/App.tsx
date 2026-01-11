@@ -404,8 +404,11 @@ function App() {
             aiCleanupRef.current();
         }
 
-        const model = localStorage.getItem('k8ptain_model') || 'gemini-1.5-flash';
-        const provider = localStorage.getItem('k8ptain_provider') || 'google';
+        // Use state variables instead of localStorage
+        const model = aiModel;
+        const provider = aiProvider;
+
+        console.log('[AI] Using provider:', provider, 'model:', model);
 
         try {
             aiCleanupRef.current = window.k8s.streamExplainResource(

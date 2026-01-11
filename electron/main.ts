@@ -11,6 +11,7 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
 import { streamText } from 'ai';
 import dotenv from 'dotenv'
+import Store from 'electron-store'
 
 // Fix PATH for MacOS to find aws/kubectl etc
 fixPath();
@@ -61,13 +62,10 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
-let store: any;
+let store: Store;
 
-async function loadStore() {
-  const { default: Store } = await import('electron-store');
-  store = new Store();
-}
-loadStore(); // Start loading immediately
+// Initialize store synchronously
+store = new Store();
 
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
@@ -76,50 +74,36 @@ const awsService = new AwsService()
 function registerIpcHandlers() {
   // --- AWS Handlers ---
   ipcMain.handle('aws:getEksCluster', async (_, region, clusterName) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.getEksCluster(region, clusterName, creds);
   });
 
   ipcMain.handle('aws:getVpcDetails', async (_, region, vpcId) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.getVpcDetails(region, vpcId, creds);
   });
 
   ipcMain.handle('aws:getSubnets', async (_, region, vpcId) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.getSubnets(region, vpcId, creds);
   });
 
   ipcMain.handle('aws:getInstanceDetails', async (_, region, instanceId) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.getInstanceDetails(region, instanceId, creds);
   });
 
   ipcMain.handle('aws:getEc2Instances', async (_, region, vpcId, clusterName) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.getEc2Instances(region, vpcId, clusterName, creds);
   });
 
   ipcMain.handle('aws:getPodIdentities', async (_, region, clusterName) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.getPodIdentities(region, clusterName, creds);
   });
 
   ipcMain.handle('aws:checkAuth', async (_, region) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const creds = store.get('awsCreds');
     return awsService.checkAuth(region, creds);
   });
@@ -318,7 +302,7 @@ function registerIpcHandlers() {
       let aiModel;
 
       if (provider === 'google') {
-        const apiKey = await getApiKey();
+        const apiKey = getApiKey();
         if (!apiKey) {
           event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
           return;
@@ -326,7 +310,7 @@ function registerIpcHandlers() {
         const google = createGoogleGenerativeAI({ apiKey });
         aiModel = google(model);
       } else if (provider === 'bedrock') {
-        const awsCreds = await getAwsCreds();
+        const awsCreds = getAwsCreds();
 
         let bedrockConfig: any = {
           region: awsCreds.region || 'us-east-1',
@@ -373,8 +357,6 @@ function registerIpcHandlers() {
 
       // Save to History
       try {
-        const { default: Store } = await import('electron-store');
-        const store = new Store();
         const history: any[] = (store.get('aiHistory') as any[]) || [];
 
         const historyItem = {
@@ -405,7 +387,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:checkAwsAuth', async () => {
     try {
-      const savedCreds = await getAwsCreds();
+      const savedCreds = getAwsCreds();
       let client;
 
       if (savedCreds.accessKeyId && savedCreds.secretAccessKey) {
@@ -448,7 +430,7 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:listModels', async (_, provider: string) => {
     if (provider === 'google') {
       try {
-        const apiKey = await getApiKey();
+        const apiKey = getApiKey();
         if (!apiKey) return [];
 
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
@@ -472,7 +454,7 @@ function registerIpcHandlers() {
       }
     } else if (provider === 'bedrock') {
       try {
-        const savedCreds = await getAwsCreds();
+        const savedCreds = getAwsCreds();
         let client;
 
         if (savedCreds.accessKeyId && savedCreds.secretAccessKey) {
@@ -762,48 +744,32 @@ function registerIpcHandlers() {
 
   // --- Settings / Config ---
   // Using electron-store for persistence
-  // Note: ElectronStore import is usually dynamic in ESM or requires explicit setup.
-  // Since we are in main process with TS, let's try direct usage if import works, 
-  // otherwise we might need dynamic import inside handlers or top-level await if supported.
-  // Actually, standard import should work if 'electron-store' supports ESM.
 
   // Handlers
   ipcMain.handle('settings:saveApiKey', async (_, apiKey) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     store.set('geminiApiKey', apiKey);
     return true;
   });
 
   ipcMain.handle('settings:getApiKey', async () => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     return (store.get('geminiApiKey') as string) || '';
   });
 
   ipcMain.handle('settings:saveAwsCreds', async (_, creds) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     store.set('awsCreds', creds);
     return true;
   });
 
   ipcMain.handle('settings:getAwsCreds', async () => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     return (store.get('awsCreds') as any) || {};
   });
 
   // --- AI History ---
   ipcMain.handle('ai:getHistory', async () => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     return (store.get('aiHistory') as any[]) || [];
   });
 
   ipcMain.handle('ai:saveHistoryItem', async (_, item) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const history: any[] = (store.get('aiHistory') as any[]) || [];
     // Enforce limit of 50
     history.unshift(item);
@@ -815,8 +781,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:deleteHistoryItem', async (_, id) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     let history: any[] = (store.get('aiHistory') as any[]) || [];
     history = history.filter(h => h.id !== id);
     store.set('aiHistory', history);
@@ -824,8 +788,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:clearHistory', async () => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     store.set('aiHistory', []);
     return true;
   });
@@ -833,14 +795,10 @@ function registerIpcHandlers() {
   // --- Pinned Clusters ---
 
   ipcMain.handle('k8s:getPinnedClusters', async () => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     return (store.get('pinnedClusters') as string[]) || [];
   });
 
   ipcMain.handle('k8s:addPinnedCluster', async (_, clusterName) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     const pinned = (store.get('pinnedClusters') as string[]) || [];
     if (!pinned.includes(clusterName)) {
       pinned.push(clusterName);
@@ -850,8 +808,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('k8s:removePinnedCluster', async (_, clusterName) => {
-    const { default: Store } = await import('electron-store');
-    const store = new Store();
     let pinned = (store.get('pinnedClusters') as string[]) || [];
     pinned = pinned.filter(c => c !== clusterName);
     store.set('pinnedClusters', pinned);
@@ -860,42 +816,27 @@ function registerIpcHandlers() {
 
   // Sync handlers for cold start
   ipcMain.on('settings:getModelSync', (event) => {
-    if (store) {
-      event.returnValue = store.get('k8ptain_model') || 'gemini-1.5-flash';
-    } else {
-      event.returnValue = 'gemini-1.5-flash';
-    }
+    event.returnValue = store.get('k8ptain_model') || 'gemini-1.5-flash';
   });
 
   ipcMain.on('settings:getProviderSync', (event) => {
-    if (store) {
-      event.returnValue = store.get('k8ptain_provider') || 'google';
-    } else {
-      event.returnValue = 'google';
-    }
+    event.returnValue = store.get('k8ptain_provider') || 'google';
   });
 
   ipcMain.handle('settings:saveModelSelection', (_event, provider, model) => {
-    if (store) {
-      store.set('k8ptain_provider', provider);
-      store.set('k8ptain_model', model);
-      return true;
-    }
-    return false;
+    store.set('k8ptain_provider', provider);
+    store.set('k8ptain_model', model);
+    return true;
   });
 }
 
-// ... helper for AI
-async function getApiKey(): Promise<string> {
-  const { default: Store } = await import('electron-store');
-  const store = new Store();
+// Helper functions for AI
+function getApiKey(): string {
   const key = store.get('geminiApiKey') as string;
   return key || process.env.GEMINI_API_KEY || '';
 }
 
-async function getAwsCreds(): Promise<any> {
-  const { default: Store } = await import('electron-store');
-  const store = new Store();
+function getAwsCreds(): any {
   return (store.get('awsCreds') as any) || {};
 }
 
