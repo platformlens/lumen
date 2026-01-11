@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('k8s', {
   deleteJob: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:deleteJob', contextName, namespace, name),
   getCronJobs: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getCronJobs', contextName, namespaces),
   getCronJob: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getCronJob', contextName, namespace, name),
+  triggerCronJob: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:triggerCronJob', contextName, namespace, name),
   deleteCronJob: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:deleteCronJob', contextName, namespace, name),
 
   // --- Network ---
@@ -162,6 +163,35 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.off('ai:explainResourceStream:chunk', chunkListener);
       ipcRenderer.off('ai:explainResourceStream:done', doneListener);
       ipcRenderer.off('ai:explainResourceStream:error', errorListener);
+    };
+  },
+  streamCustomPrompt: (prompt: string, options: any, onChunk: (chunk: string) => void, onDone: () => void, onError: (err: any) => void) => {
+    // Cancel any previous stream first
+    ipcRenderer.send('ai:cancelCustomPromptStream');
+
+    // Small delay to ensure cancellation is processed
+    setTimeout(() => {
+      ipcRenderer.send('ai:customPromptStream', prompt, options);
+    }, 10);
+
+    const chunkListener = (_: any, chunk: string) => onChunk(chunk);
+    const doneListener = () => onDone();
+    const errorListener = (_: any, err: any) => onError(err);
+
+    // Prevent duplicate listeners by removing previous ones
+    ipcRenderer.removeAllListeners('ai:customPromptStream:chunk');
+    ipcRenderer.removeAllListeners('ai:customPromptStream:done');
+    ipcRenderer.removeAllListeners('ai:customPromptStream:error');
+
+    ipcRenderer.on('ai:customPromptStream:chunk', chunkListener);
+    ipcRenderer.on('ai:customPromptStream:done', doneListener);
+    ipcRenderer.on('ai:customPromptStream:error', errorListener);
+
+    return () => {
+      ipcRenderer.send('ai:cancelCustomPromptStream');
+      ipcRenderer.off('ai:customPromptStream:chunk', chunkListener);
+      ipcRenderer.off('ai:customPromptStream:done', doneListener);
+      ipcRenderer.off('ai:customPromptStream:error', errorListener);
     };
   },
   decodeCertificate: (certData: string) => ipcRenderer.invoke('k8s:decodeCertificate', certData),

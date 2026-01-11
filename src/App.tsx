@@ -62,6 +62,8 @@ function App() {
     const [aiStreamingContent, setAiStreamingContent] = useState<string>('');
     const [isAiStreaming, setIsAiStreaming] = useState(false);
     const aiCleanupRef = useRef<(() => void) | null>(null);
+    const currentStreamIdRef = useRef<string>('');
+    const conversationHistoryRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
 
     useEffect(() => {
         window.k8s.getPinnedClusters().then(setPinnedClusters).catch(console.error);
@@ -482,6 +484,206 @@ function App() {
         }
     };
 
+    const handleAnalyzeLogsWithAI = async (logs: string[], podName: string, containerName: string) => {
+        // Cancel previous stream FIRST to prevent mismatch
+        if (aiCleanupRef.current) {
+            console.log('[AI] Canceling previous stream before starting new analysis');
+            aiCleanupRef.current();
+            aiCleanupRef.current = null;
+        }
+
+        // Generate unique stream ID
+        const streamId = Math.random().toString(36).substring(7);
+        currentStreamIdRef.current = streamId;
+        console.log('[AI] Starting new stream with ID:', streamId);
+
+        // Reset conversation history for new analysis
+        conversationHistoryRef.current = [];
+
+        // Prepare context for AI analysis
+        setAiContext({ name: podName, type: 'Pod Logs', namespace: containerName });
+        setIsAIPanelOpen(true);
+        setAiStreamingContent('');
+        setIsAiStreaming(true);
+
+        const model = aiModel;
+        const provider = aiProvider;
+
+        console.log('[AI] Analyzing logs with provider:', provider, 'model:', model);
+
+        // Limit logs to last 100 lines to avoid excessive billing
+        const recentLogs = logs.slice(-100);
+        const totalLogLines = recentLogs.length;
+        const logsText = recentLogs.join('\n');
+
+        // Import and use the log analysis prompt from prompts.ts
+        const { LOG_ANALYSIS_PROMPT } = await import('../electron/prompts');
+        const prompt = LOG_ANALYSIS_PROMPT(podName, containerName, logsText, totalLogLines);
+
+        // Add to conversation history
+        conversationHistoryRef.current.push({ role: 'user', content: prompt });
+
+        try {
+            let fullResponse = '';
+            aiCleanupRef.current = window.k8s.streamCustomPrompt(
+                prompt,
+                {
+                    model,
+                    provider,
+                    resourceName: podName,
+                    resourceType: 'Pod Logs',
+                    saveToHistory: true,
+                    promptPreview: `Analyze logs for ${podName} (${containerName})`
+                },
+                (chunk) => {
+                    // Only process chunks for the current stream
+                    if (currentStreamIdRef.current === streamId) {
+                        fullResponse += chunk;
+                        setAiStreamingContent(prev => prev + chunk);
+                    } else {
+                        console.log('[AI] Ignoring chunk from old stream');
+                    }
+                },
+                () => {
+                    if (currentStreamIdRef.current === streamId) {
+                        // Add assistant response to conversation history
+                        conversationHistoryRef.current.push({ role: 'assistant', content: fullResponse });
+                        setIsAiStreaming(false);
+                        aiCleanupRef.current = null;
+                    }
+                },
+                (err) => {
+                    if (currentStreamIdRef.current === streamId) {
+                        console.error("AI Error", err);
+                        setAiStreamingContent(prev => prev + `\n\nError: ${err}`);
+                        setIsAiStreaming(false);
+                        aiCleanupRef.current = null;
+                    }
+                }
+            );
+        } catch (e) {
+            console.error(e);
+            if (currentStreamIdRef.current === streamId) {
+                setIsAiStreaming(false);
+            }
+        }
+    };
+
+    const handleReloadConversation = (conversation: Array<{ role: 'user' | 'assistant'; content: string }>, context: { name: string; type: string }) => {
+        console.log('[AI] Reloading conversation with', conversation.length, 'messages');
+
+        // Restore conversation history
+        conversationHistoryRef.current = conversation;
+
+        // Set context
+        setAiContext({ name: context.name, type: context.type });
+
+        // The AIPanel will display the conversation, no need to set streaming content
+    };
+
+    const handleSendPrompt = async (userPrompt: string) => {
+        // Add guardrails - check if the prompt is Kubernetes-related
+        const k8sKeywords = [
+            'kubernetes', 'k8s', 'pod', 'deployment', 'service', 'namespace', 'container',
+            'node', 'cluster', 'helm', 'kubectl', 'ingress', 'configmap', 'secret',
+            'volume', 'pvc', 'statefulset', 'daemonset', 'job', 'cronjob', 'replica',
+            'hpa', 'autoscal', 'resource', 'yaml', 'manifest', 'api', 'etcd',
+            'kube-', 'docker', 'image', 'registry', 'label', 'selector', 'annotation',
+            'taint', 'toleration', 'affinity', 'network', 'policy', 'rbac', 'role',
+            'serviceaccount', 'endpoint', 'port', 'probe', 'liveness', 'readiness',
+            'restart', 'crash', 'oom', 'cpu', 'memory', 'storage', 'persistent',
+            'log', 'event', 'status', 'describe', 'get', 'apply', 'delete', 'scale',
+            'rollout', 'update', 'upgrade', 'version', 'cert-manager', 'istio',
+            'prometheus', 'grafana', 'monitoring', 'observability', 'eks', 'gke', 'aks',
+            'karpenter', 'argo', 'flux', 'operator', 'crd', 'custom resource'
+        ];
+
+        const lowerPrompt = userPrompt.toLowerCase();
+        const isK8sRelated = k8sKeywords.some(keyword => lowerPrompt.includes(keyword));
+
+        if (!isK8sRelated) {
+            // Reject non-Kubernetes queries - append to existing content
+            const rejectionMessage = `\n\n---\n\n**User:** ${userPrompt}\n\n**Assistant:** I'm a Kubernetes assistant designed to help with cluster management, troubleshooting, and Kubernetes-related questions only. I cannot assist with topics outside of Kubernetes, container orchestration, and related cloud-native technologies.\n\nPlease ask me about:\n- Kubernetes resources and configurations\n- Pod, deployment, and service issues\n- Cluster troubleshooting\n- Helm charts and package management\n- Container and image management\n- Kubernetes best practices\n- Cloud provider integrations (EKS, GKE, AKS)\n- Monitoring and observability tools\n`;
+            setAiStreamingContent(prev => prev + rejectionMessage);
+            return;
+        }
+
+        // Cancel previous stream FIRST to prevent mismatch
+        if (aiCleanupRef.current) {
+            console.log('[AI] Canceling previous stream before starting new chat');
+            aiCleanupRef.current();
+            aiCleanupRef.current = null;
+        }
+
+        // Generate unique stream ID
+        const streamId = Math.random().toString(36).substring(7);
+        currentStreamIdRef.current = streamId;
+        console.log('[AI] Starting new chat stream with ID:', streamId);
+
+        // Clear previous content and start streaming for valid Kubernetes queries
+        setAiStreamingContent('');
+        setIsAiStreaming(true);
+
+        const model = aiModel;
+        const provider = aiProvider;
+
+        console.log('[AI] Sending custom prompt with provider:', provider, 'model:', model);
+
+        // Import and use the chat system prompt from prompts.ts
+        const { getChatSystemPrompt } = await import('../electron/prompts');
+        const systemPrompt = getChatSystemPrompt(aiContext);
+
+        // Add user message to conversation history
+        conversationHistoryRef.current.push({ role: 'user', content: userPrompt });
+
+        try {
+            let fullResponse = '';
+            aiCleanupRef.current = window.k8s.streamCustomPrompt(
+                userPrompt,
+                {
+                    model,
+                    provider,
+                    systemPrompt,
+                    messages: conversationHistoryRef.current, // Pass conversation history
+                    resourceName: aiContext?.name || 'Chat',
+                    resourceType: aiContext?.type || 'Conversation',
+                    saveToHistory: false // Don't save follow-up questions as separate history items
+                },
+                (chunk) => {
+                    // Only process chunks for the current stream
+                    if (currentStreamIdRef.current === streamId) {
+                        fullResponse += chunk;
+                        setAiStreamingContent(prev => prev + chunk);
+                    } else {
+                        console.log('[AI] Ignoring chunk from old stream');
+                    }
+                },
+                () => {
+                    if (currentStreamIdRef.current === streamId) {
+                        // Add assistant response to conversation history
+                        conversationHistoryRef.current.push({ role: 'assistant', content: fullResponse });
+                        console.log('[AI] Conversation history length:', conversationHistoryRef.current.length);
+                        setIsAiStreaming(false);
+                        aiCleanupRef.current = null;
+                    }
+                },
+                (err) => {
+                    if (currentStreamIdRef.current === streamId) {
+                        console.error("AI Error", err);
+                        setAiStreamingContent(prev => prev + `\n\nError: ${err}`);
+                        setIsAiStreaming(false);
+                        aiCleanupRef.current = null;
+                    }
+                }
+            );
+        } catch (e) {
+            console.error(e);
+            if (currentStreamIdRef.current === streamId) {
+                setIsAiStreaming(false);
+            }
+        }
+    };
+
     return (
         <div className="flex h-screen bg-gradient-to-br from-slate-900 via-[#0a0a0a] to-black text-white font-sans overflow-hidden">
             {/* Left Content Area (Title Bar + Main Content + Bottom Panel) */}
@@ -670,6 +872,7 @@ function App() {
                                 isMinimized={false}
                                 onToggleMinimize={() => setIsBottomPanelOpen(false)}
                                 onChangeContainer={handleChangeContainer}
+                                onAnalyzeWithAI={handleAnalyzeLogsWithAI}
                             />
                         </BottomPanel>
                     </div>
@@ -729,6 +932,8 @@ function App() {
                         currentExplanation={aiStreamingContent}
                         isStreaming={isAiStreaming}
                         resourceContext={aiContext}
+                        onSendPrompt={handleSendPrompt}
+                        onReloadConversation={handleReloadConversation}
                         mode="sidebar"
                     />
                 )}

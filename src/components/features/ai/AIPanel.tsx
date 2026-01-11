@@ -12,6 +12,8 @@ interface AIHistoryItem {
     resourceType?: string;
     model?: string;
     provider?: string;
+    conversation?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    systemPrompt?: string;
 }
 
 interface AIPanelProps {
@@ -21,6 +23,7 @@ interface AIPanelProps {
     isStreaming?: boolean;
     resourceContext?: { name: string; type: string; namespace?: string };
     onSendPrompt?: (prompt: string) => void; // For follow-up chat
+    onReloadConversation?: (conversation: Array<{ role: 'user' | 'assistant'; content: string }>, context: { name: string; type: string }) => void;
     mode?: 'overlay' | 'sidebar';
 }
 
@@ -39,6 +42,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     isStreaming,
     resourceContext,
     onSendPrompt,
+    onReloadConversation,
     ...props
 }) => {
     const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat');
@@ -65,15 +69,10 @@ export const AIPanel: React.FC<AIPanelProps> = ({
         }
     }, [isOpen]);
 
-    // Reset chat when context changes
+    // Reset chat when context changes OR when streaming starts fresh
     useEffect(() => {
         if (resourceContext) {
-            // Only reset if it's a different resource than what we might have had?
-            // Since we don't track "previousContext", we assume any change here implies new selection.
-            // But we must be careful not to reset if it's the SAME object ref but we need to check values.
-            // To be safe, just clearing localChat is fine because when we select a resource, we expect a fresh start usually.
-            // However, we must NOT clear if we are in the middle of streaming for THIS resource.
-            // The isStreaming check in the other effect handles the "prompt" insertion.
+            // Clear chat when context changes
             setLocalChat([]);
             setActiveTab('chat');
             setSelectedHistoryId(null);
@@ -90,11 +89,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     // Update local chat when streaming explanation comes in
     useEffect(() => {
         // If we have a context and streaming starts, ensure we show the "prompt" from user perspective
-        if (resourceContext && isStreaming && localChat.length === 0) {
+        if (resourceContext && isStreaming && localChat.length === 0 && !currentExplanation) {
             setLocalChat([{ role: 'user', content: `Explain ${resourceContext.type} ${resourceContext.name}` }]);
         }
 
-        if (currentExplanation) {
+        if (currentExplanation && currentExplanation.trim()) {
             setLocalChat(prev => {
                 // If the last message is AI, update it.
                 if (prev.length > 0 && prev[prev.length - 1].role === 'ai') {
@@ -129,11 +128,30 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     };
 
     const handleSelectHistory = (item: AIHistoryItem) => {
-        // Load this item into view
-        setLocalChat([
-            { role: 'user', content: `Explain ${item.resourceType} ${item.resourceName}\n\n${item.prompt || ''}` }, // Reconstruct context
-            { role: 'ai', content: item.response }
-        ]);
+        // If conversation history exists, load the full conversation
+        if (item.conversation && item.conversation.length > 0) {
+            // Convert 'assistant' role to 'ai' for display
+            const displayChat = item.conversation.map(msg => ({
+                role: msg.role === 'assistant' ? 'ai' as const : msg.role,
+                content: msg.content
+            }));
+            setLocalChat(displayChat);
+
+            // Reload conversation history in App.tsx for follow-up questions
+            if (onReloadConversation && item.resourceName && item.resourceType) {
+                onReloadConversation(item.conversation, {
+                    name: item.resourceName,
+                    type: item.resourceType
+                });
+            }
+        } else {
+            // Fallback to old format (single prompt/response)
+            setLocalChat([
+                { role: 'user', content: `Explain ${item.resourceType} ${item.resourceName}\n\n${item.prompt || ''}` },
+                { role: 'ai', content: item.response }
+            ]);
+        }
+
         setActiveTab('chat');
         setSelectedHistoryId(item.id);
     };

@@ -76,6 +76,7 @@ export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
                         onRowClick={onRowClick}
                         sortConfig={sortConfig}
                         onSort={onSort}
+                        tableId={viewKey} // Use viewKey as unique table identifier for persistence
                     />
                 )}
             </div>

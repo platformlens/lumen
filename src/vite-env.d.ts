@@ -41,6 +41,7 @@ declare global {
             deleteJob: (contextName: string, namespace: string, name: string) => Promise<boolean>;
             getCronJobs: (contextName: string, namespaces?: string[]) => Promise<any[]>;
             getCronJob: (contextName: string, namespace: string, name: string) => Promise<any>;
+            triggerCronJob: (contextName: string, namespace: string, name: string) => Promise<{ success: boolean; jobName: string; job: any }>;
             deleteCronJob: (contextName: string, namespace: string, name: string) => Promise<boolean>;
 
             // --- Network ---

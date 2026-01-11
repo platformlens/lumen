@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { AutoSizer, Table, Column, SortDirection, SortDirectionType } from 'react-virtualized';
 import 'react-virtualized/styles.css';
 
@@ -35,6 +35,7 @@ const tableStyles = `
   .ReactVirtualized__Table__headerColumn {
     padding: 0.75rem 1.5rem; /* px-6 py-3 */
     outline: none;
+    position: relative;
   }
 
   .ReactVirtualized__Table__rowColumn {
@@ -45,6 +46,32 @@ const tableStyles = `
     outline: none;
     display: flex;
     align-items: center;
+  }
+  
+  /* Column resize handle */
+  .column-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 8px;
+    cursor: col-resize;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .column-resize-handle:hover::after,
+  .column-resize-handle.resizing::after {
+    content: '';
+    width: 2px;
+    height: 100%;
+    background-color: rgba(59, 130, 246, 0.5); /* blue-500 with opacity */
+  }
+  
+  .column-resize-handle.resizing::after {
+    background-color: rgba(59, 130, 246, 0.8);
   }
   
   /* Scrollbar styling for the table container */
@@ -81,6 +108,7 @@ interface VirtualizedTableProps {
     onSort?: (key: string) => void;
     rowHeight?: number;
     headerHeight?: number;
+    tableId?: string; // Unique identifier for persisting column widths
 }
 
 export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
@@ -90,26 +118,127 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
     sortConfig,
     onSort,
     rowHeight = 52, // Slightly increased to standard comfortable touch/click size (was ~53px in HTML table with padding)
-    headerHeight = 40
+    headerHeight = 40,
+    tableId
 }) => {
     // Ref to the Table component to force recompute on resize
     const tableRef = useRef<Table>(null);
 
+    // Load saved column widths from localStorage or use defaults
+    const loadColumnWidths = useCallback(() => {
+        const initialWidths: Record<string, number> = {};
+        columns.forEach(col => {
+            initialWidths[col.dataKey] = col.width || 100;
+        });
+
+        if (tableId) {
+            try {
+                const saved = localStorage.getItem(`table-column-widths-${tableId}`);
+                if (saved) {
+                    const savedWidths = JSON.parse(saved);
+                    // Merge saved widths with defaults (in case new columns were added)
+                    return { ...initialWidths, ...savedWidths };
+                }
+            } catch (e) {
+                console.warn('Failed to load saved column widths:', e);
+            }
+        }
+
+        return initialWidths;
+    }, [columns, tableId]);
+
+    // State to track column widths
+    const [columnWidths, setColumnWidths] = useState<Record<string, number>>(loadColumnWidths);
+
+    // Save column widths to localStorage
+    const saveColumnWidths = useCallback((widths: Record<string, number>) => {
+        if (tableId) {
+            try {
+                localStorage.setItem(`table-column-widths-${tableId}`, JSON.stringify(widths));
+            } catch (e) {
+                console.warn('Failed to save column widths:', e);
+            }
+        }
+    }, [tableId]);
+
+    // State for tracking resize operation
+    const [resizing, setResizing] = useState<{ dataKey: string; startX: number; startWidth: number } | null>(null);
+
+    // Handle resize start
+    const handleResizeStart = useCallback((dataKey: string, startX: number) => {
+        const currentWidth = columnWidths[dataKey] || 100;
+        setResizing({ dataKey, startX, startWidth: currentWidth });
+    }, [columnWidths]);
+
+    // Handle resize move
+    const handleResizeMove = useCallback((e: MouseEvent) => {
+        if (!resizing) return;
+
+        const delta = e.clientX - resizing.startX;
+        const newWidth = Math.max(50, resizing.startWidth + delta); // Minimum width of 50px
+
+        setColumnWidths(prev => ({
+            ...prev,
+            [resizing.dataKey]: newWidth
+        }));
+
+        // Force table to recompute
+        if (tableRef.current) {
+            tableRef.current.recomputeRowHeights();
+        }
+    }, [resizing]);
+
+    // Handle resize end
+    const handleResizeEnd = useCallback(() => {
+        if (resizing) {
+            // Save the final widths when resize ends
+            setColumnWidths(prev => {
+                saveColumnWidths(prev);
+                return prev;
+            });
+        }
+        setResizing(null);
+    }, [resizing, saveColumnWidths]);
+
+    // Set up global mouse event listeners for resize
+    React.useEffect(() => {
+        if (resizing) {
+            document.addEventListener('mousemove', handleResizeMove);
+            document.addEventListener('mouseup', handleResizeEnd);
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            return () => {
+                document.removeEventListener('mousemove', handleResizeMove);
+                document.removeEventListener('mouseup', handleResizeEnd);
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            };
+        }
+    }, [resizing, handleResizeMove, handleResizeEnd]);
+
     // Calculate the total minimum width required by all columns
-    const minTableWidth = columns.reduce((acc, col) => acc + (col.width || 100), 0);
+    const minTableWidth = Object.values(columnWidths).reduce((acc, width) => acc + width, 0);
 
     const headerRenderer = ({ label, dataKey, sortBy, sortDirection }: any) => {
         return (
-            <div className="flex items-center gap-1 cursor-pointer select-none group">
-                {label}
-                {/* Always show sort icon placeholder or active icon to prevent layout jump? 
-                    Actually, just showing it when active or on hover is nice. 
-                    Let's stick to showing when active for now. */}
-                {sortBy === dataKey && (
-                    <span className="text-xs text-blue-400">
-                        {sortDirection === SortDirection.ASC ? '▲' : '▼'}
-                    </span>
-                )}
+            <div className="flex items-center gap-1 cursor-pointer select-none group w-full">
+                <div className="flex items-center gap-1 flex-1 min-w-0">
+                    {label}
+                    {sortBy === dataKey && (
+                        <span className="text-xs text-blue-400">
+                            {sortDirection === SortDirection.ASC ? '▲' : '▼'}
+                        </span>
+                    )}
+                </div>
+                <div
+                    className={`column-resize-handle ${resizing?.dataKey === dataKey ? 'resizing' : ''}`}
+                    onMouseDown={(e) => {
+                        e.stopPropagation();
+                        handleResizeStart(dataKey, e.clientX);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                />
             </div>
         );
     };
@@ -164,9 +293,9 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
                                         key={col.dataKey || index}
                                         label={col.label}
                                         dataKey={col.dataKey}
-                                        width={col.width || 100}
+                                        width={columnWidths[col.dataKey] || col.width || 100}
                                         flexGrow={col.flexGrow ?? 0} // Default to 0 if not specified to respect manual widths more strictly when scrolling
-                                        headerRenderer={col.sortable ? headerRenderer : undefined}
+                                        headerRenderer={headerRenderer}
                                         cellRenderer={({ cellData, rowData }) => {
                                             if (col.cellRenderer) {
                                                 return col.cellRenderer(cellData, rowData);

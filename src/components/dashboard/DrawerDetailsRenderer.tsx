@@ -30,6 +30,7 @@ interface DrawerDetailsRendererProps {
     onOpenLogs: (pod: any, containerName: string) => void;
     onShowTopology?: () => void;
     onOpenYaml?: (resource: any) => void;
+    onTriggerCronJob?: () => void;
 }
 
 export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
@@ -40,7 +41,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
     onNavigate,
     onOpenLogs,
     onShowTopology,
-    onOpenYaml
+    onOpenYaml,
+    onTriggerCronJob
 }) => {
     if (!selectedResource || !detailedResource) return null;
 
@@ -107,6 +109,7 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                     onOpenYaml={handleOpenYaml}
                     onShowTopology={onShowTopology}
                     clusterName={clusterName}
+                    onTrigger={onTriggerCronJob}
                 />
             );
         case 'service':

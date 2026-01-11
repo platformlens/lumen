@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Box, Tag, List, Calendar } from 'lucide-react';
+import { Box, Tag, List, Calendar, Play } from 'lucide-react';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
 import { ContainerResources } from './ContainerResources';
 
@@ -12,13 +12,34 @@ interface CronJobDetailsProps {
     onShowTopology?: () => void;
     onOpenYaml?: () => void;
     clusterName?: string;
+    onTrigger?: () => void;
 }
 
-export const CronJobDetails: React.FC<CronJobDetailsProps> = ({ cronJob, explanation, onExplain, isExplaining, onShowTopology, clusterName }) => {
+export const CronJobDetails: React.FC<CronJobDetailsProps> = ({
+    cronJob,
+    explanation,
+    onExplain,
+    isExplaining,
+    onShowTopology,
+    clusterName,
+    onTrigger
+}) => {
     const [showTopology, setShowTopology] = useState(false);
+    const [isTriggering, setIsTriggering] = useState(false);
+
     if (!cronJob) return null;
 
     const { metadata, spec, status } = cronJob;
+
+    const handleTrigger = async () => {
+        if (!onTrigger) return;
+        setIsTriggering(true);
+        try {
+            await onTrigger();
+        } finally {
+            setIsTriggering(false);
+        }
+    };
 
     return (
         <div className="space-y-8 text-sm">
@@ -40,6 +61,32 @@ export const CronJobDetails: React.FC<CronJobDetailsProps> = ({ cronJob, explana
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-gray-500 uppercase font-bold text-xs tracking-wider">Metadata</h3>
                     <div className="flex items-center gap-2">
+                        {onTrigger && (
+                            <button
+                                onClick={handleTrigger}
+                                disabled={isTriggering || spec.suspend}
+                                className={`
+                                    flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider
+                                    transition-all duration-300 border
+                                    ${isTriggering || spec.suspend
+                                        ? 'bg-gray-500/10 border-gray-500/20 text-gray-400 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-green-600/80 to-emerald-600/80 hover:from-green-500 hover:to-emerald-500 text-white border-transparent hover:shadow-lg hover:scale-105 active:scale-95'
+                                    }
+                                `}
+                                title={spec.suspend ? 'CronJob is suspended' : 'Trigger job now'}
+                            >
+                                {isTriggering ? (
+                                    <>
+                                        <div className="w-2 h-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                        Triggering...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play size={10} /> Trigger Now
+                                    </>
+                                )}
+                            </button>
+                        )}
                         {onShowTopology && (
                             <button
                                 onClick={() => setShowTopology(!showTopology)}
@@ -148,11 +195,17 @@ export const CronJobDetails: React.FC<CronJobDetailsProps> = ({ cronJob, explana
                     </div>
                     <div className="p-3 border-b border-white/10 flex justify-between">
                         <span className="text-gray-400">Active Jobs</span>
-                        <span className="text-white">{status.active?.length || 0}</span>
+                        <span className="text-white">{status?.active?.length || 0}</span>
                     </div>
                     <div className="p-3 border-b border-white/10 flex justify-between">
                         <span className="text-gray-400">Last Schedule</span>
-                        <span className="text-white">{status.lastScheduleTime ? new Date(status.lastScheduleTime).toLocaleString() : 'Never'}</span>
+                        <span className="text-white">
+                            {status?.lastScheduleTime
+                                ? new Date(status.lastScheduleTime).toLocaleString()
+                                : status?.lastSuccessfulTime
+                                    ? new Date(status.lastSuccessfulTime).toLocaleString()
+                                    : 'Never'}
+                        </span>
                     </div>
 
                     <div className="p-3 border-b border-white/10 bg-white/5">

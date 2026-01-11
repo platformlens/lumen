@@ -351,6 +351,7 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, onRowClick, searchQ
                     onRowClick={onRowClick}
                     sortConfig={sortConfig}
                     onSort={handleSort}
+                    tableId="nodes-view"
                 />
             </div>
         </motion.div>

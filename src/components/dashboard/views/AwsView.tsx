@@ -397,7 +397,7 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
                         <Network size={18} className="text-blue-400" />
                         Subnets
                     </h3>
-                    <PagedTable data={processedSubnets} columns={subnetColumns} />
+                    <PagedTable tableId="aws-subnets" data={processedSubnets} columns={subnetColumns} />
                 </section>
 
                 <section>
@@ -406,6 +406,7 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
                         EC2 Instances
                     </h3>
                     <PagedTable
+                        tableId="aws-ec2-instances"
                         data={processedInstances}
                         columns={ec2Columns}
                         onRowClick={(row) => setSelectedInstance(row)}
@@ -417,7 +418,7 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
                         <Shield size={18} className="text-purple-400" />
                         Pod Identities
                     </h3>
-                    <PagedTable data={podIdentities} columns={podIdentityColumns} />
+                    <PagedTable tableId="aws-pod-identities" data={podIdentities} columns={podIdentityColumns} />
                 </section>
             </div>
 
@@ -438,7 +439,7 @@ export const AwsView: React.FC<AwsViewProps> = ({ clusterName }) => {
     );
 };
 
-const PagedTable = ({ data, columns, onRowClick }: { data: any[], columns: IColumn[], onRowClick?: (row: any) => void }) => {
+const PagedTable = ({ tableId, data, columns, onRowClick }: { tableId?: string, data: any[], columns: IColumn[], onRowClick?: (row: any) => void }) => {
     const [page, setPage] = useState(1);
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const pageSize = 10;
@@ -488,6 +489,7 @@ const PagedTable = ({ data, columns, onRowClick }: { data: any[], columns: IColu
         <div className="space-y-4">
             <div className="h-[400px]">
                 <VirtualizedTable
+                    tableId={tableId}
                     data={paginatedData}
                     columns={columns}
                     sortConfig={sortConfig}

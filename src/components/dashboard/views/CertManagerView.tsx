@@ -392,6 +392,7 @@ export const CertManagerView: React.FC<CertManagerViewProps> = ({ clusterName, s
                 {activeTab === 'certificates' && (
                     <div className="h-full">
                         <VirtualizedTable
+                            tableId="cert-manager-certificates"
                             columns={certColumns}
                             data={sortedCertificates}
                             sortConfig={sortConfig}
@@ -403,6 +404,7 @@ export const CertManagerView: React.FC<CertManagerViewProps> = ({ clusterName, s
                 {activeTab === 'issuers' && (
                     <div className="h-full">
                         <VirtualizedTable
+                            tableId="cert-manager-issuers"
                             columns={issuerColumns}
                             data={sortedIssuers}
                             sortConfig={sortConfig}

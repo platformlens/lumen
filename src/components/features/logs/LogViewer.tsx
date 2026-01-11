@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool } from 'lucide-react';
+import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool, Sparkles } from 'lucide-react';
 import { TerminalComponent } from '../terminal/TerminalComponent';
 import { YamlEditor } from '../yaml-editor/YamlEditor';
 
@@ -33,6 +33,7 @@ interface LogViewerProps {
     onChangeContainer: (tabId: string, newContainer: string) => void;
     isMinimized: boolean;
     onToggleMinimize: () => void;
+    onAnalyzeWithAI?: (logs: string[], podName: string, containerName: string) => void;
 }
 
 export const LogViewer: React.FC<LogViewerProps> = React.memo(({
@@ -44,7 +45,8 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     onCloseViewer,
     onChangeContainer,
     isMinimized,
-    onToggleMinimize
+    onToggleMinimize,
+    onAnalyzeWithAI
 }) => {
     const logsEndRef = useRef<HTMLDivElement>(null);
     const activeTab = tabs.find(t => t.id === activeTabId);
@@ -158,19 +160,37 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
 
                 {/* 2. Render Log Content */}
                 {activeTab && activeTab.type === 'log' && (
-                    <div className="absolute inset-0 overflow-auto p-3 text-gray-300 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-                        <div className="space-y-0.5">
-                            {(!activeTab.logs || activeTab.logs.length === 0) && (
-                                <div className="text-gray-600 italic p-4 text-center">Waiting for logs...</div>
-                            )}
-                            {activeTab.logs?.map((log, idx) => (
-                                <div key={idx} className="whitespace-pre-wrap break-all px-2 py-0.5 leading-relaxed hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500/50">
-                                    {log}
-                                </div>
-                            ))}
-                            <div ref={logsEndRef} />
+                    <>
+                        <div className="absolute inset-0 overflow-auto p-3 text-gray-300 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                            <div className="space-y-0.5">
+                                {(!activeTab.logs || activeTab.logs.length === 0) && (
+                                    <div className="text-gray-600 italic p-4 text-center">Waiting for logs...</div>
+                                )}
+                                {activeTab.logs?.map((log, idx) => (
+                                    <div key={idx} className="whitespace-pre-wrap break-all px-2 py-0.5 leading-relaxed hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500/50">
+                                        {log}
+                                    </div>
+                                ))}
+                                <div ref={logsEndRef} />
+                            </div>
                         </div>
-                    </div>
+
+                        {/* Floating AI Analyze Button - positioned relative to log viewer */}
+                        {onAnalyzeWithAI && activeTab.logs && activeTab.logs.length > 0 && (
+                            <button
+                                onClick={() => onAnalyzeWithAI(
+                                    activeTab.logs || [],
+                                    activeTab.podName || '',
+                                    activeTab.containerName || ''
+                                )}
+                                className="absolute bottom-6 right-6 flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-full shadow-lg shadow-purple-900/50 transition-all hover:shadow-xl hover:shadow-purple-900/70 hover:scale-105 font-medium text-sm z-50 group"
+                                title="Analyze logs with AI"
+                            >
+                                <Sparkles size={18} className="group-hover:animate-pulse" />
+                                <span>Analyze with AI</span>
+                            </button>
+                        )}
+                    </>
                 )}
 
                 {/* 3. Render YAML Editor */}

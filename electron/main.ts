@@ -411,6 +411,156 @@ function registerIpcHandlers() {
     }
   })
 
+  // Track active AI streams for cancellation
+  let activeCustomPromptAbort: AbortController | null = null;
+
+  // Cancel custom prompt stream
+  ipcMain.on('ai:cancelCustomPromptStream', () => {
+    if (activeCustomPromptAbort) {
+      console.log('[AI] Canceling active custom prompt stream');
+      activeCustomPromptAbort.abort();
+      activeCustomPromptAbort = null;
+    }
+  });
+
+  // Custom prompt streaming (for log analysis, etc.) - supports conversation history
+  ipcMain.on('ai:customPromptStream', async (event, customPrompt, options) => {
+    // Cancel any existing stream first
+    if (activeCustomPromptAbort) {
+      console.log('[AI] Canceling previous stream before starting new one');
+      activeCustomPromptAbort.abort();
+      activeCustomPromptAbort = null;
+    }
+
+    // Create new abort controller for this stream
+    activeCustomPromptAbort = new AbortController();
+    const abortSignal = activeCustomPromptAbort.signal;
+
+    try {
+      const { provider = 'google', model = 'gemini-1.5-flash', systemPrompt, messages } = options || {};
+      let aiModel;
+
+      if (provider === 'google') {
+        const apiKey = getApiKey();
+        if (!apiKey) {
+          event.sender.send('ai:customPromptStream:error', 'GEMINI_API_KEY not configured.');
+          activeCustomPromptAbort = null;
+          return;
+        }
+        const google = createGoogleGenerativeAI({ apiKey });
+        aiModel = google(model);
+      } else if (provider === 'bedrock') {
+        const awsCreds = getAwsCreds();
+
+        let bedrockConfig: any = {
+          region: awsCreds.region || 'us-east-1',
+        };
+
+        if (awsCreds.accessKeyId && awsCreds.secretAccessKey) {
+          bedrockConfig.accessKeyId = awsCreds.accessKeyId;
+          bedrockConfig.secretAccessKey = awsCreds.secretAccessKey;
+          if (awsCreds.sessionToken) {
+            bedrockConfig.sessionToken = awsCreds.sessionToken;
+          }
+        } else {
+          bedrockConfig.credentialProvider = fromNodeProviderChain();
+        }
+
+        const bedrock = createAmazonBedrock(bedrockConfig);
+        aiModel = bedrock(model);
+      } else {
+        event.sender.send('ai:customPromptStream:error', `Unknown provider: ${provider}`);
+        activeCustomPromptAbort = null;
+        return;
+      }
+
+      // Use messages array if provided (for conversation history), otherwise use simple prompt
+      let result;
+      if (messages && messages.length > 0) {
+        // Multi-turn conversation with history
+        result = streamText({
+          model: aiModel,
+          messages: messages,
+          system: systemPrompt,
+          abortSignal,
+        });
+      } else {
+        // Single prompt (backward compatibility)
+        const finalPrompt = systemPrompt ? `${systemPrompt}\n\n${customPrompt}` : customPrompt;
+        result = streamText({
+          model: aiModel,
+          prompt: finalPrompt,
+          abortSignal,
+        });
+      }
+
+      let fullResponse = '';
+      for await (const textPart of result.textStream) {
+        // Check if aborted
+        if (abortSignal.aborted) {
+          console.log('[AI] Stream aborted');
+          activeCustomPromptAbort = null;
+          return;
+        }
+        fullResponse += textPart;
+        event.sender.send('ai:customPromptStream:chunk', textPart);
+      }
+
+      // Save to History with full conversation
+      // Only save if explicitly requested (for initial analysis, not follow-ups)
+      const shouldSaveHistory = options.saveToHistory === true;
+
+      if (shouldSaveHistory) {
+        try {
+          const history: any[] = (store.get('aiHistory') as any[]) || [];
+
+          // Create a user-friendly prompt preview (not the full logs)
+          let promptPreview = customPrompt.substring(0, 200);
+          if (options.promptPreview) {
+            promptPreview = options.promptPreview;
+          } else if (customPrompt.length > 200) {
+            // If it's a long prompt (like logs), create a better preview
+            promptPreview = `Analyze logs for ${options.resourceName || 'resource'}`;
+          }
+
+          const historyItem = {
+            id: Math.random().toString(36).substr(2, 9),
+            timestamp: Date.now(),
+            prompt: promptPreview,
+            response: fullResponse,
+            resourceName: options.resourceName || 'Custom Query',
+            resourceType: options.resourceType || 'Analysis',
+            model: model,
+            provider: provider,
+            // Store full conversation for reload
+            conversation: messages && messages.length > 0 ? [...messages, { role: 'assistant', content: fullResponse }] : undefined,
+            systemPrompt: systemPrompt
+          };
+
+          history.unshift(historyItem);
+          if (history.length > 50) history.splice(50);
+          store.set('aiHistory', history);
+        } catch (saveErr) {
+          console.error("Failed to save AI history:", saveErr);
+        }
+      }
+
+      event.sender.send('ai:customPromptStream:done');
+      activeCustomPromptAbort = null;
+
+    } catch (error: any) {
+      // Don't send error if it was aborted
+      if (error.name === 'AbortError' || abortSignal.aborted) {
+        console.log('[AI] Stream was aborted');
+        activeCustomPromptAbort = null;
+        return;
+      }
+      console.error('AI Error:', error);
+      event.sender.send('ai:customPromptStream:error', error.message || 'Unknown error');
+      activeCustomPromptAbort = null;
+    }
+  });
+
   ipcMain.handle('ai:checkAwsAuth', async () => {
     try {
       const savedCreds = getAwsCreds();
@@ -686,6 +836,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('k8s:getCronJob', (_, contextName, namespace, name) => {
     return k8sService.getCronJob(contextName, namespace, name);
+  })
+
+  ipcMain.handle('k8s:triggerCronJob', (_, contextName, namespace, name) => {
+    return k8sService.triggerCronJob(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:deleteCronJob', (_, contextName, namespace, name) => {

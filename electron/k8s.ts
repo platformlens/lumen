@@ -1712,7 +1712,8 @@ export class K8sService {
                 schedule: cj.spec?.schedule,
                 suspend: cj.spec?.suspend,
                 active: cj.status?.active?.length || 0,
-                lastScheduleTime: cj.status?.lastScheduleTime,
+                lastSchedule: cj.status?.lastScheduleTime,
+                lastScheduleTime: cj.status?.lastScheduleTime, // Keep for backward compatibility
                 age: cj.metadata?.creationTimestamp,
                 metadata: cj.metadata,
                 spec: cj.spec,
@@ -1733,6 +1734,58 @@ export class K8sService {
         } catch (err) {
             console.error(`Error fetching CronJob ${namespace}/${name}:`, err);
             return null;
+        }
+    }
+
+    public async triggerCronJob(contextName: string, namespace: string, cronJobName: string) {
+        console.log(`[k8s] triggerCronJob called for ${namespace}/${cronJobName}`);
+        this.kc.setCurrentContext(contextName);
+        const k8sBatchApi = this.kc.makeApiClient(BatchV1Api);
+
+        try {
+            // First, get the CronJob to extract its job template
+            const cronJobRes = await k8sBatchApi.readNamespacedCronJob({ name: cronJobName, namespace });
+            const cronJob = (cronJobRes as any).body ? (cronJobRes as any).body : cronJobRes;
+
+            if (!cronJob || !cronJob.spec || !cronJob.spec.jobTemplate) {
+                throw new Error(`CronJob ${cronJobName} does not have a valid job template`);
+            }
+
+            // Create a Job from the CronJob's template
+            // Generate a unique name for the manual job
+            const timestamp = Math.floor(Date.now() / 1000);
+            const jobName = `${cronJobName}-manual-${timestamp}`;
+
+            const jobSpec = {
+                apiVersion: 'batch/v1',
+                kind: 'Job',
+                metadata: {
+                    name: jobName,
+                    namespace: namespace,
+                    annotations: {
+                        'cronjob.kubernetes.io/instantiate': 'manual',
+                    },
+                    labels: {
+                        ...cronJob.spec.jobTemplate.metadata?.labels,
+                        'job-name': jobName,
+                    },
+                },
+                spec: cronJob.spec.jobTemplate.spec,
+            };
+
+            // Create the Job
+            const res = await k8sBatchApi.createNamespacedJob({ namespace, body: jobSpec });
+            const createdJob = (res as any).body ? (res as any).body : res;
+
+            console.log(`[k8s] Successfully triggered CronJob ${cronJobName}, created Job ${jobName}`);
+            return {
+                success: true,
+                jobName: createdJob.metadata?.name,
+                job: createdJob,
+            };
+        } catch (err) {
+            console.error(`Error triggering CronJob ${namespace}/${cronJobName}:`, err);
+            throw err;
         }
     }
 

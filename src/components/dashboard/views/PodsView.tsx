@@ -177,6 +177,7 @@ export const PodsView: React.FC<PodsViewProps> = ({
                                 sortConfig={sortConfig}
                                 onSort={onSort}
                                 onRowClick={onRowClick}
+                                tableId="pods-view"
                             />
                         )}
                     </div>

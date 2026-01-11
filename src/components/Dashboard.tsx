@@ -1010,6 +1010,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     };
 
+    const handleTriggerCronJob = async () => {
+        if (!selectedResource || selectedResource.type !== 'cronjob') return;
+
+        try {
+            const result = await window.k8s.triggerCronJob(clusterName, selectedResource.namespace, selectedResource.name);
+            if (result.success) {
+                alert(`CronJob triggered successfully! Created job: ${result.jobName}`);
+                // Optionally refresh the view or navigate to the job
+            }
+        } catch (e: any) {
+            console.error("Failed to trigger CronJob", e);
+            alert(`Failed to trigger CronJob: ${e.message || 'Unknown error'}`);
+        }
+    };
+
     const handleScaleDeployment = async (replicas: number) => {
         if (!selectedResource || !clusterName) return;
         try {
@@ -1238,6 +1253,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                     onOpenLogs={handleOpenLogs}
                                     onShowTopology={() => setDrawerTab('topology')}
                                     onOpenYaml={onOpenYaml}
+                                    onTriggerCronJob={handleTriggerCronJob}
                                 />
                             )}
                         </>

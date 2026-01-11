@@ -55,6 +55,7 @@ interface Window {
     deleteJob: (contextName: string, namespace: string, name: string) => Promise<any>
     getCronJobs: (contextName: string, namespaces?: string[]) => Promise<any[]>
     getCronJob: (contextName: string, namespace: string, name: string) => Promise<any>
+    triggerCronJob: (contextName: string, namespace: string, name: string) => Promise<{ success: boolean; jobName: string; job: any }>
     deleteCronJob: (contextName: string, namespace: string, name: string) => Promise<any>
     getEndpointSlices: (contextName: string, namespaces?: string[]) => Promise<any[]>
     getEndpointSlice: (contextName: string, namespace: string, name: string) => Promise<any>
@@ -159,6 +160,22 @@ interface Window {
     streamExplainResource: (
       resource: any,
       options: { model: string; provider: string },
+      onChunk: (chunk: string) => void,
+      onDone: () => void,
+      onError: (error: any) => void
+    ) => () => void
+    streamCustomPrompt: (
+      prompt: string,
+      options: {
+        model: string;
+        provider: string;
+        systemPrompt?: string;
+        messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+        resourceName?: string;
+        resourceType?: string;
+        saveToHistory?: boolean;
+        promptPreview?: string;
+      },
       onChunk: (chunk: string) => void,
       onDone: () => void,
       onError: (error: any) => void
