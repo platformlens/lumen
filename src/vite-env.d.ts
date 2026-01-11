@@ -10,6 +10,7 @@ declare global {
             getNamespacesDetails: (contextName: string) => Promise<any[]>;
             getDeployments: (contextName: string, namespaces?: string[]) => Promise<any[]>;
             getPods: (contextName: string, namespaces?: string[]) => Promise<any[]>;
+            getPodMetrics: (contextName: string, namespaces?: string[]) => Promise<Record<string, { cpu: string; memory: string }>>;
             getPod: (contextName: string, namespace: string, name: string) => Promise<any>;
             getReplicaSets: (contextName: string, namespaces?: string[]) => Promise<any[]>;
             getServices: (contextName: string, namespaces?: string[]) => Promise<any[]>;

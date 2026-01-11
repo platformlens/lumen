@@ -16,6 +16,7 @@ interface PodsViewProps {
     onRowClick: (pod: any) => void;
     searchQuery?: string;
     isLoading?: boolean;
+    podMetrics?: Record<string, { cpu: string; memory: string }>;
 }
 
 export const PodsView: React.FC<PodsViewProps> = ({
@@ -27,7 +28,8 @@ export const PodsView: React.FC<PodsViewProps> = ({
     onSort,
     onRowClick,
     searchQuery = '',
-    isLoading = false
+    isLoading = false,
+    podMetrics = {}
 }) => {
     const pageVariants = {
         initial: { opacity: 0, y: 10 },
@@ -68,10 +70,32 @@ export const PodsView: React.FC<PodsViewProps> = ({
             cellRenderer: (ns: any) => <span className="text-gray-400">{ns}</span>
         },
         {
+            label: 'CPU',
+            dataKey: 'cpu',
+            width: 80,
+            flexGrow: 0,
+            cellRenderer: (_: any, rowData: any) => {
+                const key = `${rowData.namespace}/${rowData.name}`;
+                const metrics = podMetrics[key];
+                return <span className="text-gray-400 font-mono text-xs">{metrics?.cpu || '-'}</span>;
+            }
+        },
+        {
+            label: 'Memory',
+            dataKey: 'memory',
+            width: 90,
+            flexGrow: 0,
+            cellRenderer: (_: any, rowData: any) => {
+                const key = `${rowData.namespace}/${rowData.name}`;
+                const metrics = podMetrics[key];
+                return <span className="text-gray-400 font-mono text-xs">{metrics?.memory || '-'}</span>;
+            }
+        },
+        {
             label: 'Restarts',
             dataKey: 'restarts',
             sortable: true,
-            width: 100,
+            width: 80,
             flexGrow: 0,
             cellRenderer: (restarts: any) => <span className="text-gray-400">{restarts}</span>
         },
@@ -79,7 +103,7 @@ export const PodsView: React.FC<PodsViewProps> = ({
             label: 'Status',
             dataKey: 'status',
             sortable: true,
-            width: 120,
+            width: 100,
             flexGrow: 0,
             cellRenderer: (status: any) => (
                 <span className={`px-2 py-0.5 rounded text-xs border ${status === 'Running' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
@@ -95,7 +119,7 @@ export const PodsView: React.FC<PodsViewProps> = ({
         {
             label: 'Containers',
             dataKey: 'containers',
-            width: 150,
+            width: 120,
             flexGrow: 0,
             cellRenderer: (containers: any) => (
                 <div className="flex gap-1 items-center">
@@ -122,11 +146,11 @@ export const PodsView: React.FC<PodsViewProps> = ({
             label: 'Age',
             dataKey: 'age',
             sortable: true,
-            width: 120,
+            width: 100,
             flexGrow: 0,
             cellRenderer: (age: any) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span>
         }
-    ], []);
+    ], [podMetrics]);
 
     return (
         <motion.div

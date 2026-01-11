@@ -79,6 +79,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [currentCrdKind, setCurrentCrdKind] = useState<string>('');
     const [crdDefinitions, setCrdDefinitions] = useState<any[]>([]);
     const [namespacesList, setNamespacesList] = useState<any[]>([]);
+    const [podMetrics, setPodMetrics] = useState<Record<string, { cpu: string; memory: string }>>({});
 
     // Handle CRD view parsing
     const isCrdView = activeView.startsWith('crd/');
@@ -510,6 +511,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clusterName, activeView]); // Performance: Restart when switching to/from nodes view
 
+    // Pod Metrics Refresh Effect - Refresh metrics every 30 seconds when on pods view
+    useEffect(() => {
+        if (activeView !== 'pods') {
+            setPodMetrics({});
+            return;
+        }
+
+        const refreshMetrics = () => {
+            window.k8s.getPodMetrics(clusterName, selectedNamespaces).then(metrics => {
+                setPodMetrics(metrics);
+            }).catch(() => {
+                // Metrics server may not be installed, silently ignore
+            });
+        };
+
+        // Refresh every 30 seconds
+        const interval = setInterval(refreshMetrics, 30000);
+
+        return () => clearInterval(interval);
+    }, [clusterName, selectedNamespaces, activeView]);
+
     // Load Data based on View and Selection
     const loadResources = async () => {
         if (!clusterName) return;
@@ -564,6 +586,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     setPods(data);
                     setCachedData(`pods-${nsFilter.join(',')}`, data);
                 }));
+                // Fetch pod metrics (non-blocking, don't fail if metrics-server unavailable)
+                window.k8s.getPodMetrics(clusterName, nsFilter).then(metrics => {
+                    setPodMetrics(metrics);
+                }).catch(() => {
+                    // Metrics server may not be installed, silently ignore
+                    setPodMetrics({});
+                });
                 // Performance: Cache nodes too, they don't change often
                 const nodesCacheKey = 'nodes';
                 const cachedNodes = getCachedData(nodesCacheKey);
@@ -1097,6 +1126,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     validatingWebhookConfigurations={validatingWebhookConfigurations}
                     priorityClasses={priorityClasses}
                     runtimeClasses={runtimeClasses}
+                    podMetrics={podMetrics}
                     loading={loading}
                     podViewMode={podViewMode}
                     sortConfig={sortConfig}

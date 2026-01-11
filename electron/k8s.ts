@@ -47,48 +47,6 @@ export class K8sService {
     }
 
     /**
-     * Clear AWS CLI credential cache
-     * This forces the AWS CLI to fetch fresh credentials on next use
-     */
-    private async clearAwsCredentialCache(): Promise<void> {
-        try {
-            const os = await import('os');
-            const fs = await import('fs');
-            const path = await import('path');
-
-            const homeDir = os.homedir();
-            const awsCacheDir = path.join(homeDir, '.aws', 'cli', 'cache');
-            const awsSsoCacheDir = path.join(homeDir, '.aws', 'sso', 'cache');
-
-            // Clear CLI cache
-            if (fs.existsSync(awsCacheDir)) {
-                const files = fs.readdirSync(awsCacheDir);
-                for (const file of files) {
-                    if (file.endsWith('.json')) {
-                        fs.unlinkSync(path.join(awsCacheDir, file));
-                        console.log(`[k8s] Deleted AWS CLI cache file: ${file}`);
-                    }
-                }
-            }
-
-            // Clear SSO cache
-            if (fs.existsSync(awsSsoCacheDir)) {
-                const files = fs.readdirSync(awsSsoCacheDir);
-                for (const file of files) {
-                    if (file.endsWith('.json')) {
-                        fs.unlinkSync(path.join(awsSsoCacheDir, file));
-                        console.log(`[k8s] Deleted AWS SSO cache file: ${file}`);
-                    }
-                }
-            }
-
-            console.log('[k8s] AWS credential cache cleared');
-        } catch (error) {
-            console.error('[k8s] Error clearing AWS credential cache:', error);
-        }
-    }
-
-    /**
      * Reload KubeConfig from default location
      * This is important for AWS EKS clusters where credentials may expire or change
      */
@@ -127,22 +85,10 @@ export class K8sService {
         if (isContextSwitch || timeSinceLastReload > this.RELOAD_INTERVAL_MS) {
             console.log(`[k8s] Reloading config - Context switch: ${isContextSwitch}, Time since reload: ${Math.round(timeSinceLastReload / 1000)}s`);
 
-            // Clear AWS credential cache to force fresh token generation
-            await this.clearAwsCredentialCache();
-
             this.reloadKubeConfig();
 
-            // After reloading, set the context and force credential refresh
+            // After reloading, set the context
             this.kc.setCurrentContext(contextName);
-
-            // Force the client to refresh credentials by creating a new API client
-            // This ensures the exec auth plugin runs to get fresh tokens
-            try {
-                const testApi = this.kc.makeApiClient(CoreV1Api);
-                console.log('[k8s] API client created with fresh credentials');
-            } catch (err) {
-                console.error('[k8s] Error creating API client:', err);
-            }
         } else {
             this.kc.setCurrentContext(contextName);
         }
@@ -374,8 +320,8 @@ export class K8sService {
 
     async getNamespaces(contextName: string) {
         await this.setContextWithSmartReload(contextName);
+
         const k8sApi = this.kc.makeApiClient(CoreV1Api);
-        // Error propagation is required for connection verification
         const res = await k8sApi.listNamespace();
         const items = (res as any).body ? (res as any).body.items : (res as any).items;
         return items.map((ns: any) => ns.metadata?.name).filter(Boolean) as string[];
@@ -569,6 +515,107 @@ export class K8sService {
                 return null;
             }
         }
+    }
+
+    /**
+     * Get pod metrics (CPU/Memory usage) using the metrics.k8s.io API
+     * Returns a map of pod name -> { cpu: string, memory: string }
+     */
+    async getPodMetrics(contextName: string, namespaces: string[] = []): Promise<Map<string, { cpu: string; memory: string }>> {
+        const metrics = new Map<string, { cpu: string; memory: string }>();
+
+        try {
+            await this.setContextWithSmartReload(contextName);
+            const customApi = this.kc.makeApiClient(CustomObjectsApi);
+
+            let podMetricsList: any[] = [];
+
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                // Get metrics for all namespaces
+                const res = await customApi.listClusterCustomObject({
+                    group: 'metrics.k8s.io',
+                    version: 'v1beta1',
+                    plural: 'pods'
+                });
+                podMetricsList = (res as any).items || [];
+            } else {
+                // Get metrics for specific namespaces
+                const results = await Promise.all(
+                    namespaces.map(async (ns) => {
+                        try {
+                            const res = await customApi.listNamespacedCustomObject({
+                                group: 'metrics.k8s.io',
+                                version: 'v1beta1',
+                                namespace: ns,
+                                plural: 'pods'
+                            });
+                            return (res as any).items || [];
+                        } catch {
+                            return [];
+                        }
+                    })
+                );
+                podMetricsList = results.flat();
+            }
+
+            // Process metrics
+            for (const podMetric of podMetricsList) {
+                const namespace = podMetric.metadata?.namespace;
+                const podName = podMetric.metadata?.name;
+                const containers = podMetric.containers || [];
+
+                // Sum up CPU and memory across all containers
+                let totalCpuNano = 0;
+                let totalMemoryBytes = 0;
+
+                for (const container of containers) {
+                    const cpuStr = container.usage?.cpu || '0';
+                    const memStr = container.usage?.memory || '0';
+
+                    // Parse CPU (can be in 'n' nanocores or 'm' millicores)
+                    if (cpuStr.endsWith('n')) {
+                        totalCpuNano += parseInt(cpuStr.slice(0, -1), 10) || 0;
+                    } else if (cpuStr.endsWith('m')) {
+                        totalCpuNano += (parseInt(cpuStr.slice(0, -1), 10) || 0) * 1000000;
+                    } else {
+                        totalCpuNano += (parseFloat(cpuStr) || 0) * 1000000000;
+                    }
+
+                    // Parse Memory (can be Ki, Mi, Gi, etc.)
+                    if (memStr.endsWith('Ki')) {
+                        totalMemoryBytes += (parseInt(memStr.slice(0, -2), 10) || 0) * 1024;
+                    } else if (memStr.endsWith('Mi')) {
+                        totalMemoryBytes += (parseInt(memStr.slice(0, -2), 10) || 0) * 1024 * 1024;
+                    } else if (memStr.endsWith('Gi')) {
+                        totalMemoryBytes += (parseInt(memStr.slice(0, -2), 10) || 0) * 1024 * 1024 * 1024;
+                    } else if (memStr.endsWith('K')) {
+                        totalMemoryBytes += (parseInt(memStr.slice(0, -1), 10) || 0) * 1000;
+                    } else if (memStr.endsWith('M')) {
+                        totalMemoryBytes += (parseInt(memStr.slice(0, -1), 10) || 0) * 1000000;
+                    } else if (memStr.endsWith('G')) {
+                        totalMemoryBytes += (parseInt(memStr.slice(0, -1), 10) || 0) * 1000000000;
+                    } else {
+                        totalMemoryBytes += parseInt(memStr, 10) || 0;
+                    }
+                }
+
+                // Format CPU as millicores (m)
+                const cpuMillicores = Math.round(totalCpuNano / 1000000);
+                const cpuFormatted = `${cpuMillicores}m`;
+
+                // Format Memory as Mi
+                const memoryMi = Math.round(totalMemoryBytes / (1024 * 1024));
+                const memoryFormatted = `${memoryMi}Mi`;
+
+                metrics.set(`${namespace}/${podName}`, { cpu: cpuFormatted, memory: memoryFormatted });
+            }
+
+            console.log(`[k8s] Got metrics for ${metrics.size} pods`);
+        } catch (error) {
+            console.warn('[k8s] Failed to get pod metrics (metrics-server may not be installed):', error);
+        }
+
+        return metrics;
     }
 
     async deletePod(contextName: string, namespace: string, name: string) {

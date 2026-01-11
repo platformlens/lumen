@@ -52,6 +52,7 @@ interface DashboardContentProps {
     validatingWebhookConfigurations: any[];
     priorityClasses: any[];
     runtimeClasses: any[];
+    podMetrics: Record<string, { cpu: string; memory: string }>;
 
     // UI state
     loading: boolean;
@@ -113,6 +114,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     validatingWebhookConfigurations: _validatingWebhookConfigurations,
     priorityClasses: _priorityClasses,
     runtimeClasses: _runtimeClasses,
+    podMetrics,
     loading,
     podViewMode,
     sortConfig,
@@ -251,6 +253,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 onRowClick={(pod: any) => onResourceClick(pod, 'pod')}
                 searchQuery={searchQuery}
                 isLoading={loading}
+                podMetrics={podMetrics}
             />
         );
     }

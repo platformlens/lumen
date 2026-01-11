@@ -158,6 +158,13 @@ function registerIpcHandlers() {
     return k8sService.getPods(contextName, namespaces);
   })
 
+  ipcMain.handle('k8s:getPodMetrics', async (_, contextName, namespaces) => {
+    console.log('IPC: k8s:getPodMetrics called with', contextName, namespaces);
+    const metricsMap = await k8sService.getPodMetrics(contextName, namespaces);
+    // Convert Map to object for IPC serialization
+    return Object.fromEntries(metricsMap);
+  })
+
   ipcMain.handle('k8s:getPod', (_, contextName, namespace, name) => {
     return k8sService.getPod(contextName, namespace, name);
   })
