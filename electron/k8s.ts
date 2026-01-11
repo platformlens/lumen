@@ -47,11 +47,43 @@ export class K8sService {
     }
 
     /**
+     * Clear the exec credential token cache from all authenticators
+     * This is necessary when switching AWS accounts/profiles because the
+     * @kubernetes/client-node library caches exec tokens by user name,
+     * and the same user name can have different credentials after an account switch.
+     */
+    private clearExecTokenCache() {
+        try {
+            // Access the internal authenticators array on KubeConfig
+            // The ExecAuth authenticator has a tokenCache that needs to be cleared
+            const authenticators = (this.kc as any).authenticators;
+            if (authenticators && Array.isArray(authenticators)) {
+                for (const auth of authenticators) {
+                    // ExecAuth has a tokenCache property
+                    if (auth && auth.tokenCache && typeof auth.tokenCache === 'object') {
+                        console.log('[k8s] Clearing exec token cache');
+                        // Clear all cached tokens
+                        for (const key of Object.keys(auth.tokenCache)) {
+                            delete auth.tokenCache[key];
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('[k8s] Could not clear exec token cache:', err);
+        }
+    }
+
+    /**
      * Reload KubeConfig from default location
      * This is important for AWS EKS clusters where credentials may expire or change
      */
     private reloadKubeConfig() {
         try {
+            // Clear the token cache from the old KubeConfig before creating a new one
+            // This ensures any cached exec credentials are invalidated
+            this.clearExecTokenCache();
+
             // Create a completely new KubeConfig instance to avoid any caching
             this.kc = new KubeConfig();
             this.kc.loadFromDefault();
@@ -70,6 +102,19 @@ export class K8sService {
             error?.statusCode === 401 ||
             error?.message?.includes('401') ||
             error?.message?.includes('Unauthorized');
+    }
+
+    /**
+     * Force a complete credential refresh - clears all cached tokens and reloads kubeconfig.
+     * Call this when switching AWS accounts/profiles to ensure fresh credentials are used.
+     * This is exposed as a public method so it can be triggered from the UI.
+     */
+    public forceCredentialRefresh() {
+        console.log('[k8s] Force credential refresh requested');
+        this.clearExecTokenCache();
+        this.reloadKubeConfig();
+        // Reset the current context tracking to force re-authentication on next call
+        this.currentContext = '';
     }
 
     /**
@@ -94,6 +139,27 @@ export class K8sService {
         }
 
         this.currentContext = contextName;
+    }
+
+    /**
+     * Execute an API call with automatic retry on 401 authentication errors.
+     * If a 401 is encountered, this will force a credential refresh and retry once.
+     * This handles the case where AWS credentials have changed (e.g., account switch)
+     * but the cached exec token is still being used.
+     */
+    private async withAuthRetry<T>(contextName: string, operation: () => Promise<T>): Promise<T> {
+        try {
+            return await operation();
+        } catch (error: any) {
+            if (this.is401Error(error)) {
+                console.log('[k8s] Got 401 error, forcing credential refresh and retrying...');
+                this.forceCredentialRefresh();
+                await this.setContextWithSmartReload(contextName);
+                // Retry the operation once after refresh
+                return await operation();
+            }
+            throw error;
+        }
     }
 
     getActivePortForwards() {
@@ -321,17 +387,20 @@ export class K8sService {
     async getNamespaces(contextName: string) {
         await this.setContextWithSmartReload(contextName);
 
-        const k8sApi = this.kc.makeApiClient(CoreV1Api);
-        const res = await k8sApi.listNamespace();
-        const items = (res as any).body ? (res as any).body.items : (res as any).items;
-        return items.map((ns: any) => ns.metadata?.name).filter(Boolean) as string[];
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+            const res = await k8sApi.listNamespace();
+            const items = (res as any).body ? (res as any).body.items : (res as any).items;
+            return items.map((ns: any) => ns.metadata?.name).filter(Boolean) as string[];
+        });
     }
 
     async getNamespacesDetails(contextName: string) {
         console.log(`[k8s] getNamespacesDetails for ${contextName}`);
         await this.setContextWithSmartReload(contextName);
-        const k8sApi = this.kc.makeApiClient(CoreV1Api);
-        try {
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
             const res = await k8sApi.listNamespace();
             const items = (res as any).body ? (res as any).body.items : (res as any).items;
             return items.map((ns: any) => ({
@@ -344,36 +413,39 @@ export class K8sService {
                 spec: ns.spec,
                 statusObj: ns.status
             }));
-        } catch (error) {
+        }).catch(error => {
             console.error('Error fetching namespace details:', error);
             return [];
-        }
+        });
     }
 
     async getDeployments(contextName: string, namespaces: string[] = []) {
         await this.setContextWithSmartReload(contextName);
-        const k8sApi = this.kc.makeApiClient(AppsV1Api);
 
-        let items: any[] = [];
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(AppsV1Api);
 
-        if (namespaces.length === 0 || namespaces.includes('all')) {
-            const res = await k8sApi.listDeploymentForAllNamespaces();
-            items = (res as any).body ? (res as any).body.items : (res as any).items;
-        } else {
-            const promises = namespaces.map(ns => k8sApi.listNamespacedDeployment({ namespace: ns }));
-            const results = await Promise.all(promises);
-            items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
-        }
+            let items: any[] = [];
 
-        return items.map((dep: any) => ({
-            name: dep.metadata?.name,
-            namespace: dep.metadata?.namespace,
-            replicas: dep.spec?.replicas,
-            availableReplicas: dep.status?.availableReplicas,
-            status: dep.status,
-            metadata: dep.metadata,
-            spec: dep.spec
-        }));
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sApi.listDeploymentForAllNamespaces();
+                items = (res as any).body ? (res as any).body.items : (res as any).items;
+            } else {
+                const promises = namespaces.map(ns => k8sApi.listNamespacedDeployment({ namespace: ns }));
+                const results = await Promise.all(promises);
+                items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
+            }
+
+            return items.map((dep: any) => ({
+                name: dep.metadata?.name,
+                namespace: dep.metadata?.namespace,
+                replicas: dep.spec?.replicas,
+                availableReplicas: dep.status?.availableReplicas,
+                status: dep.status,
+                metadata: dep.metadata,
+                spec: dep.spec
+            }));
+        });
     }
 
     async getDeployment(contextName: string, namespace: string, name: string) {
@@ -458,42 +530,45 @@ export class K8sService {
 
     async getPods(contextName: string, namespaces: string[] = []) {
         await this.setContextWithSmartReload(contextName);
-        const k8sApi = this.kc.makeApiClient(CoreV1Api);
 
-        let items: any[] = [];
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
 
-        if (namespaces.length === 0 || namespaces.includes('all')) {
-            const res = await k8sApi.listPodForAllNamespaces();
-            items = (res as any).body ? (res as any).body.items : (res as any).items;
-        } else {
-            const promises = namespaces.map(ns => k8sApi.listNamespacedPod({ namespace: ns }));
-            const results = await Promise.all(promises);
-            items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
-        }
+            let items: any[] = [];
 
-        return items.map((pod: any) => {
-            const containerStatuses = pod.status?.containerStatuses || [];
-            const initContainerStatuses = pod.status?.initContainerStatuses || [];
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sApi.listPodForAllNamespaces();
+                items = (res as any).body ? (res as any).body.items : (res as any).items;
+            } else {
+                const promises = namespaces.map(ns => k8sApi.listNamespacedPod({ namespace: ns }));
+                const results = await Promise.all(promises);
+                items = results.flatMap(res => (res as any).body ? (res as any).body.items : (res as any).items);
+            }
 
-            const allStatuses = [...initContainerStatuses, ...containerStatuses];
+            return items.map((pod: any) => {
+                const containerStatuses = pod.status?.containerStatuses || [];
+                const initContainerStatuses = pod.status?.initContainerStatuses || [];
 
-            return {
-                name: pod.metadata?.name,
-                namespace: pod.metadata?.namespace,
-                status: pod.status?.phase,
-                restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
-                age: pod.metadata?.creationTimestamp,
-                containers: allStatuses.map((c: any) => ({
-                    name: c.name,
-                    state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
-                    ready: c.ready,
-                    image: c.image,
-                    restartCount: c.restartCount
-                })),
-                metadata: pod.metadata,
-                spec: pod.spec,
-                node: pod.spec?.nodeName
-            };
+                const allStatuses = [...initContainerStatuses, ...containerStatuses];
+
+                return {
+                    name: pod.metadata?.name,
+                    namespace: pod.metadata?.namespace,
+                    status: pod.status?.phase,
+                    restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
+                    age: pod.metadata?.creationTimestamp,
+                    containers: allStatuses.map((c: any) => ({
+                        name: c.name,
+                        state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
+                        ready: c.ready,
+                        image: c.image,
+                        restartCount: c.restartCount
+                    })),
+                    metadata: pod.metadata,
+                    spec: pod.spec,
+                    node: pod.spec?.nodeName
+                };
+            });
         });
     }
 
@@ -1297,8 +1372,9 @@ export class K8sService {
     async getNodes(contextName: string) {
         console.log(`Getting Nodes for ${contextName}`);
         await this.setContextWithSmartReload(contextName);
-        const k8sApi = this.kc.makeApiClient(CoreV1Api);
-        try {
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
             const res = await k8sApi.listNode();
             const items = (res as any).body ? (res as any).body.items : (res as any).items;
             console.log(`Found ${items.length} Nodes`);
@@ -1315,10 +1391,10 @@ export class K8sService {
                 memory: node.status.capacity?.memory,
                 metadata: node.metadata
             }));
-        } catch (error) {
+        }).catch(error => {
             console.error('Error fetching Nodes:', error);
             return [];
-        }
+        });
     }
 
     async getNode(contextName: string, name: string) {

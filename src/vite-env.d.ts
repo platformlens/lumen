@@ -5,6 +5,9 @@ export { };
 declare global {
     interface Window {
         k8s: {
+            // --- Credential Management ---
+            forceCredentialRefresh: () => Promise<boolean>;
+
             getClusters: () => Promise<any[]>;
             getNamespaces: (contextName: string) => Promise<string[]>;
             getNamespacesDetails: (contextName: string) => Promise<any[]>;

@@ -121,6 +121,12 @@ function registerIpcHandlers() {
     app.quit();
   });
 
+  ipcMain.handle('k8s:forceCredentialRefresh', () => {
+    console.log('IPC: k8s:forceCredentialRefresh called');
+    k8sService.forceCredentialRefresh();
+    return true;
+  });
+
   ipcMain.handle('k8s:getClusters', () => {
     console.log('IPC: k8s:getClusters called');
     return k8sService.getClusters();

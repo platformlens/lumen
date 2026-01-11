@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 })
 
 contextBridge.exposeInMainWorld('k8s', {
+  // --- Credential Management ---
+  forceCredentialRefresh: () => ipcRenderer.invoke('k8s:forceCredentialRefresh'),
+
   getClusters: () => ipcRenderer.invoke('k8s:getClusters'),
   getNamespaces: (contextName: string) => ipcRenderer.invoke('k8s:getNamespaces', contextName),
   getNamespacesDetails: (contextName: string) => ipcRenderer.invoke('k8s:getNamespacesDetails', contextName),

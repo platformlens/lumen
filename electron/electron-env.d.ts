@@ -25,6 +25,9 @@ declare namespace NodeJS {
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
   k8s: {
+    // --- Credential Management ---
+    forceCredentialRefresh: () => Promise<boolean>
+
     getClusters: () => Promise<Array<{ name: string; cluster: any; user: any }>>
     getNamespaces: (contextName: string) => Promise<string[]>
     getNamespacesDetails: (contextName: string) => Promise<Array<{ name: string; status: string; age: string; labels: any; annotations: any }>>
