@@ -2,7 +2,7 @@
   "name": "k8ptain",
   "productName": "Lumen",
   "private": true,
-  "version": "0.0.1-alpha-20251229",
+  "version": "0.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",

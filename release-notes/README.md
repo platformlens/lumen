@@ -6,6 +6,12 @@ This directory contains release notes for all versions of Lumen, including alpha
 
 ### Alpha Releases
 
+- [v0.0.2](./v0.0.2.md) - 2026-01-11
+  - Enhanced AWS & AI Support (Bedrock, Gemini)
+  - Switch to AI-SDK and AI History
+  - Node CPU/Mem requests & Pod allocation visualization
+  - Global edit functionality
+
 - [v0.0.1-alpha-20251229](./v0.0.1-alpha-20251229.md) - 2025-12-29
   - Bug fixes for TypeScript compilation errors
   - Fixed gitignore configuration

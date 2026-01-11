@@ -23,12 +23,12 @@ Complete guide for building, signing, and notarizing the Lumen Electron app for 
 
 2. **Developer ID Certificate**
    - "Developer ID Application" certificate installed in Keychain
-   - Certificate: `Developer ID Application: Standout Digital Solutions Ltd (5CN4W3R8SY)`
-   - Identity: `B06F47E2DCF78E52715C70AAE86BBFC737374455`
+   - Certificate: `Developer ID Application: Your Company Name (YOUR_TEAM_ID)`
+   - Identity: `YOUR_CERTIFICATE_HASH`
 
 3. **Apple Credentials**
-   - Apple ID: `rashid@standoutdigitalsolutions.com`
-   - Team ID: `5CN4W3R8SY`
+   - Apple ID: `your-email@example.com`
+   - Team ID: `YOUR_TEAM_ID`
    - App-Specific Password (generated at [appleid.apple.com](https://appleid.apple.com))
 
 ### Verify Your Certificate
@@ -41,8 +41,8 @@ security find-identity -v -p codesigning
 
 Expected output:
 ```
-1) 171BDC9CFECAB460C65CB0B4B7380177362E7D94 "Apple Development: Mohammed Rashid Matin (7KG6564S8Q)"
-2) B06F47E2DCF78E52715C70AAE86BBFC737374455 "Developer ID Application: Standout Digital Solutions Ltd (5CN4W3R8SY)"
+1) YOUR_DEV_CERTIFICATE_HASH "Apple Development: Your Name (YOUR_PERSONAL_TEAM_ID)"
+2) YOUR_CERTIFICATE_HASH "Developer ID Application: Your Company Name (YOUR_TEAM_ID)"
    2 valid identities found
 ```
 
@@ -56,8 +56,8 @@ This is a **one-time setup**. Store your Apple Developer credentials securely in
 
 ```bash
 xcrun notarytool store-credentials "lumen-test" \
-  --apple-id "rashid@standoutdigitalsolutions.com" \
-  --team-id "5CN4W3R8SY" \
+  --apple-id "your-email@example.com" \
+  --team-id "YOUR_TEAM_ID" \
   --password "your-app-specific-password"
 ```
 
@@ -189,7 +189,7 @@ vite v5.4.21 building for production...
   • electron-builder  version=24.13.3 os=25.2.0
   • packaging       platform=darwin arch=arm64 electron=30.5.1
   • signing         file=release/0.0.1-alpha-20251229/mac-arm64/Lumen.app
-                    identity=B06F47E2DCF78E52715C70AAE86BBFC737374455
+                    identity=YOUR_CERTIFICATE_HASH
   • skipped macOS notarization  reason=`notarize` options were set explicitly `false`
   • building        target=DMG arch=arm64
                     file=release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
@@ -221,16 +221,16 @@ xcrun notarytool submit \
 ```
 Conducting pre-submission checks for Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg...
 Submission ID received
-  id: 17e0116a-e35d-4d49-8f64-2d359ad0810a
+  id: submission-id-placeholder
 Upload progress: 100.00% (165 MB of 165 MB)
 Successfully uploaded file
-  id: 17e0116a-e35d-4d49-8f64-2d359ad0810a
-  path: /Users/rashidmatin/Development/kubernetes projects/ai-experiment/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
+  id: submission-id-placeholder
+  path: /path/to/project/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
 Waiting for processing to complete.
 Current status: In Progress.......................
 Current status: Accepted
 Processing complete
-  id: 17e0116a-e35d-4d49-8f64-2d359ad0810a
+  id: submission-id-placeholder
   status: Accepted
 ```
 
@@ -250,8 +250,8 @@ xcrun stapler staple \
 
 **Expected output:**
 ```
-Processing: /Users/rashidmatin/Development/kubernetes projects/ai-experiment/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
-Processing: /Users/rashidmatin/Development/kubernetes projects/ai-experiment/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
+Processing: /path/to/project/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
+Processing: /path/to/project/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
 The staple and validate action worked!
 ```
 
@@ -275,7 +275,7 @@ codesign --verify --deep --strict --verbose=2 \
 
 **Expected output:**
 ```
---prepared:/Users/rashidmatin/Development/kubernetes projects/ai-experiment/release/0.0.1-alpha-20251229/mac-arm64/Lumen.app/Contents/Frameworks/Lumen Helper (GPU).app
+--prepared:/path/to/project/release/0.0.1-alpha-20251229/mac-arm64/Lumen.app/Contents/Frameworks/Lumen Helper (GPU).app
 [... more framework validations ...]
 release/0.0.1-alpha-20251229/mac-arm64/Lumen.app: valid on disk
 release/0.0.1-alpha-20251229/mac-arm64/Lumen.app: satisfies its Designated Requirement
@@ -294,7 +294,7 @@ spctl -a -vvv -t execute \
 ```
 release/0.0.1-alpha-20251229/mac-arm64/Lumen.app: accepted
 source=Notarized Developer ID
-origin=Developer ID Application: Standout Digital Solutions Ltd (5CN4W3R8SY)
+origin=Developer ID Application: Your Company Name (YOUR_TEAM_ID)
 ```
 
 **Success indicators:**
@@ -377,9 +377,9 @@ xcrun stapler staple "release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-2025122
 | **App Name** | Lumen |
 | **Bundle ID** | com.sdsclick.lumen |
 | **Version** | 0.0.1-alpha-20251229 |
-| **Certificate** | Developer ID Application: Standout Digital Solutions Ltd |
-| **Team ID** | 5CN4W3R8SY |
-| **Identity** | B06F47E2DCF78E52715C70AAE86BBFC737374455 |
+| **Certificate** | Developer ID Application: Your Company Name |
+| **Team ID** | YOUR_TEAM_ID |
+| **Identity** | YOUR_CERTIFICATE_HASH |
 
 ---
 
