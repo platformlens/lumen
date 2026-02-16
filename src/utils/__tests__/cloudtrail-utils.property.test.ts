@@ -178,7 +178,7 @@ describe('Feature: eks-access-logs — Property-Based Tests', () => {
                     eventTypeSetArb,
                     (events, selectedTypes) => {
                         const filtered = filterByEventType(events, selectedTypes);
-                        const typeSet = new Set(selectedTypes);
+                        const typeSet = new Set(selectedTypes) as Set<string>;
 
                         // Subset check
                         expect(filtered.length).toBeLessThanOrEqual(events.length);

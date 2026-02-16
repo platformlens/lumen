@@ -171,7 +171,7 @@ npm run build
 
 **Expected output:**
 ```
-> k8ptain@0.0.1-alpha-20251229 build
+> k8ptain@0.0.4 build
 > tsc && vite build && electron-builder
 
 vite v5.4.21 building for production...
@@ -188,17 +188,17 @@ vite v5.4.21 building for production...
 
   • electron-builder  version=24.13.3 os=25.2.0
   • packaging       platform=darwin arch=arm64 electron=30.5.1
-  • signing         file=release/0.0.1-alpha-20251229/mac-arm64/Lumen.app
+  • signing         file=release/0.0.4/mac-arm64/Lumen.app
                     identity=YOUR_CERTIFICATE_HASH
   • skipped macOS notarization  reason=`notarize` options were set explicitly `false`
   • building        target=DMG arch=arm64
-                    file=release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
+                    file=release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg
   • building block map
 ```
 
 **Result:**
-- ✅ Signed DMG created at: `release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg`
-- ✅ Signed .app bundle at: `release/0.0.1-alpha-20251229/mac-arm64/Lumen.app`
+- ✅ Signed DMG created at: `release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg`
+- ✅ Signed .app bundle at: `release/0.0.4/mac-arm64/Lumen.app`
 
 ### Step 2: Submit for Notarization
 
@@ -206,7 +206,7 @@ Submit the DMG to Apple's notarization service:
 
 ```bash
 xcrun notarytool submit \
-  "release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg" \
+  "release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg" \
   --keychain-profile "lumen-test" \
   --wait
 ```
@@ -219,13 +219,13 @@ xcrun notarytool submit \
 
 **Expected output:**
 ```
-Conducting pre-submission checks for Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg...
+Conducting pre-submission checks for Lumen-Mac-0.0.4-Installer.dmg...
 Submission ID received
   id: submission-id-placeholder
 Upload progress: 100.00% (165 MB of 165 MB)
 Successfully uploaded file
   id: submission-id-placeholder
-  path: /path/to/project/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
+  path: /path/to/project/release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg
 Waiting for processing to complete.
 Current status: In Progress.......................
 Current status: Accepted
@@ -245,13 +245,13 @@ Attach the notarization ticket to the DMG:
 
 ```bash
 xcrun stapler staple \
-  "release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg"
+  "release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg"
 ```
 
 **Expected output:**
 ```
-Processing: /path/to/project/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
-Processing: /path/to/project/release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg
+Processing: /path/to/project/release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg
+Processing: /path/to/project/release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg
 The staple and validate action worked!
 ```
 
@@ -270,15 +270,15 @@ Check that the app is properly signed:
 
 ```bash
 codesign --verify --deep --strict --verbose=2 \
-  "release/0.0.1-alpha-20251229/mac-arm64/Lumen.app"
+  "release/0.0.4/mac-arm64/Lumen.app"
 ```
 
 **Expected output:**
 ```
---prepared:/path/to/project/release/0.0.1-alpha-20251229/mac-arm64/Lumen.app/Contents/Frameworks/Lumen Helper (GPU).app
+--prepared:/path/to/project/release/0.0.4/mac-arm64/Lumen.app/Contents/Frameworks/Lumen Helper (GPU).app
 [... more framework validations ...]
-release/0.0.1-alpha-20251229/mac-arm64/Lumen.app: valid on disk
-release/0.0.1-alpha-20251229/mac-arm64/Lumen.app: satisfies its Designated Requirement
+release/0.0.4/mac-arm64/Lumen.app: valid on disk
+release/0.0.4/mac-arm64/Lumen.app: satisfies its Designated Requirement
 ```
 
 ### Verify Notarization
@@ -287,12 +287,12 @@ Check that the app is notarized:
 
 ```bash
 spctl -a -vvv -t execute \
-  "release/0.0.1-alpha-20251229/mac-arm64/Lumen.app"
+  "release/0.0.4/mac-arm64/Lumen.app"
 ```
 
 **Expected output:**
 ```
-release/0.0.1-alpha-20251229/mac-arm64/Lumen.app: accepted
+release/0.0.4/mac-arm64/Lumen.app: accepted
 source=Notarized Developer ID
 origin=Developer ID Application: Your Company Name (YOUR_TEAM_ID)
 ```
@@ -357,16 +357,16 @@ Common issues in logs:
 
 ```bash
 npm run build && \
-xcrun notarytool submit "release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg" --keychain-profile "lumen-test" --wait && \
-xcrun stapler staple "release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg"
+xcrun notarytool submit "release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg" --keychain-profile "lumen-test" --wait && \
+xcrun stapler staple "release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg"
 ```
 
 ### File Locations
 
 | File | Path |
 |------|------|
-| **DMG Installer** | `release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-20251229-Installer.dmg` |
-| **.app Bundle** | `release/0.0.1-alpha-20251229/mac-arm64/Lumen.app` |
+| **DMG Installer** | `release/0.0.4/Lumen-Mac-0.0.4-Installer.dmg` |
+| **.app Bundle** | `release/0.0.4/mac-arm64/Lumen.app` |
 | **electron-builder config** | `electron-builder.json5` |
 | **Entitlements** | `build/entitlements.mac.plist` |
 
@@ -376,7 +376,7 @@ xcrun stapler staple "release/0.0.1-alpha-20251229/Lumen-Mac-0.0.1-alpha-2025122
 |----------|-------|
 | **App Name** | Lumen |
 | **Bundle ID** | com.sdsclick.lumen |
-| **Version** | 0.0.1-alpha-20251229 |
+| **Version** | 0.0.4 |
 | **Certificate** | Developer ID Application: Your Company Name |
 | **Team ID** | YOUR_TEAM_ID |
 | **Identity** | YOUR_CERTIFICATE_HASH |
