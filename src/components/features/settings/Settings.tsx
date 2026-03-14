@@ -72,11 +72,11 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const [editorFontSize, setEditorFontSize] = useState(14);
   const [editorWordWrap, setEditorWordWrap] = useState(true);
   const [terminalFontSize, setTerminalFontSize] = useState(13);
-  const [fontFamily, setFontFamily] = useState('Monaco');
+  const [fontFamily, setFontFamily] = useState('System Default');
   const [sidebarFontSize, setSidebarFontSize] = useState(13);
   const [pinnedFontSize, setPinnedFontSize] = useState(12);
-  const [headingSize, setHeadingSize] = useState(24);
-  const [tableFontSize, setTableFontSize] = useState(14);
+  const [headingSize, setHeadingSize] = useState(19);
+  const [tableFontSize, setTableFontSize] = useState(12);
   const [zoomFactor, setZoomFactor] = useState(100);
 
   // Date Format State

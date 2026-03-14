@@ -16,6 +16,7 @@ import { AnimatePresence } from 'framer-motion'
 
 import { ConnectionErrorCard } from './components/dashboard/ConnectionErrorCard';
 import { isEksCluster } from './utils/cluster-utils';
+import { RESOURCE_TYPE_MAP } from './utils/resource-utils';
 import { AIPanel } from './components/features/ai/AIPanel';
 
 function App() {
@@ -666,43 +667,8 @@ function App() {
             let yamlContent: string;
             let onSaveYaml: (newContent: string) => Promise<void>;
 
-            // Map resource types to their API details
-            const resourceTypeMap: Record<string, { apiVersion: string; kind: string; namespaced: boolean }> = {
-                'deployment': { apiVersion: 'apps/v1', kind: 'Deployment', namespaced: true },
-                'daemonset': { apiVersion: 'apps/v1', kind: 'DaemonSet', namespaced: true },
-                'statefulset': { apiVersion: 'apps/v1', kind: 'StatefulSet', namespaced: true },
-                'replicaset': { apiVersion: 'apps/v1', kind: 'ReplicaSet', namespaced: true },
-                'pod': { apiVersion: 'v1', kind: 'Pod', namespaced: true },
-                'service': { apiVersion: 'v1', kind: 'Service', namespaced: true },
-                'configmap': { apiVersion: 'v1', kind: 'ConfigMap', namespaced: true },
-                'secret': { apiVersion: 'v1', kind: 'Secret', namespaced: true },
-                'namespace': { apiVersion: 'v1', kind: 'Namespace', namespaced: false },
-                'node': { apiVersion: 'v1', kind: 'Node', namespaced: false },
-                'persistentvolumeclaim': { apiVersion: 'v1', kind: 'PersistentVolumeClaim', namespaced: true },
-                'persistentvolume': { apiVersion: 'v1', kind: 'PersistentVolume', namespaced: false },
-                'serviceaccount': { apiVersion: 'v1', kind: 'ServiceAccount', namespaced: true },
-                'job': { apiVersion: 'batch/v1', kind: 'Job', namespaced: true },
-                'cronjob': { apiVersion: 'batch/v1', kind: 'CronJob', namespaced: true },
-                'ingress': { apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', namespaced: true },
-                'ingressclass': { apiVersion: 'networking.k8s.io/v1', kind: 'IngressClass', namespaced: false },
-                'networkpolicy': { apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy', namespaced: true },
-                'storageclass': { apiVersion: 'storage.k8s.io/v1', kind: 'StorageClass', namespaced: false },
-                'role': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', namespaced: true },
-                'rolebinding': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', namespaced: true },
-                'clusterrole': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', namespaced: false },
-                'clusterrolebinding': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding', namespaced: false },
-                'horizontalpodautoscaler': { apiVersion: 'autoscaling/v2', kind: 'HorizontalPodAutoscaler', namespaced: true },
-                'poddisruptionbudget': { apiVersion: 'policy/v1', kind: 'PodDisruptionBudget', namespaced: true },
-                'priorityclass': { apiVersion: 'scheduling.k8s.io/v1', kind: 'PriorityClass', namespaced: false },
-                'runtimeclass': { apiVersion: 'node.k8s.io/v1', kind: 'RuntimeClass', namespaced: false },
-                'mutatingwebhookconfiguration': { apiVersion: 'admissionregistration.k8s.io/v1', kind: 'MutatingWebhookConfiguration', namespaced: false },
-                'validatingwebhookconfiguration': { apiVersion: 'admissionregistration.k8s.io/v1', kind: 'ValidatingWebhookConfiguration', namespaced: false },
-                'endpointslice': { apiVersion: 'discovery.k8s.io/v1', kind: 'EndpointSlice', namespaced: true },
-                'endpoint': { apiVersion: 'v1', kind: 'Endpoints', namespaced: true },
-            };
-
             // Check if we have a mapping for this resource type
-            const resourceInfo = resourceTypeMap[type];
+            const resourceInfo = RESOURCE_TYPE_MAP[type];
 
             if (!resourceInfo) {
                 // For custom resources or unmapped types, try to get info from the resource itself
@@ -1190,7 +1156,7 @@ function App() {
                         </div>
 
                         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-                            <div className="flex-1 min-h-0 w-full relative rounded-2xl overflow-hidden border border-white/5">
+                            <div className="flex-1 min-h-0 w-full relative overflow-hidden">
                                 {activeView === 'settings' ? (
                                     <Settings activeSection={resourceView} />
                                 ) : activeView === 'clusters' && !selectedCluster ? (

@@ -82,23 +82,24 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
     onPodViewModeChange,
 }) => {
     return (
-        <div className="flex-none p-4 sm:p-6 border border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 rounded-2xl">
+        <div className="flex-none px-6 py-4 sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 backdrop-blur-md">
             {/* Left Section - Title and Info */}
             <div className="flex items-center gap-4 flex-none max-w-full">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-900/20 flex-none">
-                    <Layers className="text-white" size={20} />
+                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-900/20 flex-none">
+                    <Layers className="text-white" size={18} />
                 </div>
                 <div className="min-w-0">
-                    <h1 className="font-bold text-white tracking-tight whitespace-nowrap truncate" style={{ fontSize: 'var(--lumen-heading-size)' }}>
+                    <h1 className="font-semibold text-white tracking-tight whitespace-nowrap truncate" style={{ fontSize: 'var(--lumen-heading-size)' }}>
                         {isCrdView ? currentCrdKind : getViewTitle(activeView)}
                     </h1>
                     <div className="flex items-center gap-2 text-sm text-gray-400 flex-wrap">
-                        <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 whitespace-nowrap">
-                            <Network size={12} className="text-blue-400" />
+                        <span className="flex items-center gap-1.5 text-gray-500 whitespace-nowrap text-xs">
+                            <Network size={11} className="text-blue-400/60" />
                             {clusterName}
                         </span>
-                        <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-xs font-semibold text-gray-300 whitespace-nowrap">
-                            {resourceCount} Total
+                        <span className="text-gray-600">·</span>
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                            {resourceCount} resources
                         </span>
                     </div>
                 </div>
@@ -116,7 +117,7 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
                         value={searchQuery}
                         onChange={(e) => onSearchChange(e.target.value)}
                         placeholder="Search resources..."
-                        className="block w-full pl-10 pr-3 py-2 border border-white/10 rounded-md leading-5 bg-black/20 text-gray-300 placeholder-gray-500 focus:outline-none focus:bg-white/5 focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 sm:text-sm transition-all"
+                        className="block w-full pl-10 pr-3 py-1.5 border border-white/5 rounded-lg leading-5 bg-white/5 text-gray-300 placeholder-gray-600 focus:outline-none focus:bg-white/5 focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/30 sm:text-sm transition-all"
                     />
                 </div>
 

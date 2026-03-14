@@ -1300,6 +1300,7 @@ function registerIpcHandlers() {
   // Generic resource YAML operations
   ipcMain.handle('k8s:getResourceYaml', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.getResourceYaml(contextName, apiVersion, kind, name, namespace); });
   ipcMain.handle('k8s:updateResourceYaml', (_, contextName, apiVersion, kind, name, yamlContent, namespace) => { return k8sService.updateResourceYaml(contextName, apiVersion, kind, name, yamlContent, namespace); });
+  ipcMain.handle('k8s:deleteResource', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.deleteResource(contextName, apiVersion, kind, name, namespace); });
 
   ipcMain.handle('k8s:getMutatingWebhookConfigurations', (_, contextName) => { return k8sService.getMutatingWebhookConfigurations(contextName); });
   ipcMain.handle('k8s:getMutatingWebhookConfiguration', (_, contextName, name) => { return k8sService.getMutatingWebhookConfiguration(contextName, name); });
@@ -1558,11 +1559,11 @@ function registerIpcHandlers() {
       editorFontSize: (store.get('settings_editorFontSize') as number) ?? 14,
       editorWordWrap: (store.get('settings_editorWordWrap') as boolean) ?? true,
       terminalFontSize: (store.get('settings_terminalFontSize') as number) ?? 13,
-      fontFamily: (store.get('settings_fontFamily') as string) ?? 'Monaco',
-      tableFontSize: (store.get('settings_tableFontSize') as number) ?? 14,
+      fontFamily: (store.get('settings_fontFamily') as string) ?? 'System Default',
+      tableFontSize: (store.get('settings_tableFontSize') as number) ?? 12,
       sidebarFontSize: (store.get('settings_sidebarFontSize') as number) ?? 13,
       pinnedFontSize: (store.get('settings_pinnedFontSize') as number) ?? 12,
-      headingSize: (store.get('settings_headingSize') as number) ?? 24,
+      headingSize: (store.get('settings_headingSize') as number) ?? 19,
       dateFormat: (store.get('settings_dateFormat') as string) ?? 'uk',
       zoomFactor: (store.get('settings_zoomFactor') as number) ?? 100,
     };

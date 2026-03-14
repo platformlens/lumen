@@ -16,6 +16,8 @@ import { DashboardContent } from './dashboard/DashboardContent';
 import { DashboardHeader } from './dashboard/DashboardHeader';
 import { useResourceSorting } from '../hooks/useResourceSorting';
 import { useDashboardWatchers } from '../hooks/useDashboardWatchers';
+import { ConfirmModal } from './shared/ConfirmModal';
+import { resolveResourceMeta, formatDeleteMessage } from '../utils/resource-utils';
 
 interface DashboardProps {
     clusterName: string;
@@ -98,6 +100,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     // AI State
 
     const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
     const [drawerTab, setDrawerTab] = useState<'details' | 'topology'>('details');
     const [podViewMode, setPodViewMode] = useState<'list' | 'visual'>('list');
     const [summariesEnabled, setSummariesEnabled] = useState(false);
@@ -1327,15 +1331,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         }
 
                         {
-                            selectedResource?.type === 'pod' && (
-                                <button
-                                    onClick={handleDeletePod}
-                                    className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded transition-colors"
-                                    title="Delete Pod"
-                                >
-                                    <Trash size={16} />
-                                </button>
-                            )
+                            selectedResource?.type && selectedResource.type !== 'ec2instance' && (() => {
+                                try {
+                                    const { kind } = resolveResourceMeta(selectedResource, selectedResource.type);
+                                    return (
+                                        <button
+                                            onClick={() => setShowDeleteConfirm(true)}
+                                            className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded transition-colors"
+                                            title={`Delete ${kind}`}
+                                        >
+                                            <Trash size={16} />
+                                        </button>
+                                    );
+                                } catch {
+                                    return null;
+                                }
+                            })()
                         }
                     </div >
                 }
@@ -1391,6 +1402,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     />
                 )}
             </AnimatePresence>
+
+            {showDeleteConfirm && selectedResource && (() => {
+                try {
+                    const { apiVersion, kind, name, namespace } = resolveResourceMeta(selectedResource, selectedResource.type);
+                    const message = deleteError
+                        ? `${formatDeleteMessage(kind, name, namespace)}\n\nError: ${deleteError}`
+                        : formatDeleteMessage(kind, name, namespace);
+                    return (
+                        <ConfirmModal
+                            isOpen={showDeleteConfirm}
+                            onClose={() => {
+                                setShowDeleteConfirm(false);
+                                setDeleteError(null);
+                            }}
+                            onConfirm={async () => {
+                                setDeleteError(null);
+                                try {
+                                    await window.k8s.deleteResource(clusterName, apiVersion, kind, name, namespace);
+                                    setShowDeleteConfirm(false);
+                                    setIsDrawerOpen(false);
+                                    setSelectedResource(null);
+                                } catch (err: any) {
+                                    const errorMsg = err?.message || 'Failed to delete resource';
+                                    setDeleteError(errorMsg);
+                                    throw err;
+                                }
+                            }}
+                            title={`Delete ${kind}`}
+                            message={message}
+                            confirmText="Delete"
+                            variant="danger"
+                        />
+                    );
+                } catch {
+                    return null;
+                }
+            })()}
 
         </div >
     );

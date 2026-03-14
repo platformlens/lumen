@@ -57,7 +57,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
       {/* Backdrop - rendered outside AnimatePresence for reliable cleanup */}
       {/* Uses CSS transition instead of framer-motion to avoid ghost element issues */}
       <div
-        className={`absolute inset-0 z-40 transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        className={`absolute inset-0 z-40 rounded-2xl transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
           } ${showBackdrop ? 'bg-black/50' : ''}`}
         onClick={isOpen ? onClose : undefined}
         style={{ display: showBackdrop ? 'block' : 'none' }}

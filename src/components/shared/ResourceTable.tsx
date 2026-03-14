@@ -2,7 +2,7 @@ import { ArrowUp, ArrowDown } from 'lucide-react';
 
 export const ResourceTable = ({ headers, data, renderRow, onRowClick, sortConfig, onSort }: any) => {
     if (data.length === 0) {
-        return <div className="p-8 text-center text-gray-400 bg-white/5 rounded-xl border border-white/10 italic">No resources found.</div>
+        return <div className="p-8 text-center text-gray-500 italic text-sm">No resources found.</div>
     }
 
     // Normalize headers to objects if they are strings (backward compatibility)
@@ -11,14 +11,14 @@ export const ResourceTable = ({ headers, data, renderRow, onRowClick, sortConfig
     );
 
     return (
-        <div className="overflow-hidden rounded-xl border border-white/10 bg-white/5 backdrop-blur-md shadow-lg">
+        <div className="overflow-hidden">
             <table className="w-full text-left border-collapse" style={{ fontSize: 'var(--lumen-table-font-size, 14px)' }}>
-                <thead className="bg-white/5 border-b border-white/10">
+                <thead className="border-b border-white/5">
                     <tr>
                         {normalizedHeaders.map((h: any, idx: number) => (
                             <th
                                 key={idx}
-                                className={`px-6 py-4 font-semibold text-gray-300 uppercase tracking-wider text-xs ${h.sortable ? 'cursor-pointer hover:text-white select-none' : ''}`}
+                                className={`px-6 py-3 font-medium text-gray-500 uppercase tracking-wider text-[11px] ${h.sortable ? 'cursor-pointer hover:text-gray-300 select-none' : ''}`}
                                 onClick={() => h.sortable && onSort && onSort(h.key)}
                             >
                                 <div className="flex items-center gap-2">
@@ -31,11 +31,11 @@ export const ResourceTable = ({ headers, data, renderRow, onRowClick, sortConfig
                         ))}
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-white/[0.03]">
                     {data.map((item: any) => (
                         <tr
                             key={`${item.namespace}-${item.name}`}
-                            className={`group hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 ${onRowClick ? 'cursor-pointer active:bg-white/10' : ''}`}
+                            className={`group hover:bg-white/[0.03] transition-colors ${onRowClick ? 'cursor-pointer active:bg-white/5' : ''}`}
                             onClick={() => onRowClick && onRowClick(item)}
                         >
                             {renderRow(item)}

@@ -1,3 +1,37 @@
+export const RESOURCE_TYPE_MAP: Record<string, { apiVersion: string; kind: string; namespaced: boolean }> = {
+    'deployment': { apiVersion: 'apps/v1', kind: 'Deployment', namespaced: true },
+    'daemonset': { apiVersion: 'apps/v1', kind: 'DaemonSet', namespaced: true },
+    'statefulset': { apiVersion: 'apps/v1', kind: 'StatefulSet', namespaced: true },
+    'replicaset': { apiVersion: 'apps/v1', kind: 'ReplicaSet', namespaced: true },
+    'pod': { apiVersion: 'v1', kind: 'Pod', namespaced: true },
+    'service': { apiVersion: 'v1', kind: 'Service', namespaced: true },
+    'configmap': { apiVersion: 'v1', kind: 'ConfigMap', namespaced: true },
+    'secret': { apiVersion: 'v1', kind: 'Secret', namespaced: true },
+    'namespace': { apiVersion: 'v1', kind: 'Namespace', namespaced: false },
+    'node': { apiVersion: 'v1', kind: 'Node', namespaced: false },
+    'persistentvolumeclaim': { apiVersion: 'v1', kind: 'PersistentVolumeClaim', namespaced: true },
+    'persistentvolume': { apiVersion: 'v1', kind: 'PersistentVolume', namespaced: false },
+    'serviceaccount': { apiVersion: 'v1', kind: 'ServiceAccount', namespaced: true },
+    'job': { apiVersion: 'batch/v1', kind: 'Job', namespaced: true },
+    'cronjob': { apiVersion: 'batch/v1', kind: 'CronJob', namespaced: true },
+    'ingress': { apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', namespaced: true },
+    'ingressclass': { apiVersion: 'networking.k8s.io/v1', kind: 'IngressClass', namespaced: false },
+    'networkpolicy': { apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy', namespaced: true },
+    'storageclass': { apiVersion: 'storage.k8s.io/v1', kind: 'StorageClass', namespaced: false },
+    'role': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'Role', namespaced: true },
+    'rolebinding': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'RoleBinding', namespaced: true },
+    'clusterrole': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRole', namespaced: false },
+    'clusterrolebinding': { apiVersion: 'rbac.authorization.k8s.io/v1', kind: 'ClusterRoleBinding', namespaced: false },
+    'horizontalpodautoscaler': { apiVersion: 'autoscaling/v2', kind: 'HorizontalPodAutoscaler', namespaced: true },
+    'poddisruptionbudget': { apiVersion: 'policy/v1', kind: 'PodDisruptionBudget', namespaced: true },
+    'priorityclass': { apiVersion: 'scheduling.k8s.io/v1', kind: 'PriorityClass', namespaced: false },
+    'runtimeclass': { apiVersion: 'node.k8s.io/v1', kind: 'RuntimeClass', namespaced: false },
+    'mutatingwebhookconfiguration': { apiVersion: 'admissionregistration.k8s.io/v1', kind: 'MutatingWebhookConfiguration', namespaced: false },
+    'validatingwebhookconfiguration': { apiVersion: 'admissionregistration.k8s.io/v1', kind: 'ValidatingWebhookConfiguration', namespaced: false },
+    'endpointslice': { apiVersion: 'discovery.k8s.io/v1', kind: 'EndpointSlice', namespaced: true },
+    'endpoint': { apiVersion: 'v1', kind: 'Endpoints', namespaced: true },
+};
+
 export const getDeploymentStatus = (dep: any) => {
     const conditions = dep.status?.conditions || [];
 
@@ -40,3 +74,32 @@ export const hasResourceChanged = (prev: any[], current: any[]): boolean => {
     return false;
 };
 
+
+export function resolveResourceMeta(resource: any, resourceType: string): {
+    apiVersion: string;
+    kind: string;
+    name: string;
+    namespace: string | undefined;
+} {
+    const name = resource.metadata?.name ?? resource.name;
+    const namespace = resource.metadata?.namespace ?? resource.namespace ?? undefined;
+
+    const mapped = RESOURCE_TYPE_MAP[resourceType];
+    const apiVersion = resource.apiVersion || mapped?.apiVersion;
+    const kind = resource.kind || mapped?.kind;
+
+    if (!apiVersion || !kind) {
+        throw new Error(
+            `Unable to resolve apiVersion or kind for resource type "${resourceType}"`
+        );
+    }
+
+    return { apiVersion, kind, name, namespace };
+}
+
+export function formatDeleteMessage(kind: string, name: string, namespace?: string): string {
+    if (namespace) {
+        return `Are you sure you want to delete ${kind} ${name} in namespace ${namespace}?`;
+    }
+    return `Are you sure you want to delete ${kind} ${name}? This is a cluster-scoped resource.`;
+}

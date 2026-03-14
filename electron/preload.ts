@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('k8s', {
   // Generic resource YAML operations
   getResourceYaml: (contextName: string, apiVersion: string, kind: string, name: string, namespace?: string) => ipcRenderer.invoke('k8s:getResourceYaml', contextName, apiVersion, kind, name, namespace),
   updateResourceYaml: (contextName: string, apiVersion: string, kind: string, name: string, yamlContent: string, namespace?: string) => ipcRenderer.invoke('k8s:updateResourceYaml', contextName, apiVersion, kind, name, yamlContent, namespace),
+  deleteResource: (contextName: string, apiVersion: string, kind: string, name: string, namespace?: string) => ipcRenderer.invoke('k8s:deleteResource', contextName, apiVersion, kind, name, namespace),
 
   getMutatingWebhookConfigurations: (contextName: string) => ipcRenderer.invoke('k8s:getMutatingWebhookConfigurations', contextName),
   getMutatingWebhookConfiguration: (contextName: string, name: string) => ipcRenderer.invoke('k8s:getMutatingWebhookConfiguration', contextName, name),

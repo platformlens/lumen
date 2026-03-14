@@ -9,13 +9,13 @@ const tableStyles = `
     display: flex;
     flex-direction: row;
     align-items: center;
-    background-color: rgba(255, 255, 255, 0.03); /* Subtle header background */
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    color: #9ca3af; /* text-gray-400 */
+    background-color: transparent;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: #6b7280; /* text-gray-500 */
     text-transform: uppercase;
-    font-size: 0.75rem; /* text-xs */
-    font-weight: 600; /* font-semibold */
-    letter-spacing: 0.05em; /* tracking-wider */
+    font-size: 0.6875rem; /* 11px */
+    font-weight: 500;
+    letter-spacing: 0.06em;
     padding-right: 0 !important;
   }
 
@@ -23,13 +23,13 @@ const tableStyles = `
     display: flex;
     flex-direction: row;
     align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* Separator */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
     cursor: pointer;
     transition: background-color 0.1s ease;
   }
 
   .ReactVirtualized__Table__row:hover {
-    background-color: rgba(255, 255, 255, 0.05); /* Hover effect */
+    background-color: rgba(255, 255, 255, 0.03);
   }
 
   .ReactVirtualized__Table__headerColumn {
@@ -270,7 +270,7 @@ const VirtualizedTableInner: React.FC<VirtualizedTableProps> = ({
     };
 
     return (
-        <div className="relative flex-1 h-full w-full min-h-[400px] flex flex-col bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden virtualized-table-container-outer">
+        <div className="relative flex-1 h-full w-full min-h-[400px] flex flex-col overflow-hidden virtualized-table-container-outer">
 
             <style>{tableStyles}</style>
             <div className="flex-1 virtualized-table-container overflow-x-auto overflow-y-hidden">

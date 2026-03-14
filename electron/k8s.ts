@@ -2713,6 +2713,35 @@ export class K8sService {
     }
 
     /**
+     * Generic method to delete any Kubernetes resource
+     * @param contextName - Kubernetes context name
+     * @param apiVersion - API version (e.g., 'v1', 'apps/v1', 'networking.k8s.io/v1')
+     * @param kind - Resource kind (e.g., 'Pod', 'Deployment', 'Service')
+     * @param name - Resource name
+     * @param namespace - Namespace (optional, for cluster-scoped resources)
+     */
+    public async deleteResource(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<boolean> {
+        console.log(`[k8s] deleteResource for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+        this.kc.setCurrentContext(contextName);
+
+        try {
+            const path = await this.buildResourcePath(contextName, apiVersion, kind, name, namespace);
+            console.log(`[k8s] Deleting resource at path: ${path}`);
+
+            const { statusCode, data } = await this.k8sRequest(path, 'DELETE');
+
+            if (statusCode >= 200 && statusCode < 300) {
+                return true;
+            } else {
+                throw new Error(`HTTP ${statusCode}: ${data}`);
+            }
+        } catch (error: any) {
+            console.error(`Error deleting resource:`, error);
+            throw new Error(`Failed to delete ${kind}: ${error.message || error}`);
+        }
+    }
+
+    /**
      * Build the API path for a resource based on apiVersion, kind, name, and namespace.
      */
     private async buildResourcePath(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<string> {
