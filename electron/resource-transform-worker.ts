@@ -11,73 +11,88 @@ import type { BatchEvent } from './watcher-batch-buffer';
 
 // --- Interfaces ---
 
+type K8sObject = Record<string, unknown>;
+
 export interface TransformRequest {
     id: string;
     resourceType: 'pod' | 'deployment' | 'node';
-    events: BatchEvent<any>[];
+    events: BatchEvent<K8sObject>[];
 }
 
 export interface TransformResponse {
     id: string;
     resourceType: string;
-    events: BatchEvent<any>[];
+    events: BatchEvent<K8sObject>[];
     error?: string;
+}
+
+// --- Helpers ---
+
+/** Safely access a nested property, returning a fallback if missing. */
+function prop(obj: unknown, key: string): unknown {
+    if (obj && typeof obj === 'object' && key in obj) {
+        return (obj as Record<string, unknown>)[key];
+    }
+    return undefined;
 }
 
 // --- Pod Transformation ---
 
-function transformPod(apiObj: any): any {
-    const metadata = apiObj?.metadata || {};
-    const status = apiObj?.status || {};
-    const spec = apiObj?.spec || {};
+function transformPod(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const status = (prop(apiObj, 'status') ?? {}) as K8sObject;
+    const spec = (prop(apiObj, 'spec') ?? {}) as K8sObject;
 
-    const containerStatuses = status.containerStatuses || [];
-    const initContainerStatuses = status.initContainerStatuses || [];
+    const containerStatuses = (prop(status, 'containerStatuses') ?? []) as K8sObject[];
+    const initContainerStatuses = (prop(status, 'initContainerStatuses') ?? []) as K8sObject[];
     const allStatuses = [...initContainerStatuses, ...containerStatuses];
 
-    const phase = metadata.deletionTimestamp
+    const phase = prop(metadata, 'deletionTimestamp')
         ? 'Terminating'
-        : (status.phase || 'Unknown');
+        : ((prop(status, 'phase') as string) || 'Unknown');
 
     return {
-        name: metadata.name || '',
-        namespace: metadata.namespace || '',
+        name: (prop(metadata, 'name') as string) || '',
+        namespace: (prop(metadata, 'namespace') as string) || '',
         status: phase,
         restarts: containerStatuses.reduce(
-            (acc: number, c: any) => acc + (c?.restartCount || 0),
+            (acc: number, c: K8sObject) => acc + ((prop(c, 'restartCount') as number) || 0),
             0
         ),
-        age: metadata.creationTimestamp || '',
-        containers: allStatuses.map((c: any) => ({
-            name: c?.name || '',
-            state: c?.state?.running
-                ? 'running'
-                : c?.state?.waiting
-                    ? 'waiting'
-                    : 'terminated',
-            ready: c?.ready ?? false,
-            image: c?.image || '',
-            restartCount: c?.restartCount || 0,
-        })),
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
+        containers: allStatuses.map((c: K8sObject) => {
+            const state = (prop(c, 'state') ?? {}) as K8sObject;
+            return {
+                name: (prop(c, 'name') as string) || '',
+                state: prop(state, 'running')
+                    ? 'running'
+                    : prop(state, 'waiting')
+                        ? 'waiting'
+                        : 'terminated',
+                ready: (prop(c, 'ready') as boolean) ?? false,
+                image: (prop(c, 'image') as string) || '',
+                restartCount: (prop(c, 'restartCount') as number) || 0,
+            };
+        }),
         metadata,
         spec,
-        node: spec.nodeName || '',
+        node: (prop(spec, 'nodeName') as string) || '',
         rawStatus: status,
     };
 }
 
 // --- Deployment Transformation ---
 
-function transformDeployment(apiObj: any): any {
-    const metadata = apiObj?.metadata || {};
-    const status = apiObj?.status || {};
-    const spec = apiObj?.spec || {};
+function transformDeployment(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const status = (prop(apiObj, 'status') ?? {}) as K8sObject;
+    const spec = (prop(apiObj, 'spec') ?? {}) as K8sObject;
 
     return {
-        name: metadata.name || '',
-        namespace: metadata.namespace || '',
-        replicas: spec.replicas ?? 0,
-        availableReplicas: status.availableReplicas ?? 0,
+        name: (prop(metadata, 'name') as string) || '',
+        namespace: (prop(metadata, 'namespace') as string) || '',
+        replicas: (prop(spec, 'replicas') as number) ?? 0,
+        availableReplicas: (prop(status, 'availableReplicas') as number) ?? 0,
         status,
         metadata,
         spec,
@@ -86,24 +101,30 @@ function transformDeployment(apiObj: any): any {
 
 // --- Node Transformation ---
 
-function transformNode(apiObj: any): any {
-    const metadata = apiObj?.metadata || {};
-    const status = apiObj?.status || {};
-    const spec = apiObj?.spec || {};
+function transformNode(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const status = (prop(apiObj, 'status') ?? {}) as K8sObject;
+    const spec = (prop(apiObj, 'spec') ?? {}) as K8sObject;
 
-    const isReady = status.conditions?.find((c: any) => c.type === 'Ready')?.status === 'True';
+    const conditions = (prop(status, 'conditions') ?? []) as K8sObject[];
+    const isReady = conditions.find(
+        (c: K8sObject) => prop(c, 'type') === 'Ready'
+    );
+    const nodeInfo = (prop(status, 'nodeInfo') ?? {}) as K8sObject;
+    const capacity = (prop(status, 'capacity') ?? {}) as K8sObject;
+    const labels = (prop(metadata, 'labels') ?? {}) as Record<string, string>;
 
     return {
-        name: metadata.name || '',
-        status: isReady ? 'Ready' : 'NotReady',
-        roles: Object.keys(metadata.labels || {})
+        name: (prop(metadata, 'name') as string) || '',
+        status: isReady && prop(isReady, 'status') === 'True' ? 'Ready' : 'NotReady',
+        roles: Object.keys(labels)
             .filter((k: string) => k.startsWith('node-role.kubernetes.io/'))
             .map((k: string) => k.split('/')[1])
             .join(', ') || 'worker',
-        version: status.nodeInfo?.kubeletVersion || '',
-        age: metadata.creationTimestamp || '',
-        cpu: status.capacity?.cpu || '',
-        memory: status.capacity?.memory || '',
+        version: (prop(nodeInfo, 'kubeletVersion') as string) || '',
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
+        cpu: (prop(capacity, 'cpu') as string) || '',
+        memory: (prop(capacity, 'memory') as string) || '',
         metadata,
         spec,
         statusObj: status,
@@ -114,12 +135,12 @@ function transformNode(apiObj: any): any {
 
 function handleRequest(request: TransformRequest): TransformResponse {
     const { id, resourceType, events } = request;
-    const transformedEvents: BatchEvent<any>[] = [];
+    const transformedEvents: BatchEvent<K8sObject>[] = [];
     const errors: string[] = [];
 
     for (const event of events) {
         try {
-            let transformed: any;
+            let transformed: K8sObject;
             if (resourceType === 'pod') {
                 transformed = transformPod(event.resource);
             } else if (resourceType === 'deployment') {
@@ -131,10 +152,9 @@ function handleRequest(request: TransformRequest): TransformResponse {
                 transformed = event.resource;
             }
             transformedEvents.push({ type: event.type, resource: transformed });
-        } catch (err: any) {
-            errors.push(
-                `Failed to transform ${resourceType}: ${err?.message || 'unknown error'}`
-            );
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'unknown error';
+            errors.push(`Failed to transform ${resourceType}: ${message}`);
         }
     }
 
@@ -158,13 +178,14 @@ if (parentPort) {
         try {
             const response = handleRequest(message);
             parentPort!.postMessage(response);
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const errMessage = err instanceof Error ? err.message : 'unknown error';
             // Catch-all for completely unexpected failures
             const errorResponse: TransformResponse = {
                 id: message?.id || 'unknown',
                 resourceType: message?.resourceType || 'unknown',
                 events: [],
-                error: `Worker error: ${err?.message || 'unknown error'}`,
+                error: `Worker error: ${errMessage}`,
             };
             parentPort!.postMessage(errorResponse);
         }

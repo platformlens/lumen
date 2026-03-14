@@ -69,10 +69,7 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
-let store: Store;
-
-// Initialize store synchronously
-store = new Store();
+const store = new Store();
 
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
@@ -353,7 +350,7 @@ function registerIpcHandlers() {
     return k8sService.getEvents(contextName, namespaces, fieldSelector);
   })
 
-  ipcMain.handle('k8s:getEvent', async (_event, _contextName, _namespace, _name) => {
+  ipcMain.handle('k8s:getEvent', async () => {
     // There is no single event fetch usually, but consistency
     return null;
   });
@@ -361,7 +358,7 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getNodes', async (_event, contextName) => {
     try {
       return await k8sService.getNodes(contextName);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error in k8s:getNodes:', error);
       throw error;
     }
@@ -370,7 +367,7 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getNode', async (_event, contextName, name) => {
     try {
       return await k8sService.getNode(contextName, name);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error in k8s:getNode:', error);
       throw error;
     }
@@ -387,7 +384,7 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getCRD', async (_event, contextName, name) => {
     try {
       return await k8sService.getCRD(contextName, name);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error in k8s:getCRD:', error);
       throw error;
     }
@@ -499,7 +496,7 @@ function registerIpcHandlers() {
           fullResponse += textPart;
           event.sender.send('ai:explainResourceStream:chunk', textPart);
         }
-      } catch (streamError: any) {
+      } catch (streamError: unknown) {
         console.error('[AI] Stream iteration error:', streamError);
         const { message: errMsg, isAccessDenied } = extractAiErrorInfo(streamError);
         event.sender.send('ai:explainResourceStream:error', errMsg);
@@ -529,7 +526,7 @@ function registerIpcHandlers() {
 
       event.sender.send('ai:explainResourceStream:done');
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('AI Error:', error);
       const { message: errMsg, isAccessDenied } = extractAiErrorInfo(error);
       event.sender.send('ai:explainResourceStream:error', errMsg);
@@ -678,8 +675,8 @@ function registerIpcHandlers() {
           fullResponse += textPart;
           event.sender.send('ai:customPromptStream:chunk', textPart);
         }
-      } catch (streamError: any) {
-        if (streamError.name === 'AbortError' || abortSignal.aborted) {
+      } catch (streamError: unknown) {
+        if (streamError instanceof Error && streamError.name === 'AbortError' || abortSignal.aborted) {
           console.log('[AI] Stream was aborted');
           activeCustomPromptAbort = null;
           return;
@@ -710,9 +707,9 @@ function registerIpcHandlers() {
       event.sender.send('ai:customPromptStream:done');
       activeCustomPromptAbort = null;
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Don't send error if it was aborted
-      if (error.name === 'AbortError' || abortSignal.aborted) {
+      if (error instanceof Error && error.name === 'AbortError' || abortSignal.aborted) {
         console.log('[AI] Stream was aborted');
         activeCustomPromptAbort = null;
         return;
@@ -737,12 +734,12 @@ function registerIpcHandlers() {
         region: config.region,
         credentials: config.credentialProvider
           ? async () => {
-            const creds = await config.credentialProvider();
+            const creds = await config.credentialProvider!();
             return { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken };
           }
           : {
-            accessKeyId: config.accessKeyId,
-            secretAccessKey: config.secretAccessKey,
+            accessKeyId: config.accessKeyId!,
+            secretAccessKey: config.secretAccessKey!,
             sessionToken: config.sessionToken,
           },
       });
@@ -756,12 +753,12 @@ function registerIpcHandlers() {
         isAuthenticated: true,
         isGranted: !!grantedCreds
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('AWS Auth Check Failed:', err);
       return {
         isManaged: false,
         isAuthenticated: false,
-        error: err.message
+        error: err instanceof Error ? err.message : 'Unknown error'
       };
     }
   })
@@ -783,9 +780,9 @@ function registerIpcHandlers() {
 
         const data = await response.json();
         const models = (data.models || [])
-          .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-          .map((m: any) => ({
-            id: m.name.replace('models/', ''),
+          .filter((m: Record<string, unknown>) => (m.supportedGenerationMethods as string[] | undefined)?.includes('generateContent'))
+          .map((m: Record<string, unknown>) => ({
+            id: (m.name as string).replace('models/', ''),
             name: m.displayName
           }));
 
@@ -801,12 +798,12 @@ function registerIpcHandlers() {
           region: config.region,
           credentials: config.credentialProvider
             ? async () => {
-              const creds = await config.credentialProvider();
+              const creds = await config.credentialProvider!();
               return { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey, sessionToken: creds.sessionToken };
             }
             : {
-              accessKeyId: config.accessKeyId,
-              secretAccessKey: config.secretAccessKey,
+              accessKeyId: config.accessKeyId!,
+              secretAccessKey: config.secretAccessKey!,
               sessionToken: config.sessionToken,
             },
         });
@@ -957,11 +954,11 @@ function registerIpcHandlers() {
         name: rawPod.metadata?.name,
         namespace: rawPod.metadata?.namespace,
         status: phase,
-        restarts: containerStatuses.reduce((acc: number, c: any) => acc + (c?.restartCount || 0), 0),
+        restarts: containerStatuses.reduce((acc: number, c: Record<string, unknown>) => acc + ((c?.restartCount as number) || 0), 0),
         age: rawPod.metadata?.creationTimestamp,
-        containers: allStatuses.map((c: any) => ({
+        containers: allStatuses.map((c: Record<string, unknown>) => ({
           name: c?.name,
-          state: c?.state?.running ? 'running' : (c?.state?.waiting ? 'waiting' : 'terminated'),
+          state: (c?.state as Record<string, unknown>)?.running ? 'running' : ((c?.state as Record<string, unknown>)?.waiting ? 'waiting' : 'terminated'),
           ready: c?.ready,
           image: c?.image,
           restartCount: c?.restartCount
@@ -1320,7 +1317,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('settings:getAwsCreds', async () => {
-    return (store.get('awsCreds') as any) || {};
+    return (store.get('awsCreds') as Record<string, string>) || {};
   });
 
   // --- AI History (using ChatSessionManager) ---
@@ -1383,12 +1380,20 @@ function registerIpcHandlers() {
   const NOTIFICATIONS_KEY = 'anomalyNotifications';
   const MAX_NOTIFICATIONS = 100;
 
-  function readNotifications(): any[] {
+  interface StoredNotification {
+    id: string;
+    anomalyId?: string;
+    createdAt: number;
+    read: boolean;
+    [key: string]: unknown;
+  }
+
+  function readNotifications(): StoredNotification[] {
     const data = store.get(NOTIFICATIONS_KEY);
     return Array.isArray(data) ? data : [];
   }
 
-  function saveNotifications(notifications: any[]): void {
+  function saveNotifications(notifications: StoredNotification[]): void {
     // Keep only the most recent MAX_NOTIFICATIONS
     if (notifications.length > MAX_NOTIFICATIONS) {
       notifications = notifications.slice(0, MAX_NOTIFICATIONS);
@@ -1403,7 +1408,7 @@ function registerIpcHandlers() {
   ipcMain.handle('notifications:add', async (_, notification) => {
     const notifications = readNotifications();
     // Deduplicate by anomaly id
-    if (notification.anomalyId && notifications.some((n: any) => n.anomalyId === notification.anomalyId)) {
+    if (notification.anomalyId && notifications.some((n) => n.anomalyId === notification.anomalyId)) {
       return notifications;
     }
     notifications.unshift({ ...notification, id: notification.id || `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, createdAt: Date.now(), read: false });
@@ -1413,7 +1418,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('notifications:markRead', async (_, id) => {
     const notifications = readNotifications();
-    const notif = notifications.find((n: any) => n.id === id);
+    const notif = notifications.find((n) => n.id === id);
     if (notif) notif.read = true;
     saveNotifications(notifications);
     return notifications;
@@ -1421,13 +1426,13 @@ function registerIpcHandlers() {
 
   ipcMain.handle('notifications:markAllRead', async () => {
     const notifications = readNotifications();
-    notifications.forEach((n: any) => { n.read = true; });
+    notifications.forEach((n) => { n.read = true; });
     saveNotifications(notifications);
     return notifications;
   });
 
   ipcMain.handle('notifications:delete', async (_, id) => {
-    const notifications = readNotifications().filter((n: any) => n.id !== id);
+    const notifications = readNotifications().filter((n) => n.id !== id);
     saveNotifications(notifications);
     return notifications;
   });
@@ -1438,7 +1443,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('notifications:getUnreadCount', async () => {
-    return readNotifications().filter((n: any) => !n.read).length;
+    return readNotifications().filter((n) => !n.read).length;
   });
 
   // --- Pinned Clusters ---
@@ -1483,7 +1488,7 @@ function registerIpcHandlers() {
     return store.get(`settings_${key}`) ?? null;
   });
 
-  ipcMain.handle('settings:set', async (_, key: string, value: any) => {
+  ipcMain.handle('settings:set', async (_, key: string, value: string | number | boolean) => {
     store.set(`settings_${key}`, value);
     return true;
   });
@@ -1529,25 +1534,26 @@ function registerIpcHandlers() {
 
 // Helper functions for AI
 
-function extractAiErrorInfo(error: any): { message: string; isAccessDenied: boolean } {
+function extractAiErrorInfo(error: unknown): { message: string; isAccessDenied: boolean } {
   // Try to get a clean message from various error shapes
   let message = 'Unknown error';
+  const err = error as Record<string, unknown>;
 
   // The AI SDK puts the response body as a JSON string
-  if (error.responseBody) {
+  if (typeof err.responseBody === 'string') {
     try {
-      const parsed = JSON.parse(error.responseBody);
-      message = parsed.message || error.responseBody;
+      const parsed = JSON.parse(err.responseBody);
+      message = parsed.message || err.responseBody;
     } catch {
-      message = error.responseBody;
+      message = err.responseBody;
     }
-  } else if (error.data?.message) {
-    message = error.data.message;
-  } else if (error.message) {
+  } else if ((err.data as Record<string, unknown>)?.message) {
+    message = (err.data as Record<string, unknown>).message as string;
+  } else if (error instanceof Error) {
     message = error.message;
   }
 
-  const isAccessDenied = error.statusCode === 403
+  const isAccessDenied = (err.statusCode as number) === 403
     || message.includes('Model access is denied')
     || message.includes('aws-marketplace');
 
@@ -1559,8 +1565,15 @@ function getApiKey(): string {
   return key || process.env.GEMINI_API_KEY || '';
 }
 
-function getAwsCreds(): any {
-  return (store.get('awsCreds') as any) || {};
+interface AwsCreds {
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  sessionToken?: string;
+  region?: string;
+}
+
+function getAwsCreds(): AwsCreds {
+  return (store.get('awsCreds') as AwsCreds) || {};
 }
 
 /**
@@ -1573,11 +1586,19 @@ function getAwsCreds(): any {
  * Note: We intentionally skip process.env Granted creds here because they become stale
  * after launch. The provider chain reads fresh creds from disk on every call.
  */
-function getBedrockConfig(): any {
+interface BedrockConfig {
+  region: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  sessionToken?: string;
+  credentialProvider?: () => Promise<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string }>;
+}
+
+function getBedrockConfig(): BedrockConfig {
   const savedCreds = getAwsCreds();
   const grantedCreds = awsService.getGrantedCredentials();
 
-  const config: any = {
+  const config: BedrockConfig = {
     region: grantedCreds?.region || savedCreds.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1',
   };
 
