@@ -72,11 +72,12 @@ const NavItem = ({ icon, label, active, onClick, onContextMenu, hasSub = false, 
         onClick={isLoading ? undefined : onClick}
         onContextMenu={isLoading ? undefined : onContextMenu}
         className={clsx(
-            "flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors text-sm",
+            "flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors",
             active ? "bg-[#2a2a2a] text-blue-400 font-medium" : "text-gray-400 hover:bg-[#2a2a2a] hover:text-gray-200",
             comingSoon && "opacity-50 cursor-not-allowed",
             isLoading && "opacity-80 cursor-wait"
         )}
+        style={{ fontSize: 'var(--lumen-sidebar-font-size)' }}
     >
         {isLoading ? <Loader2 size={18} className="animate-spin text-blue-400" /> : icon}
         <span className="flex-1 truncate">{isLoading && loadingText ? loadingText : label}</span>
@@ -579,10 +580,10 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         onClick={() => onSelectView('settings-context')}
                                     />
                                 )}
-                                {(!searchQuery || filterMatches('Editor & Terminal')) && (
+                                {(!searchQuery || filterMatches('Appearance')) && (
                                     <NavItem
                                         icon={<File size={18} />}
-                                        label="Editor & Terminal"
+                                        label="Appearance"
                                         active={activeView === 'settings-editor'}
                                         onClick={() => onSelectView('settings-editor')}
                                     />

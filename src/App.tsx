@@ -105,6 +105,39 @@ function App() {
         window.k8s.notifications.getUnreadCount().then(setUnreadNotificationCount).catch(() => { });
     }, []);
 
+    // Apply saved font family and size on mount
+    useEffect(() => {
+        window.k8s.settings.get('fontFamily').then((saved: string | null) => {
+            if (saved) {
+                const stacks: Record<string, string> = {
+                    'Monaco': "'Monaco', 'Menlo', 'Consolas', monospace",
+                    'Inter': "'Inter', system-ui, -apple-system, sans-serif",
+                    'JetBrains Mono': "'JetBrains Mono', 'Fira Code', monospace",
+                    'Fira Code': "'Fira Code', 'JetBrains Mono', monospace",
+                    'SF Mono': "'SF Mono', 'Monaco', 'Menlo', monospace",
+                    'IBM Plex Mono': "'IBM Plex Mono', 'Consolas', monospace",
+                    'Source Code Pro': "'Source Code Pro', 'Menlo', monospace",
+                    'System Default': "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                };
+                document.documentElement.style.setProperty('--lumen-font-family', stacks[saved] ?? `'${saved}', monospace`);
+            }
+        }).catch(() => { });
+        window.k8s.settings.get('tableFontSize').then((saved: number | null) => {
+            if (saved) {
+                document.documentElement.style.setProperty('--lumen-table-font-size', `${saved}px`);
+            }
+        }).catch(() => { });
+        window.k8s.settings.get('sidebarFontSize').then((saved: number | null) => {
+            if (saved) document.documentElement.style.setProperty('--lumen-sidebar-font-size', `${saved}px`);
+        }).catch(() => { });
+        window.k8s.settings.get('pinnedFontSize').then((saved: number | null) => {
+            if (saved) document.documentElement.style.setProperty('--lumen-pinned-font-size', `${saved}px`);
+        }).catch(() => { });
+        window.k8s.settings.get('headingSize').then((saved: number | null) => {
+            if (saved) document.documentElement.style.setProperty('--lumen-heading-size', `${saved}px`);
+        }).catch(() => { });
+    }, []);
+
     const refreshUnreadCount = () => {
         window.k8s.notifications.getUnreadCount().then(setUnreadNotificationCount).catch(() => { });
     };
@@ -288,6 +321,67 @@ function App() {
     // Bottom Panel State
     const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
     const [bottomPanelHeight, setBottomPanelHeight] = useState(300);
+
+    // Keyboard Shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const isMod = e.metaKey || e.ctrlKey;
+            if (!isMod) return;
+
+            // Cmd+K — Toggle AI Assistant
+            if (e.key === 'k') {
+                e.preventDefault();
+                setIsAIPanelOpen(prev => !prev);
+            }
+
+            // Cmd+, — Open Settings
+            if (e.key === ',') {
+                e.preventDefault();
+                setActiveView('settings');
+            }
+
+            // Cmd+` — Toggle Terminal
+            if (e.key === '`') {
+                e.preventDefault();
+                // If bottom panel is open and terminal is active, close it
+                // Otherwise open terminal
+                const terminalTabId = 'local-terminal';
+                const hasTerminal = panelTabs.find(t => t.id === terminalTabId);
+                if (isBottomPanelOpen && activeTabId === terminalTabId) {
+                    setIsBottomPanelOpen(false);
+                } else {
+                    if (!hasTerminal) {
+                        setPanelTabs(prev => [...prev, {
+                            id: terminalTabId,
+                            type: 'terminal' as const,
+                            title: 'Terminal'
+                        }]);
+                    }
+                    setActiveTabId(terminalTabId);
+                    setIsBottomPanelOpen(true);
+                }
+            }
+
+            // Cmd+L — Toggle Logs panel
+            if (e.key === 'l') {
+                e.preventDefault();
+                // If bottom panel is open, close it. Otherwise open it.
+                // Focus the first log tab if one exists, otherwise just toggle.
+                if (isBottomPanelOpen) {
+                    setIsBottomPanelOpen(false);
+                } else {
+                    const firstLogTab = panelTabs.find(t => t.type === 'log');
+                    if (firstLogTab) {
+                        setActiveTabId(firstLogTab.id);
+                    }
+                    setIsBottomPanelOpen(true);
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isBottomPanelOpen, activeTabId, panelTabs]);
 
     // Toast State
     const [toasts, setToasts] = useState<{ id: string; message: string; type?: 'success' | 'error' | 'info'; action?: { label: string; onClick: () => void } }[]>([]);
@@ -984,7 +1078,8 @@ function App() {
                                     <div
                                         key={cluster}
                                         onClick={() => handleClusterSelect(cluster)}
-                                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors border ${selectedCluster === cluster ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-white/5 border-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors border ${selectedCluster === cluster ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-white/5 border-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'}`}
+                                        style={{ fontSize: 'var(--lumen-pinned-font-size)' }}
                                         title={cluster}
                                     >
                                         <Pin

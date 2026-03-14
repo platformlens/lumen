@@ -46,6 +46,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [roleBindings, setRoleBindings] = useState<any[]>([]);
     const [events, setEvents] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
+    const [watcherReady, setWatcherReady] = useState(false);
     const [roles, setRoles] = useState<any[]>([]);
     const [serviceAccounts, setServiceAccounts] = useState<any[]>([]);
     const [daemonSets, setDaemonSets] = useState<any[]>([]);
@@ -132,10 +133,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         return () => clearTimeout(timer);
     }, [searchQuery]);
 
-    // Clear search when active view changes
+    // Clear search and reset watcher-ready flag when active view changes
     useEffect(() => {
         setSearchQuery('');
         setDebouncedSearchQuery('');
+        setWatcherReady(false);
     }, [activeView]);
 
 
@@ -507,6 +509,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
         window.k8s.watchGenericResource(clusterName, watchKey, apiPath);
 
+        // Resource types that receive pre-transformed batch events from the worker thread
+        const WORKER_BATCH_TYPES = new Set(['replicasets', 'secrets', 'persistentvolumes', 'persistentvolumeclaims']);
+        const useWorkerBatch = WORKER_BATCH_TYPES.has(watchKey);
+
         const processBatch = () => {
             if (pendingUpdates.size === 0) {
                 batchTimeout = null;
@@ -529,7 +535,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     }));
 
                     updates.forEach(({ type, resource }) => {
-                        const shaped = shape ? shape(resource) : resource;
+                        // Worker batch events are already shaped; others need client-side shaping
+                        const shaped = useWorkerBatch ? resource : (shape ? shape(resource) : resource);
                         const key = shaped.namespace
                             ? `${shaped.namespace}/${shaped.name}`
                             : shaped.name;
@@ -546,19 +553,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             });
         };
 
-        genericCleanup = window.k8s.onGenericResourceChange((resourceType, type, resource) => {
-            if (resourceType !== watchKey) return;
-            const key = resource.metadata?.namespace
-                ? `${resource.metadata.namespace}/${resource.metadata.name}`
-                : resource.metadata?.name;
-            pendingUpdates.set(key, { type, resource });
-            if (!batchTimeout) {
-                batchTimeout = setTimeout(processBatch, 650);
-            }
-        });
+        let genericBatchCleanup: (() => void) | undefined;
+
+        if (useWorkerBatch) {
+            // For worker-transformed types, consume pre-shaped batch events
+            genericBatchCleanup = window.k8s.onGenericResourceBatchChange((resourceType, events) => {
+                if (resourceType !== watchKey) return;
+                setWatcherReady(true);
+                for (const evt of events) {
+                    const key = evt.resource.namespace
+                        ? `${evt.resource.namespace}/${evt.resource.name}`
+                        : evt.resource.name;
+                    pendingUpdates.set(key, evt);
+                }
+                if (!batchTimeout) {
+                    batchTimeout = setTimeout(processBatch, 650);
+                }
+            });
+        } else {
+            // For other types, use individual raw events with client-side shaping
+            genericCleanup = window.k8s.onGenericResourceChange((resourceType, type, resource) => {
+                if (resourceType !== watchKey) return;
+                setWatcherReady(true);
+                const key = resource.metadata?.namespace
+                    ? `${resource.metadata.namespace}/${resource.metadata.name}`
+                    : resource.metadata?.name;
+                pendingUpdates.set(key, { type, resource });
+                if (!batchTimeout) {
+                    batchTimeout = setTimeout(processBatch, 650);
+                }
+            });
+        }
 
         return () => {
             if (genericCleanup) genericCleanup();
+            if (genericBatchCleanup) genericBatchCleanup();
             if (batchTimeout) clearTimeout(batchTimeout);
             window.k8s.stopWatchGenericResource(watchKey);
         };
@@ -642,12 +671,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     }));
                 }
             }
-            if (activeView === 'replicasets') {
-                promises.push(window.k8s.getReplicaSets(clusterName, nsFilter).then(data => {
-                    setReplicaSets(data);
-                    setCachedData(cacheKey, data);
-                }));
-            }
+            // Replicasets, secrets, PVCs, PVs: watchers + worker thread handle data,
+            // skip bulk fetch to avoid initial lag (same pattern as pods/deployments)
             if (activeView === 'services') {
                 promises.push(window.k8s.getServices(clusterName, nsFilter).then(data => {
                     setServices(data);
@@ -759,19 +784,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 });
             }
 
-            // Storage
-            if (activeView === 'persistentvolumeclaims') {
-                window.k8s.getPersistentVolumeClaims(clusterName, nsFilter).then(data => {
-                    setPvcs(data);
-                    setCachedData(cacheKey, data);
-                });
-            }
-            if (activeView === 'persistentvolumes') {
-                window.k8s.getPersistentVolumes(clusterName).then(data => {
-                    setPvs(data);
-                    setCachedData(cacheKey, data);
-                });
-            }
+            // Storage (PVCs and PVs populated by watchers + worker thread, skip bulk fetch)
             if (activeView === 'storageclasses') {
                 window.k8s.getStorageClasses(clusterName).then(data => {
                     setStorageClasses(data);
@@ -786,12 +799,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     setCachedData(cacheKey, data);
                 });
             }
-            if (activeView === 'secrets') {
-                window.k8s.getSecrets(clusterName, nsFilter).then(data => {
-                    setSecrets(data);
-                    setCachedData(cacheKey, data);
-                });
-            }
+            // Secrets populated by watchers + worker thread, skip bulk fetch
             if (activeView === 'horizontalpodautoscalers') {
                 window.k8s.getHorizontalPodAutoscalers(clusterName, nsFilter).then(data => {
                     setHorizontalPodAutoscalers(data);
@@ -1237,6 +1245,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     runtimeClasses={runtimeClasses}
                     podMetrics={podMetrics}
                     loading={loading}
+                    watcherReady={watcherReady}
                     podViewMode={podViewMode}
                     sortConfig={sortConfig}
                     searchQuery={debouncedSearchQuery}

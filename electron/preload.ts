@@ -211,6 +211,11 @@ contextBridge.exposeInMainWorld('k8s', {
     ipcRenderer.on('k8s:genericResourceChange', listener);
     return () => ipcRenderer.off('k8s:genericResourceChange', listener);
   },
+  onGenericResourceBatchChange: (callback: (resourceType: string, events: Array<{ type: string; resource: any }>) => void) => {
+    const listener = (_: any, resourceType: string, events: Array<{ type: string; resource: any }>) => callback(resourceType, events);
+    ipcRenderer.on('k8s:genericResourceBatchChange', listener);
+    return () => ipcRenderer.off('k8s:genericResourceBatchChange', listener);
+  },
   onDeploymentChange: (callback: (type: string, deployment: any) => void) => {
     const listener = (_: any, type: string, deployment: any) => callback(type, deployment);
     ipcRenderer.on('k8s:deploymentChange', listener);
@@ -270,6 +275,7 @@ contextBridge.exposeInMainWorld('k8s', {
     setKubeconfigPath: (p: string) => ipcRenderer.invoke('settings:setKubeconfigPath', p),
     getContextConfig: () => ipcRenderer.invoke('settings:getContextConfig'),
     setContextConfig: (config: any) => ipcRenderer.invoke('settings:setContextConfig', config),
+    setZoomFactor: (factor: number) => ipcRenderer.invoke('settings:setZoomFactor', factor),
   },
 
   // --- AI History & Sessions ---

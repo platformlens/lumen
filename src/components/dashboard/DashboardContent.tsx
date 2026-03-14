@@ -57,6 +57,7 @@ interface DashboardContentProps {
 
     // UI state
     loading: boolean;
+    watcherReady: boolean;
     podViewMode: 'list' | 'visual';
     sortConfig: { key: string; direction: 'asc' | 'desc' } | null;
     searchQuery: string;
@@ -121,6 +122,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     runtimeClasses: _runtimeClasses,
     podMetrics,
     loading,
+    watcherReady,
     podViewMode,
     sortConfig,
     searchQuery,
@@ -306,11 +308,13 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                     { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
                     { label: 'Desired', dataKey: 'desired', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d}</span> },
                     { label: 'Current', dataKey: 'current', width: 80, flexGrow: 0, cellRenderer: (c) => <span className="text-gray-400">{c}</span> },
-                    { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> }
+                    { label: 'Ready', dataKey: 'ready', width: 80, flexGrow: 0, cellRenderer: (r) => <span className="text-gray-400">{r}</span> },
+                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
                 ]}
                 data={replicaSets}
                 onRowClick={(rs: any) => onResourceClick(rs, 'replicaset')}
                 searchQuery={searchQuery}
+                isLoading={replicaSets.length === 0 && !watcherReady}
             />
         );
     }
@@ -327,7 +331,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                     { label: 'Type', dataKey: 'type', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400">{t}</span> },
                     { label: 'Cluster IP', dataKey: 'clusterIP', width: 120, flexGrow: 0, cellRenderer: (ip) => <span className="text-gray-400 font-mono text-xs">{ip}</span> },
                     { label: 'Ports', dataKey: 'ports', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400 font-mono text-xs">{p}</span> },
-                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400">{new Date(age).toLocaleDateString()}</span> }
+                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
                 ]}
                 data={services}
                 onRowClick={(svc: any) => onResourceClick(svc, 'service')}
@@ -410,7 +414,8 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                     { label: 'Schedule', dataKey: 'schedule', flexGrow: 1, cellRenderer: (s) => <span className="text-gray-400 font-mono text-xs">{s}</span> },
                     { label: 'Suspend', dataKey: 'suspend', width: 80, flexGrow: 0, cellRenderer: (s) => <span className="text-gray-400">{s ? 'Yes' : 'No'}</span> },
                     { label: 'Active', dataKey: 'active', width: 80, flexGrow: 0, cellRenderer: (a) => <span className="text-gray-400">{a}</span> },
-                    { label: 'Last Schedule', dataKey: 'lastSchedule', width: 120, flexGrow: 0, cellRenderer: (ls) => <span className="text-gray-400">{ls ? <TimeAgo timestamp={ls} /> : '-'}</span> }
+                    { label: 'Last Schedule', dataKey: 'lastSchedule', width: 120, flexGrow: 0, cellRenderer: (ls) => <span className="text-gray-400">{ls ? <TimeAgo timestamp={ls} /> : '-'}</span> },
+                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
                 ]}
                 data={cronJobs}
                 onRowClick={(cj: any) => onResourceClick(cj, 'cronjob')}
@@ -454,6 +459,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={secrets}
                 onRowClick={(secret: any) => onResourceClick(secret, 'secret')}
                 searchQuery={searchQuery}
+                isLoading={secrets.length === 0 && !watcherReady}
             />
         );
     }
@@ -475,6 +481,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_pvcs}
                 onRowClick={(pvc: any) => onResourceClick(pvc, 'persistentvolumeclaim')}
                 searchQuery={searchQuery}
+                isLoading={_pvcs.length === 0 && !watcherReady}
             />
         );
     }
@@ -496,6 +503,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_pvs}
                 onRowClick={(pv: any) => onResourceClick(pv, 'persistentvolume')}
                 searchQuery={searchQuery}
+                isLoading={_pvs.length === 0 && !watcherReady}
             />
         );
     }

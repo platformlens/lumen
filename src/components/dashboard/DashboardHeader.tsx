@@ -89,7 +89,7 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
                     <Layers className="text-white" size={20} />
                 </div>
                 <div className="min-w-0">
-                    <h1 className="text-2xl font-bold text-white tracking-tight whitespace-nowrap truncate">
+                    <h1 className="font-bold text-white tracking-tight whitespace-nowrap truncate" style={{ fontSize: 'var(--lumen-heading-size)' }}>
                         {isCrdView ? currentCrdKind : getViewTitle(activeView)}
                     </h1>
                     <div className="flex items-center gap-2 text-sm text-gray-400 flex-wrap">

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { VirtualizedTable, IColumn } from '../../shared/VirtualizedTable';
 import { SkeletonLoader } from '../../shared/SkeletonLoader';
+import { useResourceSorting } from '../../../hooks/useResourceSorting';
 
 interface GenericResourceViewProps {
     title?: string; // Optional override, usually handled by header
@@ -22,13 +23,18 @@ const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
     columns,
     data,
     onRowClick,
-    sortConfig,
-    onSort,
+    sortConfig: externalSortConfig,
+    onSort: externalOnSort,
     viewKey = "resource-view",
     searchQuery = '',
     isLoading = false,
     isUpdating
 }) => {
+    // Use internal sorting when no external sort props are provided
+    const internalSorting = useResourceSorting();
+    const sortConfig = externalSortConfig !== undefined ? externalSortConfig : internalSorting.sortConfig;
+    const onSort = externalOnSort || internalSorting.handleSort;
+
     const pageVariants = {
         initial: { opacity: 0, y: 10 },
         in: { opacity: 1, y: 0 },
@@ -45,13 +51,17 @@ const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
         if (!searchQuery) return data;
         const lowerQuery = searchQuery.toLowerCase();
         return data.filter(item => {
-            // Check metadata name and namespace
             const name = item.metadata?.name?.toLowerCase() || item.name?.toLowerCase() || '';
             const namespace = item.metadata?.namespace?.toLowerCase() || item.namespace?.toLowerCase() || '';
-
             return name.includes(lowerQuery) || namespace.includes(lowerQuery);
         });
     }, [data, searchQuery]);
+
+    // Apply internal sorting when no external sort is provided
+    const sortedData = useMemo(() => {
+        if (externalSortConfig !== undefined) return filteredData;
+        return internalSorting.getSortedData(filteredData);
+    }, [filteredData, externalSortConfig, internalSorting]);
 
     return (
         <motion.div
@@ -75,11 +85,11 @@ const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
                 ) : (
                     <VirtualizedTable
                         columns={columns}
-                        data={filteredData}
+                        data={sortedData}
                         onRowClick={onRowClick}
                         sortConfig={sortConfig}
                         onSort={onSort}
-                        tableId={viewKey} // Use viewKey as unique table identifier for persistence
+                        tableId={viewKey}
                         isUpdating={isUpdating}
                     />
                 )}

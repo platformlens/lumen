@@ -2,6 +2,7 @@ import React from 'react';
 import { GenericResourceView } from './GenericResourceView';
 import { getDeploymentStatus } from '../../../utils/resource-utils';
 import { useResourceSorting } from '../../../hooks/useResourceSorting';
+import { TimeAgo } from '../../shared/TimeAgo';
 
 interface DeploymentsViewProps {
     deployments: any[];
@@ -37,7 +38,8 @@ const DeploymentsViewInner: React.FC<DeploymentsViewProps> = ({
                     </span>
                 );
             }
-        }
+        },
+        { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age: any) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
     ], []);
 
     return (

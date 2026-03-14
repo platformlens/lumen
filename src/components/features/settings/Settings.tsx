@@ -8,6 +8,21 @@ import { ToggleGroup } from '../../shared/ToggleGroup';
 import packageJson from '../../../../package.json';
 import logoUrl from '../../../assets/logo.png';
 
+const FONT_OPTIONS = [
+  { value: 'Monaco', label: 'Monaco', stack: "'Monaco', 'Menlo', 'Consolas', monospace" },
+  { value: 'Inter', label: 'Inter', stack: "'Inter', system-ui, -apple-system, sans-serif" },
+  { value: 'JetBrains Mono', label: 'JetBrains Mono', stack: "'JetBrains Mono', 'Fira Code', monospace" },
+  { value: 'Fira Code', label: 'Fira Code', stack: "'Fira Code', 'JetBrains Mono', monospace" },
+  { value: 'SF Mono', label: 'SF Mono', stack: "'SF Mono', 'Monaco', 'Menlo', monospace" },
+  { value: 'IBM Plex Mono', label: 'IBM Plex Mono', stack: "'IBM Plex Mono', 'Consolas', monospace" },
+  { value: 'Source Code Pro', label: 'Source Code Pro', stack: "'Source Code Pro', 'Menlo', monospace" },
+  { value: 'System Default', label: 'System Default', stack: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
+];
+
+const getFontStack = (family: string): string => {
+  return FONT_OPTIONS.find(f => f.value === family)?.stack ?? `'${family}', monospace`;
+};
+
 interface SettingsProps {
   activeSection?: string;
 }
@@ -57,6 +72,15 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const [editorFontSize, setEditorFontSize] = useState(14);
   const [editorWordWrap, setEditorWordWrap] = useState(true);
   const [terminalFontSize, setTerminalFontSize] = useState(13);
+  const [fontFamily, setFontFamily] = useState('Monaco');
+  const [sidebarFontSize, setSidebarFontSize] = useState(13);
+  const [pinnedFontSize, setPinnedFontSize] = useState(12);
+  const [headingSize, setHeadingSize] = useState(24);
+  const [tableFontSize, setTableFontSize] = useState(14);
+  const [zoomFactor, setZoomFactor] = useState(100);
+
+  // Date Format State
+  const [dateFormat, setDateFormat] = useState<string>('uk');
 
   // Context Engine State
   const [tokenBudget, setTokenBudget] = useState(2000);
@@ -76,6 +100,16 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
       setEditorFontSize(s.editorFontSize);
       setEditorWordWrap(s.editorWordWrap);
       setTerminalFontSize(s.terminalFontSize);
+      if (s.fontFamily) setFontFamily(s.fontFamily);
+      if (s.sidebarFontSize) setSidebarFontSize(s.sidebarFontSize);
+      if (s.pinnedFontSize) setPinnedFontSize(s.pinnedFontSize);
+      if (s.headingSize) setHeadingSize(s.headingSize);
+      if (s.tableFontSize) setTableFontSize(s.tableFontSize);
+      if (s.zoomFactor) setZoomFactor(s.zoomFactor);
+      if (s.dateFormat) {
+        setDateFormat(s.dateFormat);
+        try { localStorage.setItem('lumen_dateFormat', s.dateFormat); } catch { /* ignore */ }
+      }
     });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
@@ -255,7 +289,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
       window.k8s.settings.set('showSystemNamespaces', showSystemNamespaces),
       window.k8s.settings.set('enableNotifications', enableNotifications),
       window.k8s.settings.set('maxLogLines', maxLogLines),
+      window.k8s.settings.set('dateFormat', dateFormat),
     ]);
+    try { localStorage.setItem('lumen_dateFormat', dateFormat); } catch { /* ignore */ }
     showSavedFeedback();
   };
 
@@ -264,7 +300,17 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
       window.k8s.settings.set('editorFontSize', editorFontSize),
       window.k8s.settings.set('editorWordWrap', editorWordWrap),
       window.k8s.settings.set('terminalFontSize', terminalFontSize),
+      window.k8s.settings.set('fontFamily', fontFamily),
+      window.k8s.settings.set('sidebarFontSize', sidebarFontSize),
+      window.k8s.settings.set('pinnedFontSize', pinnedFontSize),
+      window.k8s.settings.set('headingSize', headingSize),
+      window.k8s.settings.set('tableFontSize', tableFontSize),
     ]);
+    document.documentElement.style.setProperty('--lumen-font-family', getFontStack(fontFamily));
+    document.documentElement.style.setProperty('--lumen-sidebar-font-size', `${sidebarFontSize}px`);
+    document.documentElement.style.setProperty('--lumen-pinned-font-size', `${pinnedFontSize}px`);
+    document.documentElement.style.setProperty('--lumen-heading-size', `${headingSize}px`);
+    document.documentElement.style.setProperty('--lumen-table-font-size', `${tableFontSize}px`);
     showSavedFeedback();
   };
 
@@ -336,7 +382,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     'settings-general': 'General',
     'settings-ai': 'AI Models',
     'settings-context': 'AI Context Engine',
-    'settings-editor': 'Editor & Terminal',
+    'settings-editor': 'Appearance',
     'settings-about': 'About',
   };
 
@@ -394,6 +440,18 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         </SettingRow>
         <SettingRow label="Max Log Lines" description="Maximum lines to keep in the log viewer buffer">
           <NumberInput value={maxLogLines} onChange={setMaxLogLines} min={100} max={10000} step={100} />
+        </SettingRow>
+        <SettingRow label="Date Format" description="Format used for dates older than 48 hours across all resource views">
+          <select
+            value={dateFormat}
+            onChange={(e) => setDateFormat(e.target.value)}
+            className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/50"
+          >
+            <option value="uk" className="bg-gray-900">UK (DD/MM/YYYY)</option>
+            <option value="eu" className="bg-gray-900">EU (DD.MM.YYYY)</option>
+            <option value="us" className="bg-gray-900">US (MM/DD/YYYY)</option>
+            <option value="iso" className="bg-gray-900">ISO (YYYY-MM-DD)</option>
+          </select>
         </SettingRow>
       </Section>
 
@@ -646,6 +704,105 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   const renderEditorSection = () => (
     <div className="space-y-8">
+      <Section title="Appearance" accent="bg-orange-500">
+        <SettingRow label="UI Font Family" description="Font used across the entire application interface">
+          <select
+            value={fontFamily}
+            onChange={(e) => setFontFamily(e.target.value)}
+            className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/50"
+          >
+            {FONT_OPTIONS.map(font => (
+              <option key={font.value} value={font.value} className="bg-gray-900" style={{ fontFamily: font.stack }}>
+                {font.label}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
+        <div className="bg-black/20 rounded-lg p-3 border border-white/5">
+          <div className="text-xs text-gray-500 mb-1">Preview</div>
+          <div className="text-sm text-gray-300" style={{ fontFamily: getFontStack(fontFamily) }}>
+            The quick brown fox jumps over the lazy dog. 0123456789
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Sizing" accent="bg-orange-500">
+        <SettingRow label="UI Zoom" description="Scale the entire interface (80–120%). Applied instantly.">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={80}
+              max={120}
+              step={5}
+              value={zoomFactor}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setZoomFactor(val);
+                window.k8s.settings.setZoomFactor(val);
+              }}
+              className="w-32 accent-orange-500"
+            />
+            <span className="text-sm text-white font-mono w-12 text-right">{zoomFactor}%</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="Sidebar Font Size" description="Font size for navigation items in the sidebar (10–16px)">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={10}
+              max={16}
+              step={1}
+              value={sidebarFontSize}
+              onChange={(e) => setSidebarFontSize(Number(e.target.value))}
+              className="w-32 accent-orange-500"
+            />
+            <span className="text-sm text-white font-mono w-10 text-right">{sidebarFontSize}px</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="Pinned Clusters Font Size" description="Font size for pinned cluster badges in the title bar (9–14px)">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={9}
+              max={14}
+              step={1}
+              value={pinnedFontSize}
+              onChange={(e) => setPinnedFontSize(Number(e.target.value))}
+              className="w-32 accent-orange-500"
+            />
+            <span className="text-sm text-white font-mono w-10 text-right">{pinnedFontSize}px</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="Heading Size" description="Font size for page and section headings (18–32px)">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={18}
+              max={32}
+              step={1}
+              value={headingSize}
+              onChange={(e) => setHeadingSize(Number(e.target.value))}
+              className="w-32 accent-orange-500"
+            />
+            <span className="text-sm text-white font-mono w-10 text-right">{headingSize}px</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="Table Font Size" description="Font size for resource table rows and cells (11–16px)">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={11}
+              max={16}
+              step={1}
+              value={tableFontSize}
+              onChange={(e) => setTableFontSize(Number(e.target.value))}
+              className="w-32 accent-orange-500"
+            />
+            <span className="text-sm text-white font-mono w-10 text-right">{tableFontSize}px</span>
+          </div>
+        </SettingRow>
+      </Section>
+
       <Section title="YAML Editor" accent="bg-yellow-500">
         <SettingRow label="Font Size" description="Font size for the Monaco YAML editor">
           <div className="flex items-center gap-2">
@@ -805,12 +962,12 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
             <SettingsIcon className="text-white" size={20} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">{sectionTitles[activeSection] || 'Settings'}</h1>
+            <h1 className="font-bold text-white tracking-tight" style={{ fontSize: 'var(--lumen-heading-size)' }}>{sectionTitles[activeSection] || 'Settings'}</h1>
             <div className="text-sm text-gray-400">
               {activeSection === 'settings-general' && 'Kubeconfig, cluster defaults, and app behavior'}
               {activeSection === 'settings-ai' && 'Configure AI providers and model selection'}
               {activeSection === 'settings-context' && 'Token budget, view summaries, and anomaly detection'}
-              {activeSection === 'settings-editor' && 'YAML editor and terminal preferences'}
+              {activeSection === 'settings-editor' && 'Font, size, YAML editor, and terminal preferences'}
               {activeSection === 'settings-about' && 'Version info and keyboard shortcuts'}
             </div>
           </div>

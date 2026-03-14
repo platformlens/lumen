@@ -448,6 +448,7 @@ export class K8sService {
                 namespace: dep.metadata?.namespace,
                 replicas: dep.spec?.replicas,
                 availableReplicas: dep.status?.availableReplicas,
+                age: dep.metadata?.creationTimestamp,
                 status: dep.status,
                 metadata: dep.metadata,
                 spec: dep.spec
@@ -836,6 +837,7 @@ export class K8sService {
             desired: rs.spec?.replicas,
             current: rs.status?.replicas,
             ready: rs.status?.readyReplicas,
+            age: rs.metadata?.creationTimestamp,
             metadata: rs.metadata,
             spec: rs.spec
         }));

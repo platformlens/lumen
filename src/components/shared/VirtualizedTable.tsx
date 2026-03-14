@@ -46,6 +46,7 @@ const tableStyles = `
     outline: none;
     display: flex;
     align-items: center;
+    font-size: var(--lumen-table-font-size, 14px);
   }
   
   /* Compact column (reduced padding for checkboxes etc.) */

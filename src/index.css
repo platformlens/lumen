@@ -3,7 +3,12 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --lumen-font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  --lumen-sidebar-font-size: 13px;
+  --lumen-pinned-font-size: 12px;
+  --lumen-heading-size: 24px;
+  --lumen-table-font-size: 12px;
+  font-family: var(--lumen-font-family);
   line-height: 1.5;
   font-weight: 400;
 

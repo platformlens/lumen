@@ -93,6 +93,16 @@ let lastDeploymentWatchScope = '';
 let podBatchBuffer: WatcherBatchBuffer | null = null;
 let deploymentBatchBuffer: WatcherBatchBuffer | null = null;
 let nodeBatchBuffer: WatcherBatchBuffer | null = null;
+// Per-resource-type batch buffers for generic watcher resources that have worker transforms
+const genericBatchBuffers = new Map<string, WatcherBatchBuffer>();
+const genericWatchGenerations = new Map<string, number>();
+// Map generic watch keys to worker resourceType values
+const WATCH_KEY_TO_WORKER_TYPE: Record<string, string> = {
+  replicasets: 'replicaset',
+  secrets: 'secret',
+  persistentvolumes: 'persistentvolume',
+  persistentvolumeclaims: 'persistentvolumeclaim',
+};
 const chatSessionManager = new ChatSessionManager(store);
 
 // Spawn resource transform worker once at startup
@@ -1088,13 +1098,58 @@ function registerIpcHandlers() {
   })
 
   ipcMain.on('k8s:watchGenericResource', (event, contextName, resourceType, apiPath) => {
-    k8sService.startGenericWatch(contextName, resourceType, apiPath, (type, resource) => {
-      event.sender.send('k8s:genericResourceChange', resourceType, type, resource);
-    });
+    // Clean up any existing batch buffer for this resource type
+    const existingBuffer = genericBatchBuffers.get(resourceType);
+    if (existingBuffer) { existingBuffer.destroy(); genericBatchBuffers.delete(resourceType); }
+
+    const workerType = WATCH_KEY_TO_WORKER_TYPE[resourceType];
+
+    if (workerType) {
+      // Resource types with worker transforms get batch buffering + off-thread transformation
+      const gen = (genericWatchGenerations.get(resourceType) ?? 0) + 1;
+      genericWatchGenerations.set(resourceType, gen);
+
+      const batchBuffer = new WatcherBatchBuffer({
+        flushIntervalMs: 150,
+        onFlush: async (events) => {
+          if (genericWatchGenerations.get(resourceType) !== gen) return;
+          try {
+            const request: TransformRequest = {
+              id: `generic-${resourceType}-${++transformRequestId}`,
+              resourceType: workerType as TransformRequest['resourceType'],
+              events,
+            };
+            const response = await sendToWorker(request);
+            if (response.error) console.warn(`[Worker] ${resourceType} transform warning:`, response.error);
+            if (response.events.length > 0 && genericWatchGenerations.get(resourceType) === gen) {
+              event.sender.send('k8s:genericResourceBatchChange', resourceType, response.events.map(e => ({ type: e.type, resource: e.resource })));
+            }
+          } catch (err) {
+            console.error(`[Worker] ${resourceType} batch transform error:`, err);
+          }
+        },
+      });
+      genericBatchBuffers.set(resourceType, batchBuffer);
+
+      k8sService.startGenericWatch(contextName, resourceType, apiPath, (type, resource) => {
+        if (genericWatchGenerations.get(resourceType) !== gen) return;
+        // Still send individual raw events for backward compatibility
+        event.sender.send('k8s:genericResourceChange', resourceType, type, resource);
+        // Push raw event to batch buffer for worker transform
+        batchBuffer.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource });
+      });
+    } else {
+      // All other resource types: pass through raw (existing behavior)
+      k8sService.startGenericWatch(contextName, resourceType, apiPath, (type, resource) => {
+        event.sender.send('k8s:genericResourceChange', resourceType, type, resource);
+      });
+    }
   })
 
   ipcMain.on('k8s:stopWatchGenericResource', (_, resourceType) => {
     k8sService.stopGenericWatch(resourceType);
+    const buffer = genericBatchBuffers.get(resourceType);
+    if (buffer) { buffer.destroy(); genericBatchBuffers.delete(resourceType); }
   })
 
   ipcMain.on('k8s:streamPodLogs', (event, contextName, namespace, name, containerName) => {
@@ -1503,7 +1558,22 @@ function registerIpcHandlers() {
       editorFontSize: (store.get('settings_editorFontSize') as number) ?? 14,
       editorWordWrap: (store.get('settings_editorWordWrap') as boolean) ?? true,
       terminalFontSize: (store.get('settings_terminalFontSize') as number) ?? 13,
+      fontFamily: (store.get('settings_fontFamily') as string) ?? 'Monaco',
+      tableFontSize: (store.get('settings_tableFontSize') as number) ?? 14,
+      sidebarFontSize: (store.get('settings_sidebarFontSize') as number) ?? 13,
+      pinnedFontSize: (store.get('settings_pinnedFontSize') as number) ?? 12,
+      headingSize: (store.get('settings_headingSize') as number) ?? 24,
+      dateFormat: (store.get('settings_dateFormat') as string) ?? 'uk',
+      zoomFactor: (store.get('settings_zoomFactor') as number) ?? 100,
     };
+  });
+
+  ipcMain.handle('settings:setZoomFactor', async (_, factor: number) => {
+    store.set('settings_zoomFactor', factor);
+    if (win) {
+      win.webContents.setZoomFactor(factor / 100);
+    }
+    return true;
   });
 
   ipcMain.handle('settings:getKubeconfigPath', async () => {
@@ -1683,6 +1753,11 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     if (win) {
       win.webContents.send('main-process-message', (new Date).toLocaleString())
+      // Apply saved zoom factor
+      const savedZoom = (store.get('settings_zoomFactor') as number) ?? 100;
+      if (savedZoom !== 100) {
+        win.webContents.setZoomFactor(savedZoom / 100);
+      }
     }
   })
 

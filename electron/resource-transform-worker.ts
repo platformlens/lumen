@@ -15,7 +15,7 @@ type K8sObject = Record<string, unknown>;
 
 export interface TransformRequest {
     id: string;
-    resourceType: 'pod' | 'deployment' | 'node';
+    resourceType: 'pod' | 'deployment' | 'node' | 'replicaset' | 'secret' | 'persistentvolume' | 'persistentvolumeclaim';
     events: BatchEvent<K8sObject>[];
 }
 
@@ -93,6 +93,7 @@ function transformDeployment(apiObj: K8sObject): K8sObject {
         namespace: (prop(metadata, 'namespace') as string) || '',
         replicas: (prop(spec, 'replicas') as number) ?? 0,
         availableReplicas: (prop(status, 'availableReplicas') as number) ?? 0,
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
         status,
         metadata,
         spec,
@@ -131,6 +132,90 @@ function transformNode(apiObj: K8sObject): K8sObject {
     };
 }
 
+// --- ReplicaSet Transformation ---
+
+function transformReplicaSet(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const status = (prop(apiObj, 'status') ?? {}) as K8sObject;
+    const spec = (prop(apiObj, 'spec') ?? {}) as K8sObject;
+
+    return {
+        name: (prop(metadata, 'name') as string) || '',
+        namespace: (prop(metadata, 'namespace') as string) || '',
+        desired: (prop(spec, 'replicas') as number) ?? 0,
+        current: (prop(status, 'replicas') as number) ?? 0,
+        ready: (prop(status, 'readyReplicas') as number) ?? 0,
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
+        metadata,
+        spec,
+    };
+}
+
+// --- Secret Transformation ---
+
+function transformSecret(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const data = (prop(apiObj, 'data') ?? {}) as Record<string, unknown>;
+
+    return {
+        name: (prop(metadata, 'name') as string) || '',
+        namespace: (prop(metadata, 'namespace') as string) || '',
+        type: (prop(apiObj, 'type') as string) || '',
+        data: Object.keys(data).length,
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
+        metadata,
+    };
+}
+
+// --- PersistentVolume Transformation ---
+
+function transformPersistentVolume(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const spec = (prop(apiObj, 'spec') ?? {}) as K8sObject;
+    const status = (prop(apiObj, 'status') ?? {}) as K8sObject;
+    const capacity = (prop(spec, 'capacity') ?? {}) as K8sObject;
+    const claimRef = (prop(spec, 'claimRef') ?? null) as K8sObject | null;
+
+    return {
+        name: (prop(metadata, 'name') as string) || '',
+        capacity: (prop(capacity, 'storage') as string) || '',
+        accessModes: ((prop(spec, 'accessModes') ?? []) as string[]).join(', '),
+        reclaimPolicy: (prop(spec, 'persistentVolumeReclaimPolicy') as string) || '',
+        status: (prop(status, 'phase') as string) || '',
+        claim: claimRef
+            ? `${(prop(claimRef, 'namespace') as string) || ''}/${(prop(claimRef, 'name') as string) || ''}`
+            : '',
+        storageClass: (prop(spec, 'storageClassName') as string) || '',
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
+        metadata,
+        spec,
+        statusRaw: status,
+    };
+}
+
+// --- PersistentVolumeClaim Transformation ---
+
+function transformPersistentVolumeClaim(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const spec = (prop(apiObj, 'spec') ?? {}) as K8sObject;
+    const status = (prop(apiObj, 'status') ?? {}) as K8sObject;
+    const statusCapacity = (prop(status, 'capacity') ?? {}) as K8sObject;
+
+    return {
+        name: (prop(metadata, 'name') as string) || '',
+        namespace: (prop(metadata, 'namespace') as string) || '',
+        status: (prop(status, 'phase') as string) || '',
+        volume: (prop(spec, 'volumeName') as string) || '',
+        capacity: (prop(statusCapacity, 'storage') as string) || '',
+        accessModes: ((prop(spec, 'accessModes') ?? []) as string[]).join(', '),
+        storageClass: (prop(spec, 'storageClassName') as string) || '',
+        age: (prop(metadata, 'creationTimestamp') as string) || '',
+        metadata,
+        spec,
+        statusRaw: status,
+    };
+}
+
 // --- Request Handler ---
 
 function handleRequest(request: TransformRequest): TransformResponse {
@@ -147,6 +232,14 @@ function handleRequest(request: TransformRequest): TransformResponse {
                 transformed = transformDeployment(event.resource);
             } else if (resourceType === 'node') {
                 transformed = transformNode(event.resource);
+            } else if (resourceType === 'replicaset') {
+                transformed = transformReplicaSet(event.resource);
+            } else if (resourceType === 'secret') {
+                transformed = transformSecret(event.resource);
+            } else if (resourceType === 'persistentvolume') {
+                transformed = transformPersistentVolume(event.resource);
+            } else if (resourceType === 'persistentvolumeclaim') {
+                transformed = transformPersistentVolumeClaim(event.resource);
             } else {
                 // Unknown resource type — pass through as-is
                 transformed = event.resource;
