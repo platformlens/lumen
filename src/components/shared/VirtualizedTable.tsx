@@ -48,6 +48,13 @@ const tableStyles = `
     align-items: center;
   }
   
+  /* Compact column (reduced padding for checkboxes etc.) */
+  .ReactVirtualized__Table__headerColumn.compact-column,
+  .ReactVirtualized__Table__rowColumn.compact-column {
+    padding: 0.5rem 0.5rem;
+    justify-content: center;
+  }
+
   /* Column resize handle */
   .column-resize-handle {
     position: absolute;
@@ -98,6 +105,8 @@ export interface IColumn {
     flexGrow?: number; // If set, column expands to fill space
     sortable?: boolean;
     cellRenderer?: (cellData: any, rowData: any) => React.ReactNode;
+    headerRenderer?: () => React.ReactNode;
+    compact?: boolean; // If true, reduces cell padding (useful for checkbox columns)
 }
 
 interface VirtualizedTableProps {
@@ -109,9 +118,10 @@ interface VirtualizedTableProps {
     rowHeight?: number;
     headerHeight?: number;
     tableId?: string; // Unique identifier for persisting column widths
+    isUpdating?: boolean; // Shows spinner in top-right corner during data refresh
 }
 
-export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
+const VirtualizedTableInner: React.FC<VirtualizedTableProps> = ({
     data,
     columns,
     onRowClick,
@@ -119,7 +129,8 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
     onSort,
     rowHeight = 52, // Slightly increased to standard comfortable touch/click size (was ~53px in HTML table with padding)
     headerHeight = 40,
-    tableId
+    tableId,
+    isUpdating: _isUpdating,
 }) => {
     // Ref to the Table component to force recompute on resize
     const tableRef = useRef<Table>(null);
@@ -258,7 +269,8 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
     };
 
     return (
-        <div className="flex-1 h-full w-full min-h-[400px] flex flex-col bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden virtualized-table-container-outer">
+        <div className="relative flex-1 h-full w-full min-h-[400px] flex flex-col bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden virtualized-table-container-outer">
+
             <style>{tableStyles}</style>
             <div className="flex-1 virtualized-table-container overflow-x-auto overflow-y-hidden">
                 <AutoSizer>
@@ -295,7 +307,9 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
                                         dataKey={col.dataKey}
                                         width={columnWidths[col.dataKey] || col.width || 100}
                                         flexGrow={col.flexGrow ?? 0} // Default to 0 if not specified to respect manual widths more strictly when scrolling
-                                        headerRenderer={headerRenderer}
+                                        className={col.compact ? 'compact-column' : ''}
+                                        headerClassName={col.compact ? 'compact-column' : ''}
+                                        headerRenderer={col.headerRenderer ? () => col.headerRenderer!() : headerRenderer}
                                         cellRenderer={({ cellData, rowData }) => {
                                             if (col.cellRenderer) {
                                                 return col.cellRenderer(cellData, rowData);
@@ -312,3 +326,5 @@ export const VirtualizedTable: React.FC<VirtualizedTableProps> = ({
         </div>
     );
 };
+
+export const VirtualizedTable = React.memo(VirtualizedTableInner);

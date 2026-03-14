@@ -32,6 +32,8 @@ interface DrawerDetailsRendererProps {
     onShowTopology?: () => void;
     onOpenYaml?: (resource: any) => void;
     onTriggerCronJob?: () => void;
+    onCordonDrain?: (nodeName: string) => void;
+    onDeleteNode?: (nodeName: string) => void;
 }
 
 export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
@@ -43,7 +45,9 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
     onOpenLogs,
     onShowTopology,
     onOpenYaml,
-    onTriggerCronJob
+    onTriggerCronJob,
+    onCordonDrain,
+    onDeleteNode
 }) => {
     if (!selectedResource || !detailedResource) return null;
 
@@ -153,6 +157,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                     node={detailedResource}
                     clusterName={clusterName}
                     onNavigate={onNavigate}
+                    onCordonDrain={onCordonDrain}
+                    onDeleteNode={onDeleteNode}
                 />
             );
         case 'namespace':

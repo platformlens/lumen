@@ -16,6 +16,9 @@ import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesComman
 import { streamText } from 'ai';
 import dotenv from 'dotenv'
 import Store from 'electron-store'
+import { Worker } from 'worker_threads'
+import { WatcherBatchBuffer } from './watcher-batch-buffer'
+import type { TransformRequest, TransformResponse } from './resource-transform-worker'
 
 // Fix PATH for MacOS to find aws/kubectl etc
 fixPath();
@@ -90,7 +93,45 @@ let nodeWatchGeneration = 0;
 // Track last-watched namespace scope per kind to avoid unnecessary clearKind calls
 let lastPodWatchScope = '';
 let lastDeploymentWatchScope = '';
+let podBatchBuffer: WatcherBatchBuffer | null = null;
+let deploymentBatchBuffer: WatcherBatchBuffer | null = null;
+let nodeBatchBuffer: WatcherBatchBuffer | null = null;
 const chatSessionManager = new ChatSessionManager(store);
+
+// Spawn resource transform worker once at startup
+const workerPath = path.join(__dirname, 'resource-transform-worker.js');
+let transformWorker: Worker | null = null;
+const pendingTransforms = new Map<string, (response: TransformResponse) => void>();
+let transformRequestId = 0;
+
+function getOrCreateWorker(): Worker {
+  if (!transformWorker) {
+    transformWorker = new Worker(workerPath);
+    transformWorker.on('message', (response: TransformResponse) => {
+      const resolve = pendingTransforms.get(response.id);
+      if (resolve) {
+        pendingTransforms.delete(response.id);
+        resolve(response);
+      }
+    });
+    transformWorker.on('error', (err) => {
+      console.error('[Worker] Transform worker error:', err);
+      transformWorker = null;
+    });
+    transformWorker.on('exit', (code) => {
+      if (code !== 0) console.error('[Worker] Transform worker exited with code', code);
+      transformWorker = null;
+    });
+  }
+  return transformWorker;
+}
+
+function sendToWorker(request: TransformRequest): Promise<TransformResponse> {
+  return new Promise((resolve) => {
+    pendingTransforms.set(request.id, resolve);
+    getOrCreateWorker().postMessage(request);
+  });
+}
 
 function registerIpcHandlers() {
   // --- AWS Handlers ---
@@ -333,6 +374,10 @@ function registerIpcHandlers() {
       console.error('Error in k8s:getNode:', error);
       throw error;
     }
+  });
+
+  ipcMain.handle('k8s:deleteNode', async (_event, contextName, name) => {
+    return k8sService.deleteNode(contextName, name);
   });
 
   ipcMain.handle('k8s:getCRDs', (_, contextName) => {
@@ -866,68 +911,164 @@ function registerIpcHandlers() {
   })
 
   ipcMain.on('k8s:watchPods', (event, contextName, namespaces) => {
-    // We use ipcMain.on for start watch as it's not a single promise return 
-    // but starts a process that emits events back.
-    // Stop existing watcher FIRST to prevent stale events from re-populating the store
     k8sService.stopPodWatch();
-    // Only clear the store if the namespace scope actually changed
+    if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
     const newScope = Array.isArray(namespaces) ? namespaces.sort().join(',') : '';
     if (newScope !== lastPodWatchScope) {
       contextEngine.clearKind('Pod');
       lastPodWatchScope = newScope;
     }
-    // Increment generation so any lingering callbacks from the old watcher are ignored
     const gen = ++podWatchGeneration;
-    k8sService.startPodWatch(contextName, namespaces, (type, pod) => {
-      // Ignore events from a stale watcher generation
+
+    podBatchBuffer = new WatcherBatchBuffer({
+      flushIntervalMs: 150,
+      onFlush: async (events) => {
+        if (gen !== podWatchGeneration) return;
+        try {
+          const request: TransformRequest = {
+            id: `pod-${++transformRequestId}`,
+            resourceType: 'pod',
+            events,
+          };
+          const response = await sendToWorker(request);
+          if (response.error) console.warn('[Worker] Pod transform warning:', response.error);
+          if (response.events.length > 0 && gen === podWatchGeneration) {
+            event.sender.send('k8s:podBatchChange', response.events.map(e => ({ type: e.type, pod: e.resource })));
+          }
+        } catch (err) {
+          console.error('[Worker] Pod batch transform error:', err);
+        }
+      },
+    });
+
+    k8sService.startPodWatch(contextName, namespaces, (type, rawPod) => {
       if (gen !== podWatchGeneration) return;
-      // Feed raw resource data to ContextEngine
       try {
-        const rawPod = { metadata: pod.metadata, status: pod.rawStatus, spec: pod.spec };
         contextEngine.handleResourceEvent('Pod', type as 'ADDED' | 'MODIFIED' | 'DELETED', rawPod);
       } catch (err) {
         console.error('[ContextEngine] Error processing pod event:', err);
       }
-      event.sender.send('k8s:podChange', type, pod);
+      // Backward compatibility: send individual transformed events
+      const containerStatuses = rawPod.status?.containerStatuses || [];
+      const initContainerStatuses = rawPod.status?.initContainerStatuses || [];
+      const allStatuses = [...initContainerStatuses, ...containerStatuses];
+      const phase = rawPod.metadata?.deletionTimestamp ? 'Terminating' : (rawPod.status?.phase || 'Unknown');
+      const transformedPod = {
+        name: rawPod.metadata?.name,
+        namespace: rawPod.metadata?.namespace,
+        status: phase,
+        restarts: containerStatuses.reduce((acc: number, c: any) => acc + (c?.restartCount || 0), 0),
+        age: rawPod.metadata?.creationTimestamp,
+        containers: allStatuses.map((c: any) => ({
+          name: c?.name,
+          state: c?.state?.running ? 'running' : (c?.state?.waiting ? 'waiting' : 'terminated'),
+          ready: c?.ready,
+          image: c?.image,
+          restartCount: c?.restartCount
+        })),
+        metadata: rawPod.metadata,
+        spec: rawPod.spec,
+        node: rawPod.spec?.nodeName,
+        rawStatus: rawPod.status,
+      };
+      event.sender.send('k8s:podChange', type, transformedPod);
+      // Push RAW event to batch buffer (worker will transform)
+      podBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: rawPod });
     });
   })
 
   ipcMain.on('k8s:stopWatchPods', () => {
     k8sService.stopPodWatch();
+    if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
   })
 
   ipcMain.on('k8s:watchDeployments', (event, contextName, namespaces) => {
-    // Stop existing watcher FIRST to prevent stale events from re-populating the store
     k8sService.stopDeploymentWatch();
-    // Only clear the store if the namespace scope actually changed
+    if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
     const newScope = Array.isArray(namespaces) ? namespaces.sort().join(',') : '';
     if (newScope !== lastDeploymentWatchScope) {
       contextEngine.clearKind('Deployment');
       lastDeploymentWatchScope = newScope;
     }
     const gen = ++deploymentWatchGeneration;
-    k8sService.startDeploymentWatch(contextName, namespaces, (type, deployment) => {
+
+    deploymentBatchBuffer = new WatcherBatchBuffer({
+      flushIntervalMs: 150,
+      onFlush: async (events) => {
+        if (gen !== deploymentWatchGeneration) return;
+        try {
+          const request: TransformRequest = {
+            id: `dep-${++transformRequestId}`,
+            resourceType: 'deployment',
+            events,
+          };
+          const response = await sendToWorker(request);
+          if (response.error) console.warn('[Worker] Deployment transform warning:', response.error);
+          if (response.events.length > 0 && gen === deploymentWatchGeneration) {
+            event.sender.send('k8s:deploymentBatchChange', response.events.map(e => ({ type: e.type, deployment: e.resource })));
+          }
+        } catch (err) {
+          console.error('[Worker] Deployment batch transform error:', err);
+        }
+      },
+    });
+
+    k8sService.startDeploymentWatch(contextName, namespaces, (type, rawDep) => {
       if (gen !== deploymentWatchGeneration) return;
-      // Feed raw resource data to ContextEngine
       try {
-        const rawDep = { metadata: deployment.metadata, status: deployment.status, spec: deployment.spec };
         contextEngine.handleResourceEvent('Deployment', type as 'ADDED' | 'MODIFIED' | 'DELETED', rawDep);
       } catch (err) {
         console.error('[ContextEngine] Error processing deployment event:', err);
       }
-      event.sender.send('k8s:deploymentChange', type, deployment);
+      // Backward compatibility: send individual transformed events
+      const transformedDep = {
+        name: rawDep.metadata?.name,
+        namespace: rawDep.metadata?.namespace,
+        replicas: rawDep.spec?.replicas,
+        availableReplicas: rawDep.status?.availableReplicas,
+        status: rawDep.status,
+        metadata: rawDep.metadata,
+        spec: rawDep.spec
+      };
+      event.sender.send('k8s:deploymentChange', type, transformedDep);
+      // Push RAW event to batch buffer (worker will transform)
+      deploymentBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: rawDep });
     });
   })
 
   ipcMain.on('k8s:stopWatchDeployments', () => {
     k8sService.stopDeploymentWatch();
+    if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
   })
 
   ipcMain.on('k8s:watchNodes', (event, contextName) => {
     // Stop existing watcher FIRST to prevent stale events from re-populating the store
     k8sService.stopNodeWatch();
+    if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
     contextEngine.clearKind('Node');
     const gen = ++nodeWatchGeneration;
+
+    nodeBatchBuffer = new WatcherBatchBuffer({
+      flushIntervalMs: 150,
+      onFlush: async (events) => {
+        if (gen !== nodeWatchGeneration) return;
+        try {
+          const request: TransformRequest = {
+            id: `node-${++transformRequestId}`,
+            resourceType: 'node',
+            events,
+          };
+          const response = await sendToWorker(request);
+          if (response.error) console.warn('[Worker] Node transform warning:', response.error);
+          if (response.events.length > 0 && gen === nodeWatchGeneration) {
+            event.sender.send('k8s:nodeBatchChange', response.events.map(e => ({ type: e.type, node: e.resource })));
+          }
+        } catch (err) {
+          console.error('[Worker] Node batch transform error:', err);
+        }
+      },
+    });
+
     k8sService.startNodeWatch(contextName, (type, node) => {
       if (gen !== nodeWatchGeneration) return;
       // Feed raw resource data to ContextEngine
@@ -937,12 +1078,16 @@ function registerIpcHandlers() {
       } catch (err) {
         console.error('[ContextEngine] Error processing node event:', err);
       }
+      // Backward compatibility: send individual events
       event.sender.send('k8s:nodeChange', type, node);
+      // Push to batch buffer for worker transform
+      nodeBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: { metadata: node.metadata, status: node.statusObj, spec: node.spec } });
     });
   })
 
   ipcMain.on('k8s:stopWatchNodes', () => {
     k8sService.stopNodeWatch();
+    if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
   })
 
   ipcMain.on('k8s:watchGenericResource', (event, contextName, resourceType, apiPath) => {

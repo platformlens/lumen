@@ -14,9 +14,10 @@ interface GenericResourceViewProps {
     viewKey?: string; // For motion key
     searchQuery?: string;
     isLoading?: boolean;
+    isUpdating?: boolean;
 }
 
-export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
+const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
     description,
     columns,
     data,
@@ -25,7 +26,8 @@ export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
     onSort,
     viewKey = "resource-view",
     searchQuery = '',
-    isLoading = false
+    isLoading = false,
+    isUpdating
 }) => {
     const pageVariants = {
         initial: { opacity: 0, y: 10 },
@@ -62,8 +64,9 @@ export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
             className="mb-8 flex flex-col h-full"
         >
             {description && (
-                <p className="text-sm text-gray-400 mb-4 flex-none">
-                    {description}
+                <p className="text-sm text-gray-400 mb-4 flex-none flex items-center justify-between">
+                    <span>{description}</span>
+                    {isUpdating && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />}
                 </p>
             )}
             <div className="flex-1 min-h-0">
@@ -77,9 +80,12 @@ export const GenericResourceView: React.FC<GenericResourceViewProps> = ({
                         sortConfig={sortConfig}
                         onSort={onSort}
                         tableId={viewKey} // Use viewKey as unique table identifier for persistence
+                        isUpdating={isUpdating}
                     />
                 )}
             </div>
         </motion.div>
     );
 };
+
+export const GenericResourceView = React.memo(GenericResourceViewInner);

@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { VirtualizedTable, IColumn } from '../../shared/VirtualizedTable';
-import { Server, Zap, AlertCircle, CheckCircle, BarChart2 } from 'lucide-react';
+import { Server, Zap, AlertCircle, CheckCircle, BarChart2, Shield, Cpu, MemoryStick } from 'lucide-react';
 import { getNodeProviderInfo } from '../../../utils/cluster-utils';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { StatusBadge } from '../../shared/StatusBadge';
+import { Tooltip as LumenTooltip } from '../../shared/Tooltip';
 import {
     BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
     PieChart, Pie, Cell
@@ -151,6 +152,10 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
                     aValue = getNodeProviderInfo(a).isSpot ? 1 : 0;
                     bValue = getNodeProviderInfo(b).isSpot ? 1 : 0;
                     break;
+                case 'taints':
+                    aValue = (a.spec?.taints || []).length;
+                    bValue = (b.spec?.taints || []).length;
+                    break;
                 case 'cpuUtil':
                     {
                         const aUtil = nodeUtilization.get(a.metadata?.name || a.name);
@@ -234,6 +239,9 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
         let ready = 0;
         let notReady = 0;
 
+        let totalCpuMillis = 0;
+        let totalMemoryBytes = 0;
+
         const zoneMap = new Map<string, number>();
         const typeMap = new Map<string, number>();
 
@@ -245,6 +253,14 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
             const isReady = node.status === 'Ready';
             if (isReady) ready++;
             else notReady++;
+
+            // Accumulate cluster totals
+            const nodeName = node.metadata?.name || node.name;
+            const util = nodeUtilization.get(nodeName);
+            if (util) {
+                totalCpuMillis += util.cpuCapacity;
+                totalMemoryBytes += util.memoryCapacity;
+            }
 
             // Zone Aggregation
             const zone = info.zone || 'Unknown';
@@ -270,10 +286,10 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
             .slice(0, 10); // Top 10
 
         return {
-            stats: { onDemand, spot, ready, notReady },
+            stats: { onDemand, spot, ready, notReady, totalCpuMillis, totalMemoryBytes },
             chartData: { capacity: capacityData, zones: zoneData, types: typeData }
         };
-    }, [sortedNodes]);
+    }, [sortedNodes, nodeUtilization]);
 
     const columns: IColumn[] = [
         {
@@ -282,7 +298,18 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
             sortable: true,
             flexGrow: 1.2,
             width: 180,
-            cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span>
+            cellRenderer: (name, node) => {
+                const isReady = node.status === 'Ready';
+                const taints: any[] = node.spec?.taints || [];
+                const isCordoned = taints.some((t: any) => t.key === 'node.kubernetes.io/unschedulable');
+                const dotColor = !isReady ? 'bg-red-400' : isCordoned ? 'bg-yellow-400' : 'bg-green-400';
+                return (
+                    <span className="flex items-center gap-2 font-medium text-gray-200">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                        {name}
+                    </span>
+                );
+            }
         },
         {
             label: 'Status',
@@ -353,6 +380,36 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
                         }`}>
                         {info.capacityType}
                     </span>
+                );
+            }
+        },
+        {
+            label: 'Taints',
+            dataKey: 'taints',
+            sortable: true,
+            width: 80,
+            cellRenderer: (_, node) => {
+                const taints: any[] = node.spec?.taints || [];
+                if (taints.length === 0) {
+                    return <span className="text-gray-600 text-xs">None</span>;
+                }
+                const tooltipContent = (
+                    <div className="flex flex-col gap-1 max-w-xs">
+                        {taints.map((t: any, i: number) => (
+                            <div key={i} className="flex items-center gap-1.5 text-xs">
+                                <span className="text-red-300 font-medium">{t.effect}</span>
+                                <span className="text-gray-400">{t.key}{t.value ? `=${t.value}` : ''}</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+                return (
+                    <LumenTooltip content={tooltipContent} placement="top">
+                        <span className="flex items-center gap-1 cursor-default">
+                            <Shield size={12} className="text-red-400" />
+                            <span className="text-red-400 text-xs font-medium">{taints.length}</span>
+                        </span>
+                    </LumenTooltip>
                 );
             }
         },
@@ -437,72 +494,101 @@ export const NodesView: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, s
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="grid grid-cols-3 gap-4 mb-6 flex-none"
+                    className="flex flex-col gap-4 mb-6 flex-none"
                 >
-                    {/* Capacity Distribution */}
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
-                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Capacity Distribution</h4>
-                        <div className="flex-1 w-full min-h-0">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={chartData.capacity}
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={40}
-                                        outerRadius={70}
-                                        paddingAngle={5}
-                                        dataKey="value"
-                                    >
-                                        {chartData.capacity.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.name === 'Spot' ? '#a855f7' : '#3b82f6'} stroke="rgba(0,0,0,0.2)" />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip
-                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
-                                        itemStyle={{ color: '#E5E7EB' }}
-                                    />
-                                    <Legend />
-                                </PieChart>
-                            </ResponsiveContainer>
+                    {/* Cluster Totals */}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-4">
+                            <div className="p-3 rounded-lg bg-blue-500/10">
+                                <Cpu size={20} className="text-blue-400" />
+                            </div>
+                            <div>
+                                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total CPU</span>
+                                <div className="text-2xl font-bold text-white">
+                                    {(stats.totalCpuMillis / 1000).toFixed(1)} <span className="text-sm font-normal text-gray-400">cores</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center gap-4">
+                            <div className="p-3 rounded-lg bg-purple-500/10">
+                                <MemoryStick size={20} className="text-purple-400" />
+                            </div>
+                            <div>
+                                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Memory</span>
+                                <div className="text-2xl font-bold text-white">
+                                    {(stats.totalMemoryBytes / (1024 * 1024 * 1024)).toFixed(1)} <span className="text-sm font-normal text-gray-400">GiB</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    {/* Zone Distribution */}
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
-                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Zone Distribution</h4>
-                        <div className="flex-1 w-full min-h-0">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={chartData.zones} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                                    <XAxis type="number" hide />
-                                    <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 10, fill: '#9ca3af' }} interval={0} />
-                                    <Tooltip
-                                        cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
-                                        itemStyle={{ color: '#E5E7EB' }}
-                                    />
-                                    <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
-                                </BarChart>
-                            </ResponsiveContainer>
+                    {/* Charts */}
+                    <div className="grid grid-cols-3 gap-4">
+                        {/* Capacity Distribution */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Capacity Distribution</h4>
+                            <div className="flex-1 w-full min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={chartData.capacity}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={40}
+                                            outerRadius={70}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {chartData.capacity.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.name === 'Spot' ? '#a855f7' : '#3b82f6'} stroke="rgba(0,0,0,0.2)" />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                            itemStyle={{ color: '#E5E7EB' }}
+                                        />
+                                        <Legend />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Instance Types */}
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
-                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Top Instance Types</h4>
-                        <div className="flex-1 w-full min-h-0">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={chartData.types} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
-                                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} interval={0} />
-                                    <YAxis hide />
-                                    <Tooltip
-                                        cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
-                                        itemStyle={{ color: '#E5E7EB' }}
-                                    />
-                                    <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
+                        {/* Zone Distribution */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Zone Distribution</h4>
+                            <div className="flex-1 w-full min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={chartData.zones} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                        <XAxis type="number" hide />
+                                        <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 10, fill: '#9ca3af' }} interval={0} />
+                                        <Tooltip
+                                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                            contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                            itemStyle={{ color: '#E5E7EB' }}
+                                        />
+                                        <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} barSize={20} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Instance Types */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Top Instance Types</h4>
+                            <div className="flex-1 w-full min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={chartData.types} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
+                                        <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} interval={0} />
+                                        <YAxis hide />
+                                        <Tooltip
+                                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                            contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                            itemStyle={{ color: '#E5E7EB' }}
+                                        />
+                                        <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
                         </div>
                     </div>
                 </motion.div>

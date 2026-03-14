@@ -455,6 +455,37 @@ function App() {
         setIsBottomPanelOpen(true);
     };
 
+    const handleCordonDrain = (nodeName: string) => {
+        const tabId = `cordon-drain-${nodeName}`;
+
+        // Remove existing tab if any (to get a fresh terminal)
+        setPanelTabs(prev => prev.filter(t => t.id !== tabId));
+
+        // Set kube context first, then cordon and drain
+        const contextCmd = selectedCluster ? `kubectl config use-context ${selectedCluster} && ` : '';
+        const command = `${contextCmd}kubectl cordon ${nodeName} && kubectl drain ${nodeName} --ignore-daemonsets --delete-emptydir-data`;
+
+        setPanelTabs(prev => [...prev, {
+            id: tabId,
+            type: 'terminal',
+            title: `Drain: ${nodeName}`,
+            subtitle: 'cordon & drain',
+            initialCommand: command,
+        }]);
+
+        setActiveTabId(tabId);
+        setIsBottomPanelOpen(true);
+    };
+
+    const handleDeleteNode = async (nodeName: string) => {
+        if (!selectedCluster) return;
+        try {
+            await window.k8s.deleteNode(selectedCluster, nodeName);
+        } catch (err) {
+            console.error('Failed to delete node:', err);
+        }
+    };
+
     const handleExec = (pod: any, containerName: string) => {
         const name = pod.metadata?.name || pod.name;
         const namespace = pod.metadata?.namespace || pod.namespace;
@@ -1089,6 +1120,8 @@ function App() {
                                             onOpenYaml={handleOpenYaml}
                                             onExplain={handleOpenAI}
                                             onExec={handleExec}
+                                            onCordonDrain={handleCordonDrain}
+                                            onDeleteNode={handleDeleteNode}
                                         />
                                     ) : (
                                         <div className="flex items-center justify-center h-full text-gray-500">

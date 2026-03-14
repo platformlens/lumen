@@ -14,6 +14,10 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
+              input: {
+                main: 'electron/main.ts',
+                'resource-transform-worker': 'electron/resource-transform-worker.ts',
+              },
               external: ['bufferutil', 'utf-8-validate', 'node-pty'],
             },
           },

@@ -15,6 +15,7 @@ import { ScaleModal } from './shared/ScaleModal';
 import { DashboardContent } from './dashboard/DashboardContent';
 import { DashboardHeader } from './dashboard/DashboardHeader';
 import { useResourceSorting } from '../hooks/useResourceSorting';
+import { useDashboardWatchers } from '../hooks/useDashboardWatchers';
 
 interface DashboardProps {
     clusterName: string;
@@ -24,10 +25,12 @@ interface DashboardProps {
     onOpenYaml?: (deployment: any) => void;
     onExplain?: (resource: any) => void;
     onExec?: (pod: any, containerName: string) => void;
+    onCordonDrain?: (nodeName: string) => void;
+    onDeleteNode?: (nodeName: string) => void;
 }
 
 
-export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain, onExec }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain, onExec, onCordonDrain, onDeleteNode }) => {
     const [namespaces, setNamespaces] = useState<string[]>([]);
     const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(['all']);
 
@@ -104,6 +107,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             setSummariesEnabled(config?.summariesEnabled ?? false);
         }).catch(() => { });
     }, []);
+
+    // Performance: Use batched IPC watchers for pods and deployments
+    const { isUpdating } = useDashboardWatchers({
+        clusterName,
+        activeView,
+        selectedNamespaces,
+        setPods,
+        setDeployments,
+        startTransition,
+    });
 
     // Sorting State
     const { sortConfig, handleSort, getSortedData } = useResourceSorting();
@@ -232,231 +245,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     }, [clusterName, activeView]);
 
-    // Watcher Effect - Performance: Only watch when view is active
+    // Node Watcher Effect - Uses worker thread batched events
     useEffect(() => {
-        let cleanup: (() => void) | undefined;
-        let batchTimeout: ReturnType<typeof setTimeout> | null = null;
-        const pendingUpdates = new Map<string, { type: string; pod: any }>();
-
-        // Performance: Only watch if we are in a view that needs pods
-        const needsPods = activeView === 'overview' || activeView === 'pods';
-
-        if (needsPods) {
-            const nsToWatch = selectedNamespaces;
-
-            // Start watching
-            window.k8s.watchPods(clusterName, nsToWatch);
-
-            const processBatch = () => {
-                if (pendingUpdates.size === 0) {
-                    batchTimeout = null;
-                    return;
-                }
-
-                const updates = new Map(pendingUpdates);
-                pendingUpdates.clear();
-                batchTimeout = null;
-
-                // Performance: Use startTransition to mark updates as non-urgent
-                startTransition(() => {
-                    setPods(prev => {
-                        // Performance: Only create Map if we have updates
-                        if (updates.size === 0) return prev;
-
-                        // Use a Map for O(1) updates instead of O(N) array scans
-                        const podMap = new Map(prev.map(p => [`${p.namespace}/${p.name}`, p]));
-
-                        updates.forEach(({ type, pod }) => {
-                            const key = `${pod.namespace}/${pod.name}`;
-
-                            // Strict Filtering: If not viewing 'all' namespaces, check if pod belongs to selected namespaces
-                            const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(pod.namespace);
-
-                            if (type === 'ADDED' || type === 'MODIFIED') {
-                                if (isSelected) {
-                                    podMap.set(key, pod);
-                                } else {
-                                    if (podMap.has(key)) podMap.delete(key);
-                                }
-                            } else if (type === 'DELETED') {
-                                podMap.delete(key);
-                            }
-                        });
-
-                        return Array.from(podMap.values());
-                    });
-                });
-            };
-
-            // Listen for changes
-            cleanup = window.k8s.onPodChange((type, pod) => {
-                // Buffer updates
-                const key = `${pod.namespace}/${pod.name}`;
-                pendingUpdates.set(key, { type, pod });
-
-                // Debounce/Batch updates every 650ms
-                if (!batchTimeout) {
-                    batchTimeout = setTimeout(processBatch, 650);
-                }
-            });
-        }
-
-        return () => {
-            // Performance: Clean up watchers when view changes or component unmounts
-            if (cleanup) cleanup();
-            if (batchTimeout) clearTimeout(batchTimeout);
-            if (needsPods) {
-                window.k8s.stopWatchPods();
-            }
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, activeView]); // Performance: Restart when switching to/from pods/overview
-
-    // Deployment Watcher Effect - Separate to avoid unnecessary restarts
-    useEffect(() => {
-        let depCleanup: (() => void) | undefined;
-        let depBatchTimeout: ReturnType<typeof setTimeout> | null = null;
-        const pendingDepUpdates = new Map<string, { type: string; deployment: any }>();
-        const needsDeployments = activeView === 'overview' || activeView === 'deployments';
-
-        if (needsDeployments) {
-            const nsToWatch = selectedNamespaces;
-            window.k8s.watchDeployments(clusterName, nsToWatch);
-
-            const processDepBatch = () => {
-                if (pendingDepUpdates.size === 0) {
-                    depBatchTimeout = null;
-                    return;
-                }
-
-                const updates = new Map(pendingDepUpdates);
-                pendingDepUpdates.clear();
-                depBatchTimeout = null;
-
-                // Performance: Use startTransition to mark updates as non-urgent
-                startTransition(() => {
-                    setDeployments(prev => {
-                        if (updates.size === 0) return prev;
-
-                        const depMap = new Map(prev.map(d => [`${d.metadata.namespace}/${d.metadata.name}`, d]));
-
-                        updates.forEach(({ type, deployment }) => {
-                            const key = `${deployment.metadata.namespace}/${deployment.metadata.name}`;
-
-                            const mappedDep = {
-                                name: deployment.metadata.name,
-                                namespace: deployment.metadata.namespace,
-                                replicas: deployment.spec.replicas,
-                                availableReplicas: deployment.status.availableReplicas || 0,
-                                readyReplicas: deployment.status.readyReplicas || 0,
-                                unavailableReplicas: deployment.status.unavailableReplicas || 0,
-                                updatedReplicas: deployment.status.updatedReplicas || 0,
-                                conditions: deployment.status.conditions,
-                                age: deployment.metadata.creationTimestamp,
-                                metadata: deployment.metadata,
-                                spec: deployment.spec,
-                                status: deployment.status
-                            };
-
-                            const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(mappedDep.namespace);
-
-                            if (type === 'ADDED' || type === 'MODIFIED') {
-                                if (isSelected) {
-                                    depMap.set(key, mappedDep);
-                                } else if (depMap.has(key)) {
-                                    depMap.delete(key);
-                                }
-                            } else if (type === 'DELETED') {
-                                depMap.delete(key);
-                            }
-                        });
-
-                        return Array.from(depMap.values());
-                    });
-                });
-            };
-
-            depCleanup = window.k8s.onDeploymentChange((type, dep) => {
-                const key = `${dep.metadata.namespace}/${dep.metadata.name}`;
-                pendingDepUpdates.set(key, { type, deployment: dep });
-                if (!depBatchTimeout) {
-                    depBatchTimeout = setTimeout(processDepBatch, 650);
-                }
-            });
-        }
-
-        return () => {
-            // Performance: Clean up watchers when view changes or component unmounts
-            if (depCleanup) depCleanup();
-            if (depBatchTimeout) clearTimeout(depBatchTimeout);
-            if (needsDeployments) {
-                window.k8s.stopWatchDeployments();
-            }
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, activeView]); // Performance: Restart when switching to/from deployments/overview
-
-    // Node Watcher Effect - Separate to avoid unnecessary restarts
-    useEffect(() => {
-        let nodeCleanup: (() => void) | undefined;
-        let nodeBatchTimeout: ReturnType<typeof setTimeout> | null = null;
-        const pendingNodeUpdates = new Map<string, { type: string; node: any }>();
+        let nodeBatchCleanup: (() => void) | undefined;
         const needsNodes = activeView === 'nodes';
 
         if (needsNodes) {
             window.k8s.watchNodes(clusterName);
 
-            const processNodeBatch = () => {
-                if (pendingNodeUpdates.size === 0) {
-                    nodeBatchTimeout = null;
-                    return;
-                }
-
-                const updates = new Map(pendingNodeUpdates);
-                pendingNodeUpdates.clear();
-                nodeBatchTimeout = null;
-
-                // Performance: Use startTransition to mark updates as non-urgent
+            nodeBatchCleanup = window.k8s.onNodeBatchChange((events) => {
                 startTransition(() => {
                     setNodes(prev => {
-                        if (updates.size === 0) return prev;
-
                         const nodeMap = new Map(prev.map(n => [n.name, n]));
 
-                        updates.forEach(({ type, node }) => {
-                            const key = node.name;
-
+                        for (const { type, node } of events) {
                             if (type === 'ADDED' || type === 'MODIFIED') {
-                                nodeMap.set(key, node);
+                                nodeMap.set(node.name, node);
                             } else if (type === 'DELETED') {
-                                nodeMap.delete(key);
+                                nodeMap.delete(node.name);
                             }
-                        });
+                        }
 
                         return Array.from(nodeMap.values());
                     });
                 });
-            };
-
-            nodeCleanup = window.k8s.onNodeChange((type, node) => {
-                const key = node.name;
-                pendingNodeUpdates.set(key, { type, node });
-                if (!nodeBatchTimeout) {
-                    nodeBatchTimeout = setTimeout(processNodeBatch, 650);
-                }
             });
         }
 
         return () => {
-            // Performance: Clean up watchers when view changes or component unmounts
-            if (nodeCleanup) nodeCleanup();
-            if (nodeBatchTimeout) clearTimeout(nodeBatchTimeout);
+            if (nodeBatchCleanup) nodeBatchCleanup();
             if (needsNodes) {
                 window.k8s.stopWatchNodes();
             }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, activeView]); // Performance: Restart when switching to/from nodes view
+    }, [clusterName, activeView]);
 
     // Config Resource Watcher Effect - Watch config resources when their view is active
     useEffect(() => {
@@ -781,28 +604,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             const nsFilter = selectedNamespaces;
             const promises: Promise<any>[] = [];
 
-            // Overview needs Pods (pie chart), Deployments (bar chart), and Events
+            // Overview needs Events; pods/deployments come from watchers via useDashboardWatchers
             if (activeView === 'overview') {
-                promises.push(window.k8s.getPods(clusterName, nsFilter).then(data => {
-                    setPods(data);
-                    setCachedData(`pods-${nsFilter.join(',')}`, data);
-                }));
-                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(data => {
-                    setDeployments(data);
-                    setCachedData(`deployments-${nsFilter.join(',')}`, data);
-                }));
                 promises.push(window.k8s.getEvents(clusterName, nsFilter).then(data => {
                     setEvents(data);
                     setCachedData(`events-${nsFilter.join(',')}`, data);
                 }));
             }
 
-            if (activeView === 'deployments') {
-                promises.push(window.k8s.getDeployments(clusterName, nsFilter).then(data => {
-                    setDeployments(data);
-                    setCachedData(cacheKey, data);
-                }));
-            }
+            // Pods and Deployments views: watchers (useDashboardWatchers) handle data via
+            // batched IPC, so we skip the bulk fetch here to avoid a blocking setPods/setDeployments.
+            // Only fetch supplementary data (metrics, nodes) that watchers don't provide.
 
             // Individual Views
             if (activeView === 'nodes') {
@@ -813,10 +625,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             }
 
             if (activeView === 'pods') {
-                promises.push(window.k8s.getPods(clusterName, nsFilter).then(data => {
-                    setPods(data);
-                    setCachedData(`pods-${nsFilter.join(',')}`, data);
-                }));
                 // Fetch pod metrics (non-blocking, don't fail if metrics-server unavailable)
                 window.k8s.getPodMetrics(clusterName, nsFilter).then(metrics => {
                     setPodMetrics(metrics);
@@ -1441,6 +1249,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     onOpenLogs={onOpenLogs}
                     getSortedData={getSortedData}
                     summariesEnabled={summariesEnabled}
+                    isUpdating={isUpdating}
                 />
             </div>
             < Drawer
@@ -1548,6 +1357,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                         onShowTopology={() => setDrawerTab('topology')}
                                         onOpenYaml={onOpenYaml}
                                         onTriggerCronJob={handleTriggerCronJob}
+                                        onCordonDrain={onCordonDrain}
+                                        onDeleteNode={onDeleteNode}
                                     />
                                 )}
                             </>

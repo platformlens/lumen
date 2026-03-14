@@ -26,6 +26,9 @@ export interface PanelTab {
         containerName?: string;
     };
 
+    // Terminal Command
+    initialCommand?: string;
+
     // YAML Specific
     yamlContent?: string;
     onSaveYaml?: (content: string) => Promise<void>;
@@ -162,7 +165,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                         className="w-full h-full p-2"
                         style={{ display: activeTabId === tab.id ? 'block' : 'none' }}
                     >
-                        <TerminalComponent id={tab.id} execContext={tab.execContext} />
+                        <TerminalComponent id={tab.id} execContext={tab.execContext} initialCommand={tab.initialCommand} />
                     </div>
                 ))}
 

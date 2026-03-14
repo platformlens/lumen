@@ -1,22 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { Server, Activity, Cpu, Database, Network, Tag, Shield, Copy, Check, Box } from 'lucide-react';
+import { Activity, Cpu, Database, Network, Tag, Shield, Copy, Check, Box, Trash2 } from 'lucide-react';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { ToggleGroup, ToggleOption } from '../../shared/ToggleGroup';
+import { GlassButton } from '../../shared/GlassButton';
+import { ConfirmModal } from '../../shared/ConfirmModal';
 import { formatMemory, getNodeProviderInfo } from '../../../utils/cluster-utils';
 
 interface NodeDetailsProps {
     node: any;
     clusterName?: string;
     onNavigate?: (kind: string, name: string, namespace?: string) => void;
+    onCordonDrain?: (nodeName: string) => void;
+    onDeleteNode?: (nodeName: string) => void;
 }
 
 type WorkloadType = 'all' | 'deployments' | 'daemonsets' | 'statefulsets';
 
-export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onNavigate }) => {
+export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onNavigate, onCordonDrain, onDeleteNode }) => {
     const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
     const [pods, setPods] = useState<any[]>([]);
     const [loadingPods, setLoadingPods] = useState(false);
     const [workloadFilter, setWorkloadFilter] = useState<WorkloadType>('all');
+    const [showCordonDrainModal, setShowCordonDrainModal] = useState(false);
+    const [showDeleteNodeModal, setShowDeleteNodeModal] = useState(false);
 
     if (!node) return null;
 
@@ -112,10 +118,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onN
             <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-4">
                 <div className="flex items-center justify-between">
                     <div>
-                        <h3 className="text-lg font-bold text-gray-200 flex items-center gap-2">
-                            <Server size={20} className="text-blue-400" />
-                            {metadata.name}
-                        </h3>
                         <div className="flex items-center gap-2 mt-1">
                             <span className={`px-2 py-0.5 rounded text-xs font-medium border ${isReady
                                 ? 'bg-green-500/10 text-green-400 border-green-500/20'
@@ -128,6 +130,26 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onN
                             </span>
                         </div>
                     </div>
+                    {onCordonDrain && (
+                        <div className="flex items-center gap-2">
+                            <GlassButton
+                                variant="danger"
+                                icon={<Trash2 size={14} />}
+                                onClick={() => setShowDeleteNodeModal(true)}
+                                className="text-xs px-3 py-1.5"
+                            >
+                                Delete
+                            </GlassButton>
+                            <GlassButton
+                                variant="danger"
+                                icon={<Trash2 size={14} />}
+                                onClick={() => setShowCordonDrainModal(true)}
+                                className="text-xs px-3 py-1.5"
+                            >
+                                Cordon & Drain
+                            </GlassButton>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -343,6 +365,36 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onN
                     </div>
                 </div>
             )}
+
+            {/* Cordon & Drain Confirm Modal */}
+            <ConfirmModal
+                isOpen={showCordonDrainModal}
+                onClose={() => setShowCordonDrainModal(false)}
+                onConfirm={() => {
+                    if (onCordonDrain && metadata.name) {
+                        onCordonDrain(metadata.name);
+                    }
+                }}
+                title="Cordon & Drain Node"
+                message={`This will cordon node "${metadata.name}" to prevent new pods from being scheduled, then drain all existing pods. This is a destructive operation typically done before decommissioning a node. Are you sure you want to proceed?`}
+                confirmText="Cordon & Drain"
+                variant="danger"
+            />
+
+            {/* Delete Node Confirm Modal */}
+            <ConfirmModal
+                isOpen={showDeleteNodeModal}
+                onClose={() => setShowDeleteNodeModal(false)}
+                onConfirm={() => {
+                    if (onDeleteNode && metadata.name) {
+                        onDeleteNode(metadata.name);
+                    }
+                }}
+                title="Delete Node"
+                message={`This will delete node "${metadata.name}" from the cluster. Any pods running on this node will need to be rescheduled. Are you sure you want to proceed?`}
+                confirmText="Delete Node"
+                variant="danger"
+            />
         </div>
     );
 };

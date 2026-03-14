@@ -134,6 +134,7 @@ declare global {
             watchNodes: (contextName: string) => void;
             stopWatchNodes: () => void;
             onNodeChange: (callback: (type: string, node: any) => void) => () => void;
+            onNodeBatchChange: (callback: (events: Array<{ type: string; node: any }>) => void) => () => void;
             streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => void;
             stopStreamPodLogs: (namespace: string, name: string, containerName: string) => Promise<void>;
             onPodLogChunk: (callback: (streamId: string, chunk: string) => void) => () => void;

@@ -12,9 +12,10 @@ interface TerminalComponentProps {
         podName: string;
         containerName?: string;
     };
+    initialCommand?: string;
 }
 
-export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main', isVisible = true, execContext }) => {
+export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main', isVisible = true, execContext, initialCommand }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -95,6 +96,13 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main
                 term.dispose();
                 (window.k8s as any).terminal.dispose(backendId);
             };
+
+            // Send initial command after a short delay to let the shell initialize
+            if (initialCommand && !execContext) {
+                setTimeout(() => {
+                    (window.k8s as any).terminal.write(backendId, `${initialCommand}\r`);
+                }, 500);
+            }
         };
 
         init();

@@ -73,6 +73,7 @@ interface DashboardContentProps {
     onOpenLogs?: (pod: any, containerName: string) => void;
     getSortedData: (data: any[]) => any[];
     summariesEnabled?: boolean;
+    isUpdating?: boolean;
 }
 
 /**
@@ -132,6 +133,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     onOpenLogs,
     getSortedData,
     summariesEnabled = false,
+    isUpdating,
 }) => {
     // Overview View
     if (activeView === 'overview') {
@@ -249,6 +251,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                     selectedNamespaces={selectedNamespaces}
                     searchQuery={searchQuery}
                     onRowClick={(dep) => onResourceClick(dep, 'deployment')}
+                    isUpdating={isUpdating}
                 />
             </>
         );
@@ -282,6 +285,11 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                     podMetrics={podMetrics}
                     onExec={onExec}
                     onOpenLogs={onOpenLogs}
+                    clusterName={clusterName}
+                    isUpdating={isUpdating}
+                    onDeletePods={async (pods) => {
+                        await Promise.all(pods.map(p => window.k8s.deletePod(clusterName, p.namespace, p.name)));
+                    }}
                 />
             </>
         );

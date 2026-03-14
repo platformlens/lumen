@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('k8s', {
   getEvents: (contextName: string, namespaces?: string[], fieldSelector?: string) => ipcRenderer.invoke('k8s:getEvents', contextName, namespaces, fieldSelector),
   getNodes: (contextName: string) => ipcRenderer.invoke('k8s:getNodes', contextName),
   getNode: (contextName: string, name: string) => ipcRenderer.invoke('k8s:getNode', contextName, name),
+  deleteNode: (contextName: string, name: string) => ipcRenderer.invoke('k8s:deleteNode', contextName, name),
   getCRDs: (contextName: string) => ipcRenderer.invoke('k8s:getCRDs', contextName),
   getCRD: (contextName: string, name: string) => ipcRenderer.invoke('k8s:getCRD', contextName, name),
   listCustomObjects: (contextName: string, group: string, version: string, plural: string, namespace?: string) => ipcRenderer.invoke('k8s:listCustomObjects', contextName, group, version, plural, namespace),
@@ -215,16 +216,31 @@ contextBridge.exposeInMainWorld('k8s', {
     ipcRenderer.on('k8s:deploymentChange', listener);
     return () => ipcRenderer.off('k8s:deploymentChange', listener);
   },
+  onDeploymentBatchChange: (callback: (events: Array<{ type: string; deployment: any }>) => void) => {
+    const listener = (_: any, events: Array<{ type: string; deployment: any }>) => callback(events);
+    ipcRenderer.on('k8s:deploymentBatchChange', listener);
+    return () => ipcRenderer.off('k8s:deploymentBatchChange', listener);
+  },
   onPodChange: (callback: (type: string, pod: any) => void) => {
     const listener = (_: any, type: string, pod: any) => callback(type, pod);
     ipcRenderer.on('k8s:podChange', listener);
     // Return unsubscribe function
     return () => ipcRenderer.off('k8s:podChange', listener);
   },
+  onPodBatchChange: (callback: (events: Array<{ type: string; pod: any }>) => void) => {
+    const listener = (_: any, events: Array<{ type: string; pod: any }>) => callback(events);
+    ipcRenderer.on('k8s:podBatchChange', listener);
+    return () => ipcRenderer.off('k8s:podBatchChange', listener);
+  },
   onNodeChange: (callback: (type: string, node: any) => void) => {
     const listener = (_: any, type: string, node: any) => callback(type, node);
     ipcRenderer.on('k8s:nodeChange', listener);
     return () => ipcRenderer.off('k8s:nodeChange', listener);
+  },
+  onNodeBatchChange: (callback: (events: Array<{ type: string; node: any }>) => void) => {
+    const listener = (_: any, events: Array<{ type: string; node: any }>) => callback(events);
+    ipcRenderer.on('k8s:nodeBatchChange', listener);
+    return () => ipcRenderer.off('k8s:nodeBatchChange', listener);
   },
   streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => ipcRenderer.send('k8s:streamPodLogs', contextName, namespace, name, containerName),
   stopStreamPodLogs: (namespace: string, name: string, containerName: string) => ipcRenderer.invoke('k8s:stopStreamPodLogs', namespace, name, containerName),

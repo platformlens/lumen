@@ -558,10 +558,12 @@ export class K8sService {
 
                 const allStatuses = [...initContainerStatuses, ...containerStatuses];
 
+                const phase = pod.metadata?.deletionTimestamp ? 'Terminating' : (pod.status?.phase || 'Unknown');
+
                 return {
                     name: pod.metadata?.name,
                     namespace: pod.metadata?.namespace,
-                    status: pod.status?.phase,
+                    status: phase,
                     restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
                     age: pod.metadata?.creationTimestamp,
                     containers: allStatuses.map((c: any) => ({
@@ -740,30 +742,7 @@ export class K8sService {
                 (type, apiObj, _watchObj) => {
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
-
-                        const containerStatuses = apiObj.status?.containerStatuses || [];
-                        const initContainerStatuses = apiObj.status?.initContainerStatuses || [];
-                        const allStatuses = [...initContainerStatuses, ...containerStatuses];
-
-                        const pod = {
-                            name: apiObj.metadata?.name,
-                            namespace: apiObj.metadata?.namespace,
-                            status: apiObj.status?.phase,
-                            restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
-                            age: apiObj.metadata?.creationTimestamp,
-                            containers: allStatuses.map((c: any) => ({
-                                name: c.name,
-                                state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
-                                ready: c.ready,
-                                image: c.image,
-                                restartCount: c.restartCount
-                            })),
-                            metadata: apiObj.metadata,
-                            spec: apiObj.spec,
-                            node: apiObj.spec?.nodeName,
-                            rawStatus: apiObj.status,
-                        };
-                        onEvent(type, pod);
+                        onEvent(type, apiObj);
                     }
                 },
                 (err) => {
@@ -807,17 +786,7 @@ export class K8sService {
                 (type, apiObj, _watchObj) => {
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
-
-                        const dep = {
-                            name: apiObj.metadata?.name,
-                            namespace: apiObj.metadata?.namespace,
-                            replicas: apiObj.spec?.replicas,
-                            availableReplicas: apiObj.status?.availableReplicas,
-                            status: apiObj.status,
-                            metadata: apiObj.metadata,
-                            spec: apiObj.spec
-                        };
-                        onEvent(type, dep);
+                        onEvent(type, apiObj);
                     }
                 },
                 (err) => {
@@ -1422,6 +1391,18 @@ export class K8sService {
                 console.error("Error fetching Node (fallback):", fbError);
                 return null;
             }
+        }
+    }
+
+    async deleteNode(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+        try {
+            await k8sCoreApi.deleteNode({ name });
+            return { success: true };
+        } catch (err) {
+            console.error(`Error deleting Node ${name}:`, err);
+            throw err;
         }
     }
 

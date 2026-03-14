@@ -10,13 +10,15 @@ interface DeploymentsViewProps {
     selectedNamespaces: string[];
     searchQuery: string;
     onRowClick: (dep: any) => void;
+    isUpdating?: boolean;
 }
 
-export const DeploymentsView: React.FC<DeploymentsViewProps> = ({
+const DeploymentsViewInner: React.FC<DeploymentsViewProps> = ({
     deployments,
     isLoading,
     searchQuery,
-    onRowClick
+    onRowClick,
+    isUpdating
 }) => {
     const { sortConfig, handleSort, getSortedData } = useResourceSorting();
 
@@ -49,6 +51,9 @@ export const DeploymentsView: React.FC<DeploymentsViewProps> = ({
             onSort={handleSort}
             searchQuery={searchQuery}
             isLoading={isLoading}
+            isUpdating={isUpdating}
         />
     );
 };
+
+export const DeploymentsView = React.memo(DeploymentsViewInner);

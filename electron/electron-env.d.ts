@@ -121,6 +121,7 @@ interface Window {
     getEvents: (contextName: string, namespaces?: string[]) => Promise<Array<{ type: string; reason: string; message: string; count: number; lastTimestamp: string; object: string; namespace: string }>>
     getNodes: (contextName: string) => Promise<any[]>
     getNode: (contextName: string, name: string) => Promise<any>
+    deleteNode: (contextName: string, name: string) => Promise<any>
     getCRDs: (contextName: string) => Promise<any[]>
     getCRD: (contextName: string, name: string) => Promise<any>
     listCustomObjects: (contextName: string, group: string, version: string, plural: string, namespace?: string) => Promise<any[]>
@@ -133,15 +134,18 @@ interface Window {
     watchPods: (contextName: string, namespaces: string[]) => void
     stopWatchPods: () => void
     onPodChange: (callback: (type: string, pod: any) => void) => (() => void)
+    onPodBatchChange: (callback: (events: Array<{ type: string; pod: any }>) => void) => (() => void)
     watchDeployments: (contextName: string, namespaces: string[]) => void
     stopWatchDeployments: () => void
     watchGenericResource: (contextName: string, resourceType: string, apiPath: string) => void
     stopWatchGenericResource: (resourceType: string) => void
     onGenericResourceChange: (callback: (resourceType: string, type: string, resource: any) => void) => () => void
     onDeploymentChange: (callback: (type: string, deployment: any) => void) => (() => void)
+    onDeploymentBatchChange: (callback: (events: Array<{ type: string; deployment: any }>) => void) => (() => void)
     watchNodes: (contextName: string) => void
     stopWatchNodes: () => void
     onNodeChange: (callback: (type: string, node: any) => void) => (() => void)
+    onNodeBatchChange: (callback: (events: Array<{ type: string; node: any }>) => void) => (() => void)
     streamPodLogs: (contextName: string, namespace: string, name: string, containerName: string) => void
     stopStreamPodLogs: (namespace: string, name: string, containerName: string) => Promise<void>
     onPodLogChunk: (callback: (streamId: string, chunk: string) => void) => (() => void)
