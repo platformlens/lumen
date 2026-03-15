@@ -49,6 +49,14 @@ export function useDashboardWatchers({
         if (needsPods) {
             const nsToWatch = selectedNamespaces;
 
+            // Clear stale pods from previously selected namespaces before restarting watcher.
+            // The Map-based merge only processes incoming events (ADDED/MODIFIED/DELETED) and
+            // never removes resources from namespaces that are no longer selected.
+            setPods(prev => {
+                if (nsToWatch.includes('all')) return prev;
+                return prev.filter(p => nsToWatch.includes(p.namespace));
+            });
+
             // Start watching
             window.k8s.watchPods(clusterName, nsToWatch);
 
@@ -92,6 +100,13 @@ export function useDashboardWatchers({
 
         if (needsDeployments) {
             const nsToWatch = selectedNamespaces;
+
+            // Clear stale deployments from previously selected namespaces before restarting watcher.
+            setDeployments(prev => {
+                if (nsToWatch.includes('all')) return prev;
+                return prev.filter(d => nsToWatch.includes(d.namespace));
+            });
+
             window.k8s.watchDeployments(clusterName, nsToWatch);
 
             // Listen for pre-batched events from main process
