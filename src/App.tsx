@@ -1183,6 +1183,7 @@ function App() {
                                             onExec={handleExec}
                                             onCordonDrain={handleCordonDrain}
                                             onDeleteNode={handleDeleteNode}
+                                            showToast={showToast}
                                         />
                                     ) : (
                                         <div className="flex items-center justify-center h-full text-gray-500">

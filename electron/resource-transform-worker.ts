@@ -7,6 +7,7 @@
  */
 
 import { parentPort } from 'worker_threads';
+import zlib from 'zlib';
 import type { BatchEvent } from './watcher-batch-buffer';
 
 // --- Interfaces ---
@@ -15,7 +16,7 @@ type K8sObject = Record<string, unknown>;
 
 export interface TransformRequest {
     id: string;
-    resourceType: 'pod' | 'deployment' | 'node' | 'replicaset' | 'secret' | 'persistentvolume' | 'persistentvolumeclaim';
+    resourceType: 'pod' | 'deployment' | 'node' | 'replicaset' | 'secret' | 'persistentvolume' | 'persistentvolumeclaim' | 'helmrelease';
     events: BatchEvent<K8sObject>[];
 }
 
@@ -216,6 +217,49 @@ function transformPersistentVolumeClaim(apiObj: K8sObject): K8sObject {
     };
 }
 
+// --- Helm Release Transformation ---
+
+function transformHelmRelease(apiObj: K8sObject): K8sObject {
+    const metadata = (prop(apiObj, 'metadata') ?? {}) as K8sObject;
+    const data = (prop(apiObj, 'data') ?? {}) as Record<string, unknown>;
+
+    const releaseB64 = data.release as string | undefined;
+    if (!releaseB64) {
+        throw new Error('Missing data.release field in Helm secret');
+    }
+
+    // Step 1: Base64 decode (K8s secret base64)
+    let buf = Buffer.from(releaseB64, 'base64');
+
+    // Step 2: Check gzip magic bytes — if not gzip, it's double-encoded (Helm base64 on top)
+    if (buf[0] !== 0x1f || buf[1] !== 0x8b) {
+        buf = Buffer.from(buf.toString('utf-8'), 'base64');
+    }
+
+    // Step 3: Gzip decompress
+    const decompressed = zlib.gunzipSync(buf);
+
+    // Step 4: JSON parse
+    const release = JSON.parse(decompressed.toString('utf-8')) as K8sObject;
+
+    const info = (prop(release, 'info') ?? {}) as K8sObject;
+    const chart = (prop(release, 'chart') ?? {}) as K8sObject;
+    const chartMetadata = (prop(chart, 'metadata') ?? {}) as K8sObject;
+
+    return {
+        name: (prop(release, 'name') as string) || '',
+        namespace: (prop(metadata, 'namespace') as string) || '',
+        revision: (prop(release, 'version') as number) || 0,
+        status: (prop(info, 'status') as string) || '',
+        chart: (prop(chartMetadata, 'name') as string) || '',
+        chartVersion: (prop(chartMetadata, 'version') as string) || '',
+        appVersion: (prop(chartMetadata, 'appVersion') as string) || '',
+        lastUpdated: (prop(info, 'last_deployed') as string) || '',
+        description: (prop(info, 'description') as string) || '',
+        secretName: (prop(metadata, 'name') as string) || '',
+    };
+}
+
 // --- Request Handler ---
 
 function handleRequest(request: TransformRequest): TransformResponse {
@@ -240,6 +284,8 @@ function handleRequest(request: TransformRequest): TransformResponse {
                 transformed = transformPersistentVolume(event.resource);
             } else if (resourceType === 'persistentvolumeclaim') {
                 transformed = transformPersistentVolumeClaim(event.resource);
+            } else if (resourceType === 'helmrelease') {
+                transformed = transformHelmRelease(event.resource);
             } else {
                 // Unknown resource type — pass through as-is
                 transformed = event.resource;

@@ -1,11 +1,11 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { Box, Layers, Copy, Network, Shield, Users, Server, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Box, Layers, Copy, Network, Shield, Users, Server, AlertCircle, CheckCircle, Clock, Anchor } from 'lucide-react';
 
 const StatusIcon = ({ status }: { status?: string }) => {
     if (!status) return null;
     const lower = status.toLowerCase();
-    
+
     // Check for "X/Y Ready" pattern
     if (lower.includes('ready') && lower.includes('/')) {
         const [counts] = lower.split(' ');
@@ -20,7 +20,7 @@ const StatusIcon = ({ status }: { status?: string }) => {
     if (lower === 'running' || lower === 'active' || lower === 'ready' || lower === 'bound' || lower === 'succeeded') return <CheckCircle size={14} className="text-green-500" />;
     if (lower === 'pending' || lower === 'containercreating') return <Clock size={14} className="text-amber-500" />;
     if (lower === 'failed' || lower === 'error') return <AlertCircle size={14} className="text-red-500" />;
-    
+
     // Default fallback
     return <AlertCircle size={14} className="text-gray-500" />;
 };
@@ -28,6 +28,7 @@ const StatusIcon = ({ status }: { status?: string }) => {
 const ResourceIcon = ({ type }: { type: string }) => {
     const p = { size: 18, className: "text-blue-400" };
     switch (type.toLowerCase()) {
+        case 'helmrelease': return <Anchor {...p} />;
         case 'deployment': return <Layers {...p} />;
         case 'pod': return <Box {...p} />;
         case 'replicaset': return <Copy {...p} />;
@@ -41,18 +42,26 @@ const ResourceIcon = ({ type }: { type: string }) => {
 };
 
 export const TopologyNode = memo(({ data }: any) => {
+    const [expanded, setExpanded] = useState(false);
+
     return (
         <div className="relative group">
             {/* Input Handle */}
             <Handle type="target" position={Position.Left} className="!bg-blue-500 !w-2 !h-2 border-none" />
-            
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#1e1e1e] border border-white/10 shadow-lg min-w-[200px] hover:border-blue-500/50 transition-colors">
-                <div className="p-2 rounded bg-white/5 border border-white/10">
+
+            <div className="flex items-center gap-3 px-4 py-3.5 rounded-lg bg-[#1e1e1e] border border-white/10 shadow-lg w-[300px] hover:border-blue-500/50 transition-colors">
+                <div className="p-2 rounded bg-white/5 border border-white/10 shrink-0">
                     <ResourceIcon type={data.type} />
                 </div>
                 <div className="flex-1 min-w-0">
                     <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-0.5">{data.type}</div>
-                    <div className="text-sm font-medium text-gray-200 truncate" title={data.label}>{data.label}</div>
+                    <div
+                        className={`text-sm font-medium text-gray-200 break-all cursor-pointer hover:text-blue-300 transition-colors ${expanded ? '' : 'line-clamp-2'}`}
+                        title={data.label}
+                        onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                    >
+                        {data.label}
+                    </div>
                     {data.status && (
                         <div className="flex items-center gap-1.5 mt-1">
                             <StatusIcon status={data.status} />

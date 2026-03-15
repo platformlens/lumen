@@ -369,6 +369,29 @@ contextBridge.exposeInMainWorld('k8s', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },
 
+  // --- Helm ---
+  helm: {
+    getReleases: (contextName: string, namespaces: string[]) =>
+      ipcRenderer.invoke('helm:getReleases', contextName, namespaces),
+    getRelease: (contextName: string, namespace: string, name: string) =>
+      ipcRenderer.invoke('helm:getRelease', contextName, namespace, name),
+    getReleaseHistory: (contextName: string, namespace: string, name: string) =>
+      ipcRenderer.invoke('helm:getReleaseHistory', contextName, namespace, name),
+    uninstallRelease: (contextName: string, namespace: string, name: string) =>
+      ipcRenderer.invoke('helm:uninstallRelease', contextName, namespace, name),
+    rollbackRelease: (contextName: string, namespace: string, name: string, revision: number) =>
+      ipcRenderer.invoke('helm:rollbackRelease', contextName, namespace, name, revision),
+    watchHelmReleases: (contextName: string, namespaces: string[]) =>
+      ipcRenderer.send('k8s:watchHelmReleases', contextName, namespaces),
+    stopWatchHelmReleases: () =>
+      ipcRenderer.send('k8s:stopWatchHelmReleases'),
+    onHelmReleaseBatchChange: (callback: (events: Array<{ type: string; resource: any }>) => void) => {
+      const listener = (_: any, events: Array<{ type: string; resource: any }>) => callback(events);
+      ipcRenderer.on('k8s:helmReleaseBatchChange', listener);
+      return () => ipcRenderer.off('k8s:helmReleaseBatchChange', listener);
+    },
+  },
+
   // --- Onboarding ---
   onboarding: {
     getLastSeenVersion: () => ipcRenderer.invoke('onboarding:getLastSeenVersion'),

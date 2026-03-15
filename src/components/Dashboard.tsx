@@ -18,6 +18,7 @@ import { useResourceSorting } from '../hooks/useResourceSorting';
 import { useDashboardWatchers } from '../hooks/useDashboardWatchers';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { resolveResourceMeta, formatDeleteMessage } from '../utils/resource-utils';
+import { applyHelmReleaseEvents, HelmRelease } from '../utils/helm-release-utils';
 
 interface DashboardProps {
     clusterName: string;
@@ -29,10 +30,11 @@ interface DashboardProps {
     onExec?: (pod: any, containerName: string) => void;
     onCordonDrain?: (nodeName: string) => void;
     onDeleteNode?: (nodeName: string) => void;
+    showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 
-export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain, onExec, onCordonDrain, onDeleteNode }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain, onExec, onCordonDrain, onDeleteNode, showToast }) => {
     const [namespaces, setNamespaces] = useState<string[]>([]);
     const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(['all']);
 
@@ -81,6 +83,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [validatingWebhookConfigurations, setValidatingWebhookConfigurations] = useState<any[]>([]);
     const [priorityClasses, setPriorityClasses] = useState<any[]>([]);
     const [runtimeClasses, setRuntimeClasses] = useState<any[]>([]);
+
+    // Helm Release State (parent-managed, prop-driven to HelmReleasesView)
+    const [helmReleases, setHelmReleases] = useState<any[]>([]);
+    const [helmReleasesLoaded, setHelmReleasesLoaded] = useState(false);
+    const helmReleasesMapRef = useRef<Map<string, HelmRelease>>(new Map());
 
     const [nodes, setNodes] = useState<any[]>([]);
     const [customObjects, setCustomObjects] = useState<any[]>([]);
@@ -230,6 +237,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         setEndpointSlices([]);
         setEndpoints([]);
         setIngresses([]);
+        setHelmReleases([]);
+        setHelmReleasesLoaded(false);
+        helmReleasesMapRef.current = new Map();
         console.log('[Dashboard] State wiped for new cluster:', clusterName);
 
         window.k8s.getNamespaces(clusterName).then(setNamespaces).catch(console.error);
@@ -286,6 +296,44 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clusterName, activeView]);
+
+    // Helm Release Watcher Effect - Uses worker thread batched events with revision deduplication
+    // Preserves cached data when navigating back to the view; only clears on namespace change.
+    const prevHelmNsRef = useRef<string>(JSON.stringify(selectedNamespaces));
+    useEffect(() => {
+        const needsHelm = activeView === 'helm-releases' || activeView.startsWith('helm-release-detail/');
+        if (!needsHelm) return;
+
+        // Only clear state when namespaces actually changed (not on view re-entry)
+        const nsKey = JSON.stringify(selectedNamespaces);
+        if (prevHelmNsRef.current !== nsKey) {
+            prevHelmNsRef.current = nsKey;
+            setHelmReleases([]);
+            setHelmReleasesLoaded(false);
+            helmReleasesMapRef.current = new Map();
+        }
+
+        console.log('[HelmWatcher] Starting watch for cluster:', clusterName, 'namespaces:', selectedNamespaces);
+        (window as any).k8s.helm.watchHelmReleases(clusterName, selectedNamespaces);
+
+        const unsubscribe = (window as any).k8s.helm.onHelmReleaseBatchChange((events: Array<{ type: string; resource: any }>) => {
+            console.debug('[HelmWatcher] Batch received:', events.length, 'events, map size before:', helmReleasesMapRef.current.size);
+            startTransition(() => {
+                helmReleasesMapRef.current = applyHelmReleaseEvents(helmReleasesMapRef.current, events);
+                const releases = Array.from(helmReleasesMapRef.current.values());
+                console.debug('[HelmWatcher] Map size after:', helmReleasesMapRef.current.size, 'releases:', releases.length);
+                setHelmReleases(releases);
+                setHelmReleasesLoaded(true);
+            });
+        });
+
+        return () => {
+            console.log('[HelmWatcher] Stopping watch for cluster:', clusterName);
+            unsubscribe();
+            (window as any).k8s.helm.stopWatchHelmReleases();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clusterName, selectedNamespaces, activeView]);
 
     // Config Resource Watcher Effect - Watch config resources when their view is active
     useEffect(() => {
@@ -1182,6 +1230,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (activeView === 'validatingwebhookconfigurations') return validatingWebhookConfigurations.length;
         if (activeView === 'priorityclasses') return priorityClasses.length;
         if (activeView === 'runtimeclasses') return runtimeClasses.length;
+        if (activeView === 'helm-releases') return helmReleases.length;
         if (activeView === 'crd-definitions') return crdDefinitions.length;
         if (activeView.startsWith('crd/')) return (customObjects && typeof customObjects === 'object' && 'items' in customObjects) ? (customObjects.items as any[]).length : (Array.isArray(customObjects) ? customObjects.length : 0);
         return 0;
@@ -1263,6 +1312,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     getSortedData={getSortedData}
                     summariesEnabled={summariesEnabled}
                     isUpdating={isUpdating}
+                    helmReleases={helmReleases}
+                    helmReleasesLoading={!helmReleasesLoaded}
+                    showToast={showToast}
                 />
             </div>
             < Drawer

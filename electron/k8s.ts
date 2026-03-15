@@ -2,6 +2,7 @@ import { KubeConfig, AppsV1Api, CoreV1Api, RbacAuthorizationV1Api, Apiextensions
 import * as net from 'net';
 import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
+import * as zlib from 'zlib';
 
 interface ActiveForward {
     id: string;
@@ -24,6 +25,19 @@ interface CertificateInfo {
     serialNumber: string;
     fingerprint: string;
     sans: string[];
+}
+
+export interface HelmRelease {
+    name: string;
+    namespace: string;
+    revision: number;
+    status: string;
+    chart: string;
+    chartVersion: string;
+    appVersion: string;
+    lastUpdated: string;
+    description: string;
+    manifest?: string;
 }
 
 export class K8sService {
@@ -815,6 +829,49 @@ export class K8sService {
         }
     }
 
+    async startHelmReleaseWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, secret: any) => void) {
+        // Stop existing watcher if any to avoid duplicates
+        this.stopHelmReleaseWatch();
+
+        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
+        console.log(`[k8s] Starting watch for helm releases in ${activeWatchersKey(namespaces)}`);
+        await this.setContextWithSmartReload(contextName);
+        const watch = new Watch(this.kc);
+
+        const path = (namespaces.length === 0 || namespaces.includes('all'))
+            ? '/api/v1/secrets'
+            : `/api/v1/namespaces/${namespaces[0]}/secrets`;
+
+        try {
+            const req = await watch.watch(
+                path,
+                { fieldSelector: 'type=helm.sh/release.v1' },
+                (type, apiObj, _watchObj) => {
+                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
+                        if (!apiObj || !apiObj.metadata) return;
+                        onEvent(type, apiObj);
+                    }
+                },
+                (err) => {
+                    if (err) console.error('[k8s] Helm release watch error:', err);
+                }
+            );
+
+            // Store the request object which has the abort method
+            this.activeWatchers.set('helm-releases', req);
+        } catch (err) {
+            console.error('[k8s] Failed to start helm release watch:', err);
+        }
+    }
+
+    stopHelmReleaseWatch() {
+        if (this.activeWatchers.has('helm-releases')) {
+            console.log('[k8s] Stopping helm release watch');
+            const req = this.activeWatchers.get('helm-releases');
+            if (req && req.abort) req.abort();
+            this.activeWatchers.delete('helm-releases');
+        }
+    }
 
     async getReplicaSets(contextName: string, namespaces: string[] = []) {
         this.kc.setCurrentContext(contextName);
@@ -2963,5 +3020,292 @@ export class K8sService {
 
         console.error('Failed to decode certificate: all parsing attempts failed');
         return null;
+    }
+
+    /**
+     * List all Helm releases (latest revision per release name) across selected namespaces.
+     * Queries Kubernetes Secrets of type helm.sh/release.v1, decodes each, groups by
+     * release name+namespace, and returns only the latest revision per release.
+     */
+    public async getHelmReleases(contextName: string, namespaces: string[]): Promise<HelmRelease[]> {
+        await this.setContextWithSmartReload(contextName);
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+
+            let rawSecrets: any[] = [];
+            if (namespaces.length === 0 || namespaces.includes('all')) {
+                const res = await k8sApi.listSecretForAllNamespaces({ fieldSelector: 'type=helm.sh/release.v1' });
+                rawSecrets = (res as any).body?.items ?? (res as any).items ?? [];
+            } else {
+                const results = await Promise.all(
+                    namespaces.map(ns => k8sApi.listNamespacedSecret({ namespace: ns, fieldSelector: 'type=helm.sh/release.v1' }))
+                );
+                rawSecrets = results.flatMap(res => (res as any).body?.items ?? (res as any).items ?? []);
+            }
+
+            // Decode each secret, skip nulls
+            const allReleases = rawSecrets
+                .map(s => this.decodeHelmSecret(s))
+                .filter((r): r is HelmRelease => r !== null);
+
+            // Group by release name+namespace, keep only latest revision
+            const latestMap = new Map<string, HelmRelease>();
+            for (const release of allReleases) {
+                const key = `${release.namespace}/${release.name}`;
+                const existing = latestMap.get(key);
+                if (!existing || release.revision > existing.revision) {
+                    latestMap.set(key, release);
+                }
+            }
+
+            return Array.from(latestMap.values());
+        });
+    }
+
+    /**
+     * Get a single Helm release by name (latest revision) with full manifest.
+     * Fetches secrets with label name=<releaseName> in the namespace, decodes,
+     * and returns the one with the highest revision number.
+     */
+    public async getHelmRelease(contextName: string, namespace: string, name: string): Promise<HelmRelease | null> {
+        await this.setContextWithSmartReload(contextName);
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+
+            const res = await k8sApi.listNamespacedSecret({
+                namespace,
+                fieldSelector: 'type=helm.sh/release.v1',
+                labelSelector: `name=${name}`,
+            });
+            const rawSecrets: any[] = (res as any).body?.items ?? (res as any).items ?? [];
+
+            const releases = rawSecrets
+                .map(s => this.decodeHelmSecret(s))
+                .filter((r): r is HelmRelease => r !== null);
+
+            if (releases.length === 0) return null;
+
+            // Return the latest revision (highest revision number)
+            return releases.reduce((latest, r) => r.revision > latest.revision ? r : latest);
+        });
+    }
+
+    /**
+     * Get all revisions for a Helm release, sorted by revision number descending.
+     * Fetches all secrets matching the release name in the namespace, decodes each,
+     * and returns them sorted from newest to oldest revision.
+     */
+    public async getHelmReleaseHistory(contextName: string, namespace: string, name: string): Promise<HelmRelease[]> {
+        await this.setContextWithSmartReload(contextName);
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+
+            const res = await k8sApi.listNamespacedSecret({
+                namespace,
+                fieldSelector: 'type=helm.sh/release.v1',
+                labelSelector: `name=${name}`,
+            });
+            const rawSecrets: any[] = (res as any).body?.items ?? (res as any).items ?? [];
+
+            const releases = rawSecrets
+                .map(s => this.decodeHelmSecret(s))
+                .filter((r): r is HelmRelease => r !== null);
+
+            // Sort by revision descending
+            return releases.sort((a, b) => b.revision - a.revision);
+        });
+    }
+
+    /**
+     * Uninstall a Helm release by deleting all its associated Secrets.
+     * Deletes all Secrets of type helm.sh/release.v1 matching the release name in the namespace.
+     */
+    public async uninstallHelmRelease(contextName: string, namespace: string, name: string): Promise<{ name: string; namespace: string }> {
+        await this.setContextWithSmartReload(contextName);
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+
+            try {
+                // List all secrets for this release
+                const res = await k8sApi.listNamespacedSecret({
+                    namespace,
+                    fieldSelector: 'type=helm.sh/release.v1',
+                    labelSelector: `name=${name}`,
+                });
+                const secrets: any[] = (res as any).body?.items ?? (res as any).items ?? [];
+
+                // Delete each secret
+                await Promise.all(
+                    secrets.map(s => k8sApi.deleteNamespacedSecret({
+                        name: s.metadata.name,
+                        namespace,
+                    }))
+                );
+
+                return { name, namespace };
+            } catch (err: unknown) {
+                const errMessage = err instanceof Error ? err.message : String(err);
+                throw new Error(`Failed to uninstall Helm release "${name}": ${errMessage}`);
+            }
+        });
+    }
+
+    /**
+     * Rollback a Helm release to a specific revision.
+     * Reads the target revision's secret, clones its release payload with an incremented
+     * version number and updated metadata, then creates a new secret representing the rollback.
+     */
+    public async rollbackHelmRelease(contextName: string, namespace: string, name: string, revision: number): Promise<{ name: string; namespace: string; revision: number }> {
+        await this.setContextWithSmartReload(contextName);
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+
+            try {
+                // Get all secrets for this release to find target revision and current max
+                const res = await k8sApi.listNamespacedSecret({
+                    namespace,
+                    fieldSelector: 'type=helm.sh/release.v1',
+                    labelSelector: `name=${name}`,
+                });
+                const secrets: any[] = (res as any).body?.items ?? (res as any).items ?? [];
+
+                // Find the target revision secret
+                const targetSecret = secrets.find(s => {
+                    const ver = parseInt(s.metadata?.labels?.version ?? '0', 10);
+                    return ver === revision;
+                });
+                if (!targetSecret) {
+                    throw new Error(`Revision ${revision} not found for release "${name}"`);
+                }
+
+                // Determine the new revision number (max + 1)
+                const maxRevision = secrets.reduce((max, s) => {
+                    const ver = parseInt(s.metadata?.labels?.version ?? '0', 10);
+                    return ver > max ? ver : max;
+                }, 0);
+                const newRevision = maxRevision + 1;
+
+                // Decode the target revision's release payload
+                let buffer = Buffer.from(targetSecret.data.release, 'base64');
+                if (buffer[0] !== 0x1f || buffer[1] !== 0x8b) {
+                    buffer = Buffer.from(buffer.toString('utf-8'), 'base64');
+                }
+                const decompressed = zlib.gunzipSync(buffer);
+                const releaseData = JSON.parse(decompressed.toString('utf-8'));
+
+                // Update the release payload for the rollback
+                releaseData.version = newRevision;
+                releaseData.info = {
+                    ...releaseData.info,
+                    status: 'deployed',
+                    description: `Rollback to ${revision}`,
+                    last_deployed: new Date().toISOString(),
+                };
+
+                // Re-encode: JSON → gzip → base64 (Helm layer) → base64 (K8s layer)
+                const jsonBuf = Buffer.from(JSON.stringify(releaseData), 'utf-8');
+                const compressed = zlib.gzipSync(jsonBuf);
+                const helmB64 = compressed.toString('base64');
+                const k8sB64 = Buffer.from(helmB64, 'utf-8').toString('base64');
+
+                // Create the new secret
+                await k8sApi.createNamespacedSecret({
+                    namespace,
+                    body: {
+                        apiVersion: 'v1',
+                        kind: 'Secret',
+                        metadata: {
+                            name: `sh.helm.release.v1.${name}.v${newRevision}`,
+                            namespace,
+                            labels: {
+                                name,
+                                owner: 'helm',
+                                status: 'deployed',
+                                version: String(newRevision),
+                            },
+                        },
+                        type: 'helm.sh/release.v1',
+                        data: {
+                            release: k8sB64,
+                        },
+                    },
+                });
+
+                // Mark the previous current revision as superseded
+                for (const s of secrets) {
+                    const sStatus = s.metadata?.labels?.status;
+                    const sVer = parseInt(s.metadata?.labels?.version ?? '0', 10);
+                    if (sStatus === 'deployed' && sVer !== newRevision) {
+                        try {
+                            await k8sApi.patchNamespacedSecret({
+                                name: s.metadata.name,
+                                namespace,
+                                body: {
+                                    metadata: {
+                                        labels: { ...s.metadata.labels, status: 'superseded' },
+                                    },
+                                },
+                            }, { headers: { 'Content-Type': 'application/strategic-merge-patch+json' } });
+                        } catch {
+                            // Non-critical — the rollback secret was already created
+                        }
+                    }
+                }
+
+                return { name, namespace, revision: newRevision };
+            } catch (err: unknown) {
+                const errMessage = err instanceof Error ? err.message : String(err);
+                throw new Error(`Failed to rollback Helm release "${name}" to revision ${revision}: ${errMessage}`);
+            }
+        });
+    }
+
+    /**
+     * Decode a Helm release secret into a HelmRelease object.
+     * Helm stores releases as Kubernetes Secrets with base64-encoded, gzip-compressed JSON in data.release.
+     * Returns null and logs a warning on any decode failure.
+     */
+    private decodeHelmSecret(secret: any): HelmRelease | null {
+        try {
+            const base64Data = secret?.data?.release;
+            if (!base64Data) {
+                console.warn('[Helm] Secret missing data.release field');
+                return null;
+            }
+
+            // Helm secrets are base64-encoded by K8s, then the release payload
+            // itself is base64-encoded by Helm before gzip compression.
+            // The K8s client may or may not decode the outer layer, so we
+            // decode base64 and check if the result is gzip (magic bytes 1f 8b).
+            // If not, decode base64 again (double-encoded).
+            let buffer = Buffer.from(base64Data, 'base64');
+            if (buffer[0] !== 0x1f || buffer[1] !== 0x8b) {
+                // Not gzip — likely another base64 layer from Helm
+                buffer = Buffer.from(buffer.toString('utf-8'), 'base64');
+            }
+            const decompressed = zlib.gunzipSync(buffer);
+            const release = JSON.parse(decompressed.toString('utf-8'));
+
+            return {
+                name: release.name ?? '',
+                namespace: secret.metadata?.namespace ?? '',
+                revision: release.version ?? 0,
+                status: release.info?.status ?? 'unknown',
+                chart: release.chart?.metadata?.name ?? '',
+                chartVersion: release.chart?.metadata?.version ?? '',
+                appVersion: release.chart?.metadata?.appVersion ?? '',
+                lastUpdated: release.info?.last_deployed ?? '',
+                description: release.info?.description ?? '',
+                manifest: release.manifest,
+            };
+        } catch (err) {
+            console.warn('[Helm] Failed to decode helm secret:', err);
+            return null;
+        }
     }
 }

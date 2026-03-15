@@ -22,6 +22,12 @@ interface DashboardHeaderProps {
  * Convert view name to display title
  */
 const getViewTitle = (view: string): string => {
+    // Handle helm release detail views: "helm-release-detail/<ns>/<name>" → "Helm Release: <name>"
+    if (view.startsWith('helm-release-detail/')) {
+        const name = view.split('/')[2] ?? '';
+        return `Helm Release: ${name}`;
+    }
+
     const titleMap: Record<string, string> = {
         'overview': 'Overview',
         'pods': 'Pods',
@@ -57,6 +63,7 @@ const getViewTitle = (view: string): string => {
         'runtimeclasses': 'Runtime Classes',
         'crd-definitions': 'CRD Definitions',
         'certificates': 'Certificates',
+        'helm-releases': 'Helm Releases',
         'aws': 'AWS',
     };
 

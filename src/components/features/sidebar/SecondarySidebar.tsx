@@ -32,7 +32,8 @@ import {
     ChevronLeft,
     Loader2,
     Pin,
-    Brain
+    Brain,
+    Anchor
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -162,6 +163,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
         'storage': false,
         'access': false,
         'config': false,
+        'helm': false,
         'crd': false
     });
     const [clusters, setClusters] = useState<any[]>([]);
@@ -292,6 +294,13 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                 { label: 'Validating Webhook Configs', view: 'validatingwebhookconfigurations', icon: <ShieldCheck size={18} /> },
                 { label: 'Priority Classes', view: 'priorityclasses', icon: <Star size={18} /> },
                 { label: 'Runtime Classes', view: 'runtimeclasses', icon: <Cpu size={18} /> },
+            ]
+        },
+        {
+            id: 'helm',
+            title: 'Helm',
+            items: [
+                { label: 'Releases', view: 'helm-releases', icon: <Anchor size={18} /> },
             ]
         },
         {

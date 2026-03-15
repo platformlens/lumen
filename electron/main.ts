@@ -93,6 +93,8 @@ let lastDeploymentWatchScope = '';
 let podBatchBuffer: WatcherBatchBuffer | null = null;
 let deploymentBatchBuffer: WatcherBatchBuffer | null = null;
 let nodeBatchBuffer: WatcherBatchBuffer | null = null;
+let helmBatchBuffer: WatcherBatchBuffer | null = null;
+let helmWatchGeneration = 0;
 // Per-resource-type batch buffers for generic watcher resources that have worker transforms
 const genericBatchBuffers = new Map<string, WatcherBatchBuffer>();
 const genericWatchGenerations = new Map<string, number>();
@@ -1600,6 +1602,67 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:getVersion', async () => {
     return app.getVersion();
+  });
+
+  // --- Helm release management ---
+  ipcMain.handle('helm:getReleases', async (_, contextName: string, namespaces: string[]) => {
+    return k8sService.getHelmReleases(contextName, namespaces);
+  });
+
+  ipcMain.handle('helm:getRelease', async (_, contextName: string, namespace: string, name: string) => {
+    return k8sService.getHelmRelease(contextName, namespace, name);
+  });
+
+  ipcMain.handle('helm:getReleaseHistory', async (_, contextName: string, namespace: string, name: string) => {
+    return k8sService.getHelmReleaseHistory(contextName, namespace, name);
+  });
+
+  ipcMain.handle('helm:uninstallRelease', async (_, contextName: string, namespace: string, name: string) => {
+    return k8sService.uninstallHelmRelease(contextName, namespace, name);
+  });
+
+  ipcMain.handle('helm:rollbackRelease', async (_, contextName: string, namespace: string, name: string, revision: number) => {
+    return k8sService.rollbackHelmRelease(contextName, namespace, name, revision);
+  });
+
+  // --- Helm release watcher (real-time) ---
+  ipcMain.on('k8s:watchHelmReleases', (event, contextName, namespaces) => {
+    console.log('[HelmWatcher:main] Starting watch for context:', contextName, 'namespaces:', namespaces);
+    k8sService.stopHelmReleaseWatch();
+    if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
+    const gen = ++helmWatchGeneration;
+
+    helmBatchBuffer = new WatcherBatchBuffer({
+      flushIntervalMs: 150,
+      onFlush: async (events) => {
+        if (gen !== helmWatchGeneration) return;
+        try {
+          const request: TransformRequest = {
+            id: `helmrelease-${++transformRequestId}`,
+            resourceType: 'helmrelease',
+            events,
+          };
+          const response = await sendToWorker(request);
+          if (response.error) console.warn('[HelmWatcher:main] Transform warning:', response.error);
+          if (response.events.length > 0 && gen === helmWatchGeneration) {
+            event.sender.send('k8s:helmReleaseBatchChange', response.events);
+          }
+        } catch (err) {
+          console.error('[HelmWatcher:main] Batch transform error:', err);
+        }
+      },
+    });
+
+    k8sService.startHelmReleaseWatch(contextName, namespaces, (type, rawSecret) => {
+      if (gen !== helmWatchGeneration) return;
+      helmBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: rawSecret });
+    });
+  });
+
+  ipcMain.on('k8s:stopWatchHelmReleases', () => {
+    console.log('[HelmWatcher:main] Stopping watch');
+    k8sService.stopHelmReleaseWatch();
+    if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
   });
 }
 

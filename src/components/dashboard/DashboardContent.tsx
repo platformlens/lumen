@@ -6,6 +6,8 @@ import { NodesView } from './views/NodesView';
 import { CertManagerView } from './views/CertManagerView';
 import { AwsView } from './views/AwsView';
 import { GenericResourceView } from './views/GenericResourceView';
+import { HelmReleasesView } from './views/HelmReleasesView';
+import { HelmReleaseDetail } from './views/HelmReleaseDetail';
 import { ViewSummary } from '../shared/ViewSummary';
 import { TimeAgo } from '../shared/TimeAgo';
 
@@ -75,6 +77,9 @@ interface DashboardContentProps {
     getSortedData: (data: any[]) => any[];
     summariesEnabled?: boolean;
     isUpdating?: boolean;
+    helmReleases?: any[];
+    helmReleasesLoading?: boolean;
+    showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 /**
@@ -136,6 +141,9 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     getSortedData,
     summariesEnabled = false,
     isUpdating,
+    helmReleases = [],
+    helmReleasesLoading = false,
+    showToast,
 }) => {
     // Overview View
     if (activeView === 'overview') {
@@ -825,6 +833,37 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_runtimeClasses}
                 onRowClick={(rc: any) => onResourceClick(rc, 'runtimeclass')}
                 searchQuery={searchQuery}
+            />
+        );
+    }
+
+    // Helm Releases View
+    if (activeView === 'helm-releases') {
+        return (
+            <HelmReleasesView
+                clusterName={clusterName}
+                selectedNamespaces={selectedNamespaces}
+                searchQuery={searchQuery}
+                onNavigateToDetail={(namespace, name) => onNavigate?.(`helm-release-detail/${namespace}/${name}`)}
+                showToast={showToast || (() => { })}
+                helmReleases={helmReleases}
+                isLoading={helmReleasesLoading}
+            />
+        );
+    }
+
+    // Helm Release Detail View
+    if (activeView.startsWith('helm-release-detail/')) {
+        const parts = activeView.split('/');
+        const namespace = parts[1];
+        const name = parts[2];
+        return (
+            <HelmReleaseDetail
+                clusterName={clusterName}
+                namespace={namespace}
+                releaseName={name}
+                onBack={() => onNavigate?.('helm-releases')}
+                showToast={showToast || (() => { })}
             />
         );
     }
