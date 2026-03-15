@@ -356,6 +356,7 @@ contextBridge.exposeInMainWorld('k8s', {
     isGrantedConfigured: () => ipcRenderer.invoke('aws:isGrantedConfigured'),
     getCallerIdentity: (region?: string) => ipcRenderer.invoke('aws:getCallerIdentity', region),
     lookupCloudTrailEvents: (params: { region: string; clusterName: string; startTime: string; endTime: string; nextToken?: string; maxResults?: number }) => ipcRenderer.invoke('aws:lookupCloudTrailEvents', params),
+    queryAuditLogs: (params: { region: string; clusterName: string; startTime: string; endTime: string; query: string }) => ipcRenderer.invoke('aws:queryAuditLogs', params),
     onCredentialsChanged: (callback: (data: { identity: string; account: string; profile?: string }) => void) => {
       const listener = (_: any, data: { identity: string; account: string; profile?: string }) => callback(data);
       ipcRenderer.on('aws:credentialsChanged', listener);

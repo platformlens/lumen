@@ -8,6 +8,7 @@ import { watchFile, unwatchFile, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
+import type { AuditLogWorkerRequest, AuditLogWorkerResponse } from './audit-log-worker';
 
 export class AwsService extends EventEmitter {
     // Cache clients by region to avoid recreating them, but allow refresh
@@ -21,6 +22,12 @@ export class AwsService extends EventEmitter {
     private watchedFiles: string[] = [];
     private fileWatchDebounce: NodeJS.Timeout | null = null;
     private lastKnownIdentity: string | null = null;
+
+    /**
+     * Injected callback for sending requests to the audit-log worker thread.
+     * Set from main.ts after the worker is created.
+     */
+    public sendToAuditLogWorker: ((request: AuditLogWorkerRequest) => Promise<AuditLogWorkerResponse>) | null = null;
 
     constructor() {
         super();
@@ -776,6 +783,107 @@ export class AwsService extends EventEmitter {
         return {
             events,
             nextToken: response.NextToken
+        };
+    }
+
+    async queryAuditLogs(params: {
+        region: string;
+        clusterName: string;
+        startTime: string;
+        endTime: string;
+        query: string;
+    }, creds: any): Promise<{
+        events: Array<{
+            timestamp: string;
+            verb: string;
+            username: string;
+            groups: string[];
+            namespace: string;
+            resource: string;
+            resourceName: string;
+            statusCode: number;
+            sourceIP: string;
+            userAgent: string;
+            rawEvent: string;
+        }>;
+    }> {
+        console.log(`[AwsService] queryAuditLogs region=${params.region} cluster=${params.clusterName}`);
+
+        if (!this.sendToAuditLogWorker) {
+            throw new Error('Audit log worker is not available. Please restart the application.');
+        }
+
+        // Resolve actual cluster name via DescribeCluster (kubeconfig alias may differ)
+        const cluster = await this.getEksCluster(params.region, params.clusterName, creds);
+        const actualClusterName = cluster?.name ?? params.clusterName;
+        const logGroupName = `/aws/eks/${actualClusterName}/cluster`;
+
+        console.log(`[AwsService] queryAuditLogs resolved cluster name: ${actualClusterName}, logGroup: ${logGroupName}`);
+
+        // Resolve AWS credentials — explicit creds first, then provider chain
+        let resolvedCreds: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
+        if (creds && typeof creds.accessKeyId === 'string' && creds.accessKeyId.trim() !== '' &&
+            typeof creds.secretAccessKey === 'string' && creds.secretAccessKey.trim() !== '') {
+            resolvedCreds = {
+                accessKeyId: creds.accessKeyId,
+                secretAccessKey: creds.secretAccessKey,
+                sessionToken: creds.sessionToken,
+            };
+        } else {
+            const provider = this.getFreshCredentialProvider();
+            const providerCreds = await provider();
+            resolvedCreds = {
+                accessKeyId: providerCreds.accessKeyId,
+                secretAccessKey: providerCreds.secretAccessKey,
+                sessionToken: providerCreds.sessionToken,
+            };
+        }
+
+        // Convert ISO timestamps to epoch seconds for Logs Insights
+        const startEpochSeconds = Math.floor(new Date(params.startTime).getTime() / 1000);
+        const endEpochSeconds = Math.floor(new Date(params.endTime).getTime() / 1000);
+
+        // Build worker request
+        const request: AuditLogWorkerRequest = {
+            id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            credentials: resolvedCreds,
+            region: params.region,
+            logGroupName,
+            startTime: startEpochSeconds,
+            endTime: endEpochSeconds,
+            query: params.query,
+        };
+
+        // Delegate to worker
+        const response = await this.sendToAuditLogWorker(request);
+
+        // Map worker errors to user-friendly messages
+        if (response.error) {
+            const err = response.error;
+            if (err.includes('ResourceNotFoundException')) {
+                throw new Error(
+                    'EKS control plane logging may not be enabled for this cluster. ' +
+                    'You can enable it in the EKS console under Logging → Audit.'
+                );
+            }
+            if (err.includes('AccessDeniedException') || err.includes('not authorized')) {
+                throw new Error(
+                    'Missing required permissions: logs:StartQuery and logs:GetQueryResults. ' +
+                    'Ensure your IAM role/user has CloudWatch Logs Insights access.'
+                );
+            }
+            if (err.includes('expired token') || err.includes('security token') ||
+                err.includes('invalid credentials') || err.includes('ExpiredTokenException')) {
+                throw new Error(
+                    'Your AWS credentials have expired or are invalid. ' +
+                    'Please refresh your credentials and try again.'
+                );
+            }
+            throw new Error(`Failed to query audit logs: ${err}`);
+        }
+
+        return {
+            events: response.events,
         };
     }
 

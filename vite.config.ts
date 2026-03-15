@@ -17,6 +17,7 @@ export default defineConfig({
               input: {
                 main: 'electron/main.ts',
                 'resource-transform-worker': 'electron/resource-transform-worker.ts',
+                'audit-log-worker': 'electron/audit-log-worker.ts',
               },
               external: ['bufferutil', 'utf-8-validate', 'node-pty'],
             },

@@ -19,6 +19,7 @@
     "@aws-sdk/client-bedrock": "^3.962.0",
     "@aws-sdk/client-bedrock-runtime": "^3.962.0",
     "@aws-sdk/client-cloudtrail": "^3.990.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.990.0",
     "@aws-sdk/client-ec2": "^3.962.0",
     "@aws-sdk/client-eks": "^3.962.0",
     "@aws-sdk/client-sts": "^3.962.0",

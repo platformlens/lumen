@@ -11,6 +11,7 @@ import {
     filterByIdentity, filterByEventType,
     computeTimeRange, isDateRangeExceeding90Days, sortEvents
 } from '../../../utils/cloudtrail-utils';
+import { AuditLogsPanel } from './AuditLogsPanel';
 
 interface AccessLogsViewProps {
     region: string;
@@ -52,6 +53,9 @@ function isPermissionsError(error: string): boolean {
 }
 
 export const AccessLogsView: React.FC<AccessLogsViewProps> = ({ region, clusterName, onBack }) => {
+    // --- Tab state ---
+    const [activeTab, setActiveTab] = useState<'access' | 'audit'>('access');
+
     // --- Filter state ---
     const [filters, setFilters] = useState<AccessLogsFilterState>({
         identityText: '',
@@ -220,235 +224,265 @@ export const AccessLogsView: React.FC<AccessLogsViewProps> = ({ region, clusterN
                 </span>
             </div>
 
-            {/* Filter Panel */}
-            <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                {/* Identity text */}
-                <div className="flex flex-col gap-1 min-w-[200px]">
-                    <label className="text-xs text-gray-400 flex items-center gap-1"><Search size={12} /> Identity</label>
-                    <input
-                        type="text"
-                        placeholder="Filter by username..."
-                        value={filters.identityText}
-                        onChange={e => handleIdentityTextChange(e.target.value)}
-                        className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
-                    />
-                </div>
-
-                {/* Identity type */}
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400 flex items-center gap-1"><Filter size={12} /> Type</label>
-                    <select
-                        value={filters.identityType}
-                        onChange={e => setFilters(prev => ({ ...prev, identityType: e.target.value as AccessLogsFilterState['identityType'] }))}
-                        className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50 appearance-none cursor-pointer"
-                    >
-                        {IDENTITY_TYPE_OPTIONS.map(opt => (
-                            <option key={opt.value} value={opt.value} className="bg-gray-900">{opt.label}</option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* Event type multi-select */}
-                <div className="flex flex-col gap-1 relative">
-                    <label className="text-xs text-gray-400 flex items-center gap-1"><Filter size={12} /> Event Types</label>
-                    <button
-                        onClick={() => setEventTypeDropdownOpen(prev => !prev)}
-                        className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50 flex items-center gap-2 min-w-[180px]"
-                    >
-                        <span className="flex-1 text-left truncate">
-                            {filters.eventTypes.length === 0 ? 'All Events' : `${filters.eventTypes.length} selected`}
-                        </span>
-                        <ChevronDown size={14} className={`transition-transform ${eventTypeDropdownOpen ? 'rotate-180' : ''}`} />
-                    </button>
-                    {eventTypeDropdownOpen && (
-                        <div className="absolute top-full left-0 mt-1 z-50 w-56 rounded-lg bg-gray-900 border border-white/10 shadow-xl py-1 max-h-60 overflow-y-auto">
-                            {EVENT_TYPE_OPTIONS.map(evt => (
-                                <label key={evt} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer text-sm text-gray-300">
-                                    <input
-                                        type="checkbox"
-                                        checked={filters.eventTypes.includes(evt)}
-                                        onChange={() => toggleEventType(evt)}
-                                        className="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/50"
-                                    />
-                                    {evt}
-                                </label>
-                            ))}
-                            {filters.eventTypes.length > 0 && (
-                                <button
-                                    onClick={() => setFilters(prev => ({ ...prev, eventTypes: [] }))}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 border-t border-white/5 mt-1"
-                                >
-                                    Clear all
-                                </button>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {/* Time range segmented control */}
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400 flex items-center gap-1"><Clock size={12} /> Time Range</label>
-                    <div className="flex rounded-lg overflow-hidden border border-white/10">
-                        {TIME_RANGE_OPTIONS.map(opt => (
-                            <button
-                                key={opt.value}
-                                onClick={() => setFilters(prev => ({ ...prev, timeRange: opt.value }))}
-                                className={`px-3 py-1.5 text-xs font-medium transition-colors ${filters.timeRange === opt.value
-                                    ? 'bg-blue-600/30 text-blue-300 border-blue-500/30'
-                                    : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                                    } ${opt.value !== '1h' ? 'border-l border-white/10' : ''}`}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Custom date pickers */}
-                {filters.timeRange === 'custom' && (
-                    <div className="flex items-end gap-2">
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs text-gray-400">Start</label>
-                            <input
-                                type="date"
-                                value={toDateInputValue(filters.customStartDate)}
-                                onChange={e => {
-                                    const d = e.target.value ? new Date(e.target.value + 'T00:00:00') : undefined;
-                                    setFilters(prev => ({ ...prev, customStartDate: d }));
-                                }}
-                                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs text-gray-400">End</label>
-                            <input
-                                type="date"
-                                value={toDateInputValue(filters.customEndDate)}
-                                onChange={e => {
-                                    const d = e.target.value ? new Date(e.target.value + 'T23:59:59') : undefined;
-                                    setFilters(prev => ({ ...prev, customEndDate: d }));
-                                }}
-                                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {/* Refresh button */}
+            {/* Tab Switcher */}
+            <div className="flex rounded-lg overflow-hidden border border-white/10 self-start">
                 <button
-                    onClick={() => fetchEvents(false)}
-                    disabled={loading}
-                    className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50 self-end"
-                    title="Refresh"
+                    onClick={() => setActiveTab('access')}
+                    className={`px-4 py-1.5 text-xs font-medium transition-colors ${activeTab === 'access'
+                        ? 'bg-blue-600/30 text-blue-300'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                        }`}
                 >
-                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                    Access Logs
+                </button>
+                <button
+                    onClick={() => setActiveTab('audit')}
+                    className={`px-4 py-1.5 text-xs font-medium transition-colors border-l border-white/10 ${activeTab === 'audit'
+                        ? 'bg-blue-600/30 text-blue-300'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                        }`}
+                >
+                    Audit Logs
                 </button>
             </div>
 
-            {/* 90-day warning */}
-            {show90DayWarning && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm">
-                    <AlertTriangle size={16} className="flex-shrink-0" />
-                    CloudTrail event history is limited to 90 days. Results may be incomplete for the selected range.
-                </div>
+            {/* Audit Logs Tab */}
+            {activeTab === 'audit' && (
+                <AuditLogsPanel region={region} clusterName={clusterName} />
             )}
 
-            {/* Error states */}
-            {error && (
-                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-start gap-3 text-red-400">
-                    <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                        <p className="font-semibold mb-1">
-                            {isAuthError(error) ? 'Authentication Error' : isPermissionsError(error) ? 'Permissions Error' : 'Error Loading Events'}
-                        </p>
-                        <p className="text-sm">
-                            {isPermissionsError(error)
-                                ? 'Missing required permission: cloudtrail:LookupEvents. Ensure your AWS credentials have CloudTrail read access.'
-                                : error}
-                        </p>
+            {/* Access Logs Tab (existing CloudTrail content) */}
+            {activeTab === 'access' && (<>
+                {/* Filter Panel */}
+                <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
+                    {/* Identity text */}
+                    <div className="flex flex-col gap-1 min-w-[200px]">
+                        <label className="text-xs text-gray-400 flex items-center gap-1"><Search size={12} /> Identity</label>
+                        <input
+                            type="text"
+                            placeholder="Filter by username..."
+                            value={filters.identityText}
+                            onChange={e => handleIdentityTextChange(e.target.value)}
+                            className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50"
+                        />
                     </div>
-                    <button onClick={() => fetchEvents(false)} className="p-2 hover:bg-red-500/20 rounded-lg flex-shrink-0" title="Retry">
-                        <RefreshCw size={16} />
-                    </button>
-                </div>
-            )}
 
-            {/* Loading state */}
-            {loading && !error && (
-                <div className="flex items-center justify-center h-full">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
-                </div>
-            )}
+                    {/* Identity type */}
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-gray-400 flex items-center gap-1"><Filter size={12} /> Type</label>
+                        <select
+                            value={filters.identityType}
+                            onChange={e => setFilters(prev => ({ ...prev, identityType: e.target.value as AccessLogsFilterState['identityType'] }))}
+                            className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50 appearance-none cursor-pointer"
+                        >
+                            {IDENTITY_TYPE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value} className="bg-gray-900">{opt.label}</option>
+                            ))}
+                        </select>
+                    </div>
 
-            {/* Event table */}
-            {!loading && !error && (
-                <div className="flex-1 flex flex-col min-h-0">
-                    {sortedEvents.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-2">
-                            <Search size={32} />
-                            <p className="text-sm">No audit events found for the selected filters.</p>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="text-xs text-gray-500 mb-2">
-                                {filteredEvents.length} event{filteredEvents.length !== 1 ? 's' : ''}
-                                {events.length !== filteredEvents.length && ` (filtered from ${events.length})`}
+                    {/* Event type multi-select */}
+                    <div className="flex flex-col gap-1 relative">
+                        <label className="text-xs text-gray-400 flex items-center gap-1"><Filter size={12} /> Event Types</label>
+                        <button
+                            onClick={() => setEventTypeDropdownOpen(prev => !prev)}
+                            className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50 flex items-center gap-2 min-w-[180px]"
+                        >
+                            <span className="flex-1 text-left truncate">
+                                {filters.eventTypes.length === 0 ? 'All Events' : `${filters.eventTypes.length} selected`}
+                            </span>
+                            <ChevronDown size={14} className={`transition-transform ${eventTypeDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                        {eventTypeDropdownOpen && (
+                            <div className="absolute top-full left-0 mt-1 z-50 w-56 rounded-lg bg-gray-900 border border-white/10 shadow-xl py-1 max-h-60 overflow-y-auto">
+                                {EVENT_TYPE_OPTIONS.map(evt => (
+                                    <label key={evt} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer text-sm text-gray-300">
+                                        <input
+                                            type="checkbox"
+                                            checked={filters.eventTypes.includes(evt)}
+                                            onChange={() => toggleEventType(evt)}
+                                            className="rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/50"
+                                        />
+                                        {evt}
+                                    </label>
+                                ))}
+                                {filters.eventTypes.length > 0 && (
+                                    <button
+                                        onClick={() => setFilters(prev => ({ ...prev, eventTypes: [] }))}
+                                        className="w-full text-left px-3 py-1.5 text-xs text-gray-500 hover:text-gray-300 hover:bg-white/5 border-t border-white/5 mt-1"
+                                    >
+                                        Clear all
+                                    </button>
+                                )}
                             </div>
-                            <div className="flex-1 min-h-0">
-                                <VirtualizedTable
-                                    data={sortedEvents}
-                                    columns={columns}
-                                    onRowClick={handleRowClick}
-                                    sortConfig={sortConfig}
-                                    onSort={handleSort}
-                                    tableId="access-logs"
+                        )}
+                    </div>
+
+                    {/* Time range segmented control */}
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-gray-400 flex items-center gap-1"><Clock size={12} /> Time Range</label>
+                        <div className="flex rounded-lg overflow-hidden border border-white/10">
+                            {TIME_RANGE_OPTIONS.map(opt => (
+                                <button
+                                    key={opt.value}
+                                    onClick={() => setFilters(prev => ({ ...prev, timeRange: opt.value }))}
+                                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${filters.timeRange === opt.value
+                                        ? 'bg-blue-600/30 text-blue-300 border-blue-500/30'
+                                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                                        } ${opt.value !== '1h' ? 'border-l border-white/10' : ''}`}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Custom date pickers */}
+                    {filters.timeRange === 'custom' && (
+                        <div className="flex items-end gap-2">
+                            <div className="flex flex-col gap-1">
+                                <label className="text-xs text-gray-400">Start</label>
+                                <input
+                                    type="date"
+                                    value={toDateInputValue(filters.customStartDate)}
+                                    onChange={e => {
+                                        const d = e.target.value ? new Date(e.target.value + 'T00:00:00') : undefined;
+                                        setFilters(prev => ({ ...prev, customStartDate: d }));
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50"
                                 />
                             </div>
-
-                            {/* Expanded event detail */}
-                            {expandedEventId && (() => {
-                                const evt = sortedEvents.find(e => e.eventId === expandedEventId);
-                                if (!evt) return null;
-                                let formattedJson = evt.rawEvent;
-                                try { formattedJson = JSON.stringify(JSON.parse(evt.rawEvent), null, 2); } catch { /* raw event not valid JSON, use as-is */ }
-                                return (
-                                    <div className="mt-2 rounded-xl bg-white/5 border border-white/10 p-4 max-h-80 overflow-auto">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-semibold text-white flex items-center gap-2">
-                                                <ChevronRight size={14} className="rotate-90" />
-                                                Event Detail — {evt.eventName}
-                                            </span>
-                                            <button
-                                                onClick={() => setExpandedEventId(null)}
-                                                className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white"
-                                            >
-                                                <X size={14} />
-                                            </button>
-                                        </div>
-                                        <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap break-all leading-relaxed">
-                                            {formattedJson}
-                                        </pre>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Load More */}
-                            {nextToken && (
-                                <div className="flex justify-center mt-3 pb-2">
-                                    <GlassButton
-                                        variant="secondary"
-                                        onClick={() => fetchEvents(true)}
-                                        isLoading={loadingMore}
-                                        icon={loadingMore ? undefined : <ChevronDown size={16} />}
-                                    >
-                                        {loadingMore ? 'Loading...' : 'Load More'}
-                                    </GlassButton>
-                                </div>
-                            )}
-                        </>
+                            <div className="flex flex-col gap-1">
+                                <label className="text-xs text-gray-400">End</label>
+                                <input
+                                    type="date"
+                                    value={toDateInputValue(filters.customEndDate)}
+                                    onChange={e => {
+                                        const d = e.target.value ? new Date(e.target.value + 'T23:59:59') : undefined;
+                                        setFilters(prev => ({ ...prev, customEndDate: d }));
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-blue-500/50"
+                                />
+                            </div>
+                        </div>
                     )}
+
+                    {/* Refresh button */}
+                    <button
+                        onClick={() => fetchEvents(false)}
+                        disabled={loading}
+                        className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50 self-end"
+                        title="Refresh"
+                    >
+                        <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                    </button>
                 </div>
-            )}
+
+                {/* 90-day warning */}
+                {show90DayWarning && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm">
+                        <AlertTriangle size={16} className="flex-shrink-0" />
+                        CloudTrail event history is limited to 90 days. Results may be incomplete for the selected range.
+                    </div>
+                )}
+
+                {/* Error states */}
+                {error && (
+                    <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-start gap-3 text-red-400">
+                        <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                            <p className="font-semibold mb-1">
+                                {isAuthError(error) ? 'Authentication Error' : isPermissionsError(error) ? 'Permissions Error' : 'Error Loading Events'}
+                            </p>
+                            <p className="text-sm">
+                                {isPermissionsError(error)
+                                    ? 'Missing required permission: cloudtrail:LookupEvents. Ensure your AWS credentials have CloudTrail read access.'
+                                    : error}
+                            </p>
+                        </div>
+                        <button onClick={() => fetchEvents(false)} className="p-2 hover:bg-red-500/20 rounded-lg flex-shrink-0" title="Retry">
+                            <RefreshCw size={16} />
+                        </button>
+                    </div>
+                )}
+
+                {/* Loading state */}
+                {loading && !error && (
+                    <div className="flex items-center justify-center h-full">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                    </div>
+                )}
+
+                {/* Event table */}
+                {!loading && !error && (
+                    <div className="flex-1 flex flex-col min-h-0">
+                        {sortedEvents.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-2">
+                                <Search size={32} />
+                                <p className="text-sm">No audit events found for the selected filters.</p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="text-xs text-gray-500 mb-2">
+                                    {filteredEvents.length} event{filteredEvents.length !== 1 ? 's' : ''}
+                                    {events.length !== filteredEvents.length && ` (filtered from ${events.length})`}
+                                </div>
+                                <div className="flex-1 min-h-0">
+                                    <VirtualizedTable
+                                        data={sortedEvents}
+                                        columns={columns}
+                                        onRowClick={handleRowClick}
+                                        sortConfig={sortConfig}
+                                        onSort={handleSort}
+                                        tableId="access-logs"
+                                    />
+                                </div>
+
+                                {/* Expanded event detail */}
+                                {expandedEventId && (() => {
+                                    const evt = sortedEvents.find(e => e.eventId === expandedEventId);
+                                    if (!evt) return null;
+                                    let formattedJson = evt.rawEvent;
+                                    try { formattedJson = JSON.stringify(JSON.parse(evt.rawEvent), null, 2); } catch { /* raw event not valid JSON, use as-is */ }
+                                    return (
+                                        <div className="mt-2 rounded-xl bg-white/5 border border-white/10 p-4 max-h-80 overflow-auto">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-sm font-semibold text-white flex items-center gap-2">
+                                                    <ChevronRight size={14} className="rotate-90" />
+                                                    Event Detail — {evt.eventName}
+                                                </span>
+                                                <button
+                                                    onClick={() => setExpandedEventId(null)}
+                                                    className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white"
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </div>
+                                            <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap break-all leading-relaxed">
+                                                {formattedJson}
+                                            </pre>
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Load More */}
+                                {nextToken && (
+                                    <div className="flex justify-center mt-3 pb-2">
+                                        <GlassButton
+                                            variant="secondary"
+                                            onClick={() => fetchEvents(true)}
+                                            isLoading={loadingMore}
+                                            icon={loadingMore ? undefined : <ChevronDown size={16} />}
+                                        >
+                                            {loadingMore ? 'Loading...' : 'Load More'}
+                                        </GlassButton>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
+            </>)}
         </div>
     );
 };

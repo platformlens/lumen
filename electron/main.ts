@@ -19,6 +19,7 @@ import Store from 'electron-store'
 import { Worker } from 'worker_threads'
 import { WatcherBatchBuffer } from './watcher-batch-buffer'
 import type { TransformRequest, TransformResponse } from './resource-transform-worker'
+import type { AuditLogWorkerRequest, AuditLogWorkerResponse } from './audit-log-worker'
 
 // Fix PATH for MacOS to find aws/kubectl etc
 fixPath();
@@ -74,6 +75,7 @@ const store = new Store();
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
 const awsService = new AwsService()
+awsService.sendToAuditLogWorker = sendToAuditLogWorker;
 
 // Initialize Context Engine with config from store or defaults
 const contextEngineConfig: ContextEngineConfig = (store.get('contextEngineConfig') as ContextEngineConfig) || {
@@ -113,6 +115,12 @@ let transformWorker: Worker | null = null;
 const pendingTransforms = new Map<string, (response: TransformResponse) => void>();
 let transformRequestId = 0;
 
+// Spawn audit-log worker (lazily on first request)
+const auditLogWorkerPath = path.join(__dirname, 'audit-log-worker.js');
+let auditLogWorker: Worker | null = null;
+const pendingAuditLogRequests = new Map<string, (response: AuditLogWorkerResponse) => void>();
+let auditLogRequestId = 0;
+
 function getOrCreateWorker(): Worker {
   if (!transformWorker) {
     transformWorker = new Worker(workerPath);
@@ -139,6 +147,35 @@ function sendToWorker(request: TransformRequest): Promise<TransformResponse> {
   return new Promise((resolve) => {
     pendingTransforms.set(request.id, resolve);
     getOrCreateWorker().postMessage(request);
+  });
+}
+
+function getOrCreateAuditLogWorker(): Worker {
+  if (!auditLogWorker) {
+    auditLogWorker = new Worker(auditLogWorkerPath);
+    auditLogWorker.on('message', (response: AuditLogWorkerResponse) => {
+      const resolve = pendingAuditLogRequests.get(response.id);
+      if (resolve) {
+        pendingAuditLogRequests.delete(response.id);
+        resolve(response);
+      }
+    });
+    auditLogWorker.on('error', (err) => {
+      console.error('[Worker] Audit log worker error:', err);
+      auditLogWorker = null;
+    });
+    auditLogWorker.on('exit', (code) => {
+      if (code !== 0) console.error('[Worker] Audit log worker exited with code', code);
+      auditLogWorker = null;
+    });
+  }
+  return auditLogWorker;
+}
+
+function sendToAuditLogWorker(request: AuditLogWorkerRequest): Promise<AuditLogWorkerResponse> {
+  return new Promise((resolve) => {
+    pendingAuditLogRequests.set(request.id, resolve);
+    getOrCreateAuditLogWorker().postMessage(request);
   });
 }
 
@@ -177,6 +214,17 @@ function registerIpcHandlers() {
   ipcMain.handle('aws:lookupCloudTrailEvents', async (_, params) => {
     const creds = store.get('awsCreds');
     return awsService.lookupCloudTrailEvents(params, creds);
+  });
+
+  ipcMain.handle('aws:queryAuditLogs', async (_, params) => {
+    try {
+      const creds = store.get('awsCreds');
+      return await awsService.queryAuditLogs(params, creds);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error querying audit logs';
+      console.error('[main] aws:queryAuditLogs error:', message);
+      return { error: message };
+    }
   });
 
   ipcMain.handle('aws:checkAuth', async (_, region) => {
