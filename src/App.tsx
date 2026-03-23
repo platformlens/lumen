@@ -11,6 +11,8 @@ import { ToastNotification } from './components/shared/ToastNotification'
 import { NotificationsPanel } from './components/shared/NotificationsPanel'
 import { ConfirmModal } from './components/shared/ConfirmModal'
 import { OnboardingModal, DEFAULT_ONBOARDING_STEPS } from './components/shared/OnboardingModal'
+import { WhatsNewModal } from './components/shared/WhatsNewModal'
+import { shouldShowWhatsNew, handleDismiss } from './utils/whats-new-utils'
 import { BedrockAccessModal } from './components/shared/BedrockAccessModal'
 import { AnimatePresence } from 'framer-motion'
 
@@ -78,6 +80,42 @@ function App() {
         } catch (err) {
             console.warn('Failed to save onboarding status:', err);
         }
+    };
+
+    // What's New State
+    const [showWhatsNew, setShowWhatsNew] = useState(false);
+    const [isPackaged, setIsPackaged] = useState(true);
+
+    useEffect(() => {
+        const checkWhatsNew = async () => {
+            try {
+                const [version, packaged, lastSeen] = await Promise.all([
+                    window.k8s.app.getVersion(),
+                    window.k8s.app.isPackaged(),
+                    window.k8s.whatsNew.getLastSeenVersion(),
+                ]);
+                setIsPackaged(packaged);
+                if (shouldShowWhatsNew({ current: version, stored: lastSeen, isPackaged: packaged })) {
+                    setShowWhatsNew(true);
+                }
+            } catch (err) {
+                console.warn('Failed to check whats-new status:', err);
+            }
+        };
+        checkWhatsNew();
+    }, []);
+
+    const handleWhatsNewDismiss = async () => {
+        setShowWhatsNew(false);
+        handleDismiss({
+            version: appVersion,
+            isPackaged,
+            setLastSeenVersion: (v) => {
+                window.k8s.whatsNew.setLastSeenVersion(v).catch((err: unknown) => {
+                    console.warn('Failed to save whats-new status:', err);
+                });
+            },
+        });
     };
 
     // Bedrock Access Error State
@@ -666,6 +704,8 @@ function App() {
         try {
             let yamlContent: string;
             let onSaveYaml: (newContent: string) => Promise<void>;
+            let resolvedKind: string;
+            let resolvedApiVersion: string;
 
             // Check if we have a mapping for this resource type
             const resourceInfo = RESOURCE_TYPE_MAP[type];
@@ -673,25 +713,26 @@ function App() {
             if (!resourceInfo) {
                 // For custom resources or unmapped types, try to get info from the resource itself
                 if (resource.apiVersion && resource.kind) {
-                    const apiVersion = resource.apiVersion;
-                    const kind = resource.kind;
+                    resolvedApiVersion = resource.apiVersion;
+                    resolvedKind = resource.kind;
                     const isNamespaced = !!namespace;
 
-                    yamlContent = await window.k8s.getResourceYaml(selectedCluster, apiVersion, kind, name, isNamespaced ? namespace : undefined);
+                    yamlContent = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, isNamespaced ? namespace : undefined);
 
+                    const tabId = `yaml-${resolvedKind}-${namespace || 'global'}-${name}`;
                     onSaveYaml = async (newContent: string) => {
                         try {
-                            await window.k8s.updateResourceYaml(selectedCluster, apiVersion, kind, name, newContent, isNamespaced ? namespace : undefined);
-                            const latestYaml = await window.k8s.getResourceYaml(selectedCluster, apiVersion, kind, name, isNamespaced ? namespace : undefined);
+                            await window.k8s.updateResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, newContent, isNamespaced ? namespace : undefined);
+                            const latestYaml = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, isNamespaced ? namespace : undefined);
 
                             setPanelTabs(prev => prev.map(t => {
-                                if (t.id === `yaml-${type}-${namespace || 'global'}-${name}`) {
+                                if (t.id === tabId) {
                                     return { ...t, yamlContent: latestYaml };
                                 }
                                 return t;
                             }));
 
-                            showToast(`${kind} YAML updated successfully`, 'success');
+                            showToast(`${resolvedKind} YAML updated successfully`, 'success');
                         } catch (err: any) {
                             showToast(`Update failed: ${err.message || err}`, 'error');
                             throw err;
@@ -703,23 +744,26 @@ function App() {
                 }
             } else {
                 // Use the mapped resource info
-                const { apiVersion, kind, namespaced } = resourceInfo;
+                resolvedApiVersion = resourceInfo.apiVersion;
+                resolvedKind = resourceInfo.kind;
+                const { namespaced } = resourceInfo;
 
-                yamlContent = await window.k8s.getResourceYaml(selectedCluster, apiVersion, kind, name, namespaced ? namespace : undefined);
+                yamlContent = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, namespaced ? namespace : undefined);
 
+                const tabId = `yaml-${resolvedKind}-${namespace || 'global'}-${name}`;
                 onSaveYaml = async (newContent: string) => {
                     try {
-                        await window.k8s.updateResourceYaml(selectedCluster, apiVersion, kind, name, newContent, namespaced ? namespace : undefined);
-                        const latestYaml = await window.k8s.getResourceYaml(selectedCluster, apiVersion, kind, name, namespaced ? namespace : undefined);
+                        await window.k8s.updateResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, newContent, namespaced ? namespace : undefined);
+                        const latestYaml = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, namespaced ? namespace : undefined);
 
                         setPanelTabs(prev => prev.map(t => {
-                            if (t.id === `yaml-${type}-${namespace || 'global'}-${name}`) {
+                            if (t.id === tabId) {
                                 return { ...t, yamlContent: latestYaml };
                             }
                             return t;
                         }));
 
-                        showToast(`${kind} YAML updated successfully`, 'success');
+                        showToast(`${resolvedKind} YAML updated successfully`, 'success');
                     } catch (err: any) {
                         showToast(`Update failed: ${err.message || err}`, 'error');
                         throw err;
@@ -727,7 +771,8 @@ function App() {
                 };
             }
 
-            const tabId = `yaml-${type}-${namespace || 'global'}-${name}`;
+            const tabId = `yaml-${resolvedKind!}-${namespace || 'global'}-${name}`;
+            const tabSubtitle = [resolvedKind!, namespace || 'global'].join(' · ');
 
             // Check if tab exists
             if (!panelTabs.find(t => t.id === tabId)) {
@@ -735,7 +780,7 @@ function App() {
                     id: tabId,
                     type: 'yaml',
                     title: `${name}.yaml`,
-                    subtitle: namespace || 'Global',
+                    subtitle: tabSubtitle,
                     yamlContent,
                     onSaveYaml
                 }]);
@@ -1322,6 +1367,13 @@ function App() {
                 isOpen={showOnboarding}
                 onComplete={handleOnboardingComplete}
                 steps={DEFAULT_ONBOARDING_STEPS}
+                appVersion={appVersion}
+            />
+
+            {/* What's New Modal */}
+            <WhatsNewModal
+                isOpen={showWhatsNew}
+                onDismiss={handleWhatsNewDismiss}
                 appVersion={appVersion}
             />
 

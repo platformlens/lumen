@@ -1652,6 +1652,20 @@ function registerIpcHandlers() {
     return app.getVersion();
   });
 
+  // --- What's New ---
+  ipcMain.handle('whatsNew:getLastSeenVersion', async () => {
+    return (store.get('whatsNewLastSeenVersion') as string) || null;
+  });
+
+  ipcMain.handle('whatsNew:setLastSeenVersion', async (_, version: string) => {
+    store.set('whatsNewLastSeenVersion', version);
+    return true;
+  });
+
+  ipcMain.handle('app:isPackaged', () => {
+    return app.isPackaged;
+  });
+
   // --- Helm release management ---
   ipcMain.handle('helm:getReleases', async (_, contextName: string, namespaces: string[]) => {
     return k8sService.getHelmReleases(contextName, namespaces);

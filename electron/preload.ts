@@ -368,6 +368,7 @@ contextBridge.exposeInMainWorld('k8s', {
   app: {
     restart: () => ipcRenderer.invoke('app:restart'),
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    isPackaged: () => ipcRenderer.invoke('app:isPackaged'),
   },
 
   // --- Helm ---
@@ -397,6 +398,12 @@ contextBridge.exposeInMainWorld('k8s', {
   onboarding: {
     getLastSeenVersion: () => ipcRenderer.invoke('onboarding:getLastSeenVersion'),
     setLastSeenVersion: (version: string) => ipcRenderer.invoke('onboarding:setLastSeenVersion', version),
+  },
+
+  // --- What's New ---
+  whatsNew: {
+    getLastSeenVersion: () => ipcRenderer.invoke('whatsNew:getLastSeenVersion'),
+    setLastSeenVersion: (version: string) => ipcRenderer.invoke('whatsNew:setLastSeenVersion', version),
   },
 
   // --- AI Events ---
