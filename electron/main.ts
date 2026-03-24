@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import fixPath from 'fix-path';
 import { fileURLToPath } from 'node:url'
@@ -1664,6 +1664,42 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:isPackaged', () => {
     return app.isPackaged;
+  });
+
+  // --- File Dialog ---
+  ipcMain.handle('dialog:openYamlFile', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Open YAML File',
+      filters: [
+        { name: 'YAML Files', extensions: ['yaml', 'yml'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const filePath = result.filePaths[0];
+    const fs = await import('fs/promises');
+    const content = await fs.readFile(filePath, 'utf-8');
+    return { filePath, content };
+  });
+
+  ipcMain.handle('dialog:saveYamlFile', async (_, filePath: string | null, content: string) => {
+    let targetPath = filePath;
+    if (!targetPath) {
+      const result = await dialog.showSaveDialog({
+        title: 'Save YAML File',
+        filters: [
+          { name: 'YAML Files', extensions: ['yaml', 'yml'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+        defaultPath: 'manifest.yaml',
+      });
+      if (result.canceled || !result.filePath) return null;
+      targetPath = result.filePath;
+    }
+    const fs = await import('fs/promises');
+    await fs.writeFile(targetPath, content, 'utf-8');
+    return targetPath;
   });
 
   // --- Helm release management ---

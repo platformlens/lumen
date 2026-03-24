@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useTransition } from 'react'
-import { Sparkles, Pin } from 'lucide-react';
+import { useState, useEffect, useRef, useTransition, useMemo } from 'react'
+import { Sparkles, Pin, PenTool } from 'lucide-react';
 import { Sidebar } from './components/features/sidebar/Sidebar'
 import { SecondarySidebar } from './components/features/sidebar/SecondarySidebar'
 import { Dashboard } from './components/Dashboard'
 import { Settings } from './components/features/settings/Settings'
 import { LogViewer, PanelTab } from './components/features/logs/LogViewer'
+import { YamlEditor } from './components/features/yaml-editor/YamlEditor'
 import { StatusBar } from './components/features/layout/StatusBar'
 import { BottomPanel } from './components/features/layout/BottomPanel'
 import { ToastNotification } from './components/shared/ToastNotification'
@@ -22,7 +23,7 @@ import { RESOURCE_TYPE_MAP } from './utils/resource-utils';
 import { AIPanel } from './components/features/ai/AIPanel';
 
 function App() {
-    const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings'>('clusters')
+    const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor'>('clusters')
     const [selectedCluster, setSelectedCluster] = useState<string | null>(null)
     const [isEks, setIsEks] = useState(false);
     const [hasCertManager, setHasCertManager] = useState(false);
@@ -361,6 +362,38 @@ function App() {
     const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
     const [bottomPanelHeight, setBottomPanelHeight] = useState(300);
 
+    // Tabs popped out into the full editor view, keyed by cluster name
+    // Preserved across cluster switches for the session lifetime
+    const editorTabsByClusterRef = useRef<Map<string, PanelTab[]>>(new Map());
+    const [editorActiveTabId, setEditorActiveTabId] = useState<string | null>(null);
+
+    // Force re-render when editorTabsByClusterRef mutates (since refs don't trigger renders)
+    const [editorTabsVersion, setEditorTabsVersion] = useState(0);
+    const bumpEditorTabs = () => setEditorTabsVersion(v => v + 1);
+
+    // Derived: tabs for the currently selected cluster only
+    // editorTabsVersion triggers re-computation when the ref mutates
+    const editorTabs = useMemo(
+        () => selectedCluster ? (editorTabsByClusterRef.current.get(selectedCluster) ?? []) : [],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [selectedCluster, editorTabsVersion]
+    );
+
+    // When switching clusters, reset the active editor tab to the last one for that cluster (or null)
+    const prevClusterRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (selectedCluster !== prevClusterRef.current) {
+            prevClusterRef.current = selectedCluster;
+            const cluster = selectedCluster ?? '__local__';
+            const tabs = editorTabsByClusterRef.current.get(cluster) ?? [];
+            setEditorActiveTabId(tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+            // If we're in editor view and there are no tabs for this cluster, navigate away
+            if (tabs.length === 0 && activeView === 'editor') {
+                setActiveView(selectedCluster ? 'dashboard' : 'clusters');
+            }
+        }
+    }, [selectedCluster, activeView]);
+
     // Keyboard Shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -680,10 +713,25 @@ function App() {
                 setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
             }
             if (newTabs.length === 0) {
-                setIsBottomPanelOpen(false); // Close panel if no tabs
+                setIsBottomPanelOpen(false);
             }
             return newTabs;
         });
+
+        // Also handle closing from editor tabs
+        if (selectedCluster) {
+            const clusterTabs = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
+            const newClusterTabs = clusterTabs.filter(t => t.id !== id);
+            editorTabsByClusterRef.current.set(selectedCluster, newClusterTabs);
+            if (editorActiveTabId === id) {
+                const next = newClusterTabs[newClusterTabs.length - 1] ?? null;
+                setEditorActiveTabId(next?.id ?? null);
+                if (newClusterTabs.length === 0 && activeView === 'editor') {
+                    setActiveView(selectedCluster ? 'dashboard' : 'clusters');
+                }
+            }
+            bumpEditorTabs();
+        }
     };
 
     const handleSwitchTab = (id: string) => {
@@ -693,6 +741,81 @@ function App() {
     const handleClearLogs = (id: string) => {
         setPanelTabs(prev => prev.map(t => t.id === id ? { ...t, logs: [] } : t));
     }
+
+    const handlePopOutTab = (tabId: string) => {
+        const tab = panelTabs.find(t => t.id === tabId);
+        if (!tab || !selectedCluster) return;
+
+        // Move tab from bottom bar into the cluster-scoped editor tabs
+        setPanelTabs(prev => {
+            const newTabs = prev.filter(t => t.id !== tabId);
+            if (activeTabId === tabId) {
+                setActiveTabId(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null);
+            }
+            if (newTabs.length === 0) setIsBottomPanelOpen(false);
+            return newTabs;
+        });
+
+        const existing = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
+        if (!existing.find(t => t.id === tabId)) {
+            editorTabsByClusterRef.current.set(selectedCluster, [...existing, { ...tab, clusterName: selectedCluster }]);
+            bumpEditorTabs();
+        }
+        setEditorActiveTabId(tabId);
+        setActiveView('editor');
+    };
+
+    const handleDockBack = () => {
+        // Return to previous view (dashboard or wherever they came from)
+        if (activeView === 'editor') {
+            setActiveView(selectedCluster ? 'dashboard' : 'clusters');
+        }
+    };
+
+    const handleNewYamlFile = () => {
+        const id = `local-new-${Date.now()}`;
+        const tab = {
+            id,
+            type: 'yaml' as const,
+            title: 'untitled.yaml',
+            yamlContent: '',
+            filePath: undefined,
+        };
+        const cluster = selectedCluster ?? '__local__';
+        const existing = editorTabsByClusterRef.current.get(cluster) ?? [];
+        editorTabsByClusterRef.current.set(cluster, [...existing, tab]);
+        bumpEditorTabs();
+        setEditorActiveTabId(id);
+        setActiveView('editor');
+    };
+
+    const handleOpenYamlFile = async () => {
+        try {
+            const result = await window.k8s.dialog.openYamlFile();
+            if (!result) return;
+            const { filePath, content } = result;
+            const fileName = filePath.split('/').pop() ?? filePath;
+            const id = `local-file-${filePath}`;
+            const cluster = selectedCluster ?? '__local__';
+            const existing = editorTabsByClusterRef.current.get(cluster) ?? [];
+            // Don't open the same file twice
+            if (!existing.find(t => t.id === id)) {
+                editorTabsByClusterRef.current.set(cluster, [...existing, {
+                    id,
+                    type: 'yaml' as const,
+                    title: fileName,
+                    subtitle: filePath,
+                    yamlContent: content,
+                    filePath,
+                }]);
+                bumpEditorTabs();
+            }
+            setEditorActiveTabId(id);
+            setActiveView('editor');
+        } catch (err) {
+            showToast('Failed to open file', 'error');
+        }
+    };
 
 
 
@@ -725,12 +848,15 @@ function App() {
                             await window.k8s.updateResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, newContent, isNamespaced ? namespace : undefined);
                             const latestYaml = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, isNamespaced ? namespace : undefined);
 
-                            setPanelTabs(prev => prev.map(t => {
-                                if (t.id === tabId) {
-                                    return { ...t, yamlContent: latestYaml };
-                                }
-                                return t;
-                            }));
+                            const updater = (t: PanelTab) => t.id === tabId ? { ...t, yamlContent: latestYaml } : t;
+                            setPanelTabs(prev => prev.map(updater));
+                            // Also update if tab has been popped out to editor
+                            const clusterTabs = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
+                            const updated = clusterTabs.map(updater);
+                            if (updated !== clusterTabs) {
+                                editorTabsByClusterRef.current.set(selectedCluster, updated);
+                                bumpEditorTabs();
+                            }
 
                             showToast(`${resolvedKind} YAML updated successfully`, 'success');
                         } catch (err: any) {
@@ -756,12 +882,15 @@ function App() {
                         await window.k8s.updateResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, newContent, namespaced ? namespace : undefined);
                         const latestYaml = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, namespaced ? namespace : undefined);
 
-                        setPanelTabs(prev => prev.map(t => {
-                            if (t.id === tabId) {
-                                return { ...t, yamlContent: latestYaml };
-                            }
-                            return t;
-                        }));
+                        const updater = (t: PanelTab) => t.id === tabId ? { ...t, yamlContent: latestYaml } : t;
+                        setPanelTabs(prev => prev.map(updater));
+                        // Also update if tab has been popped out to editor
+                        const clusterTabs = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
+                        const updated = clusterTabs.map(updater);
+                        if (updated !== clusterTabs) {
+                            editorTabsByClusterRef.current.set(selectedCluster, updated);
+                            bumpEditorTabs();
+                        }
 
                         showToast(`${resolvedKind} YAML updated successfully`, 'success');
                     } catch (err: any) {
@@ -794,7 +923,7 @@ function App() {
         }
     };
 
-    const handleMainMenuChange = (view: 'clusters' | 'dashboard' | 'settings') => {
+    const handleMainMenuChange = (view: 'clusters' | 'dashboard' | 'settings' | 'editor') => {
         setActiveView(view);
         if (view === 'settings') {
             // Remember the current resource view before switching
@@ -802,6 +931,8 @@ function App() {
                 lastResourceViewRef.current = resourceView;
             }
             setResourceView('settings-general');
+        } else if (view === 'editor') {
+            // Switch to editor view — active yaml tab is already tracked
         } else {
             // Restore the last resource view when leaving settings
             if (resourceView.startsWith('settings-')) {
@@ -1172,10 +1303,14 @@ function App() {
                     >
                         {/* Floating Glass Sidebar Container */}
                         <div className="flex rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-white/5 backdrop-blur-xl h-full flex-shrink-0">
-                            <Sidebar activeView={activeView} onChangeView={handleMainMenuChange} />
+                            <Sidebar
+                                activeView={activeView}
+                                onChangeView={handleMainMenuChange}
+                                editorTabCount={editorTabs.length}
+                            />
 
                             <SecondarySidebar
-                                mode={activeView === 'settings' ? 'settings' : activeView === 'clusters' ? 'clusters' : 'resources'}
+                                mode={activeView === 'settings' ? 'settings' : activeView === 'clusters' ? 'clusters' : activeView === 'editor' ? 'editor' : 'resources'}
                                 activeView={resourceView}
                                 onSelectView={handleViewChange}
                                 selectedCluster={selectedCluster}
@@ -1188,15 +1323,14 @@ function App() {
                                 hasCertManager={hasCertManager}
                                 onBack={() => {
                                     setActiveView('clusters');
-                                    setSelectedCluster(null); // Optional: clear selection or keep it?
-                                    // User request implies "back appended before text that takes the user to the cluster"
-                                    // This usually means going back to the cluster LIST.
-                                    // If we clear selectedCluster, the right pane shows "Select a cluster".
-                                    // If we don't, it might still show the dashboard.
-                                    // Let's clear it to be consistent with 'clusters' mode.
-                                    // Actually, if we keep it, we can re-select it easily.
-                                    // But the prompt says "takes the user to the cluster" - well, if we are IN the cluster view, back takes us OUT.
+                                    setSelectedCluster(null);
                                 }}
+                                yamlTabs={editorTabs}
+                                activeYamlTabId={editorActiveTabId}
+                                onSelectYamlTab={(tabId) => setEditorActiveTabId(tabId)}
+                                onCloseYamlTab={handleCloseLogTab}
+                                onNewYamlFile={handleNewYamlFile}
+                                onOpenYamlFile={handleOpenYamlFile}
                             />
                         </div>
 
@@ -1204,6 +1338,52 @@ function App() {
                             <div className="flex-1 min-h-0 w-full relative overflow-hidden">
                                 {activeView === 'settings' ? (
                                     <Settings activeSection={resourceView} />
+                                ) : activeView === 'editor' ? (
+                                    (() => {
+                                        // Read directly from the ref (not the memoized snapshot) so we always
+                                        // get the latest yamlContent including unsaved edits written by onContentChange
+                                        const cluster = selectedCluster ?? '__local__';
+                                        const liveTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
+                                        const tab = editorActiveTabId ? liveTabs.find(t => t.id === editorActiveTabId) : null;
+                                        if (tab && tab.type === 'yaml') {
+                                            // Build save handler: k8s resources use onSaveYaml, local files use dialog
+                                            const saveHandler = tab.onSaveYaml ?? (async (content: string) => {
+                                                const savedPath = await window.k8s.dialog.saveYamlFile(tab.filePath ?? null, content);
+                                                if (!savedPath) throw new Error('Save cancelled');
+                                                // Update filePath and title if this was an untitled file
+                                                if (!tab.filePath) {
+                                                    const fileName = savedPath.split('/').pop() ?? savedPath;
+                                                    const clusterTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
+                                                    editorTabsByClusterRef.current.set(cluster, clusterTabs.map(t =>
+                                                        t.id === tab.id ? { ...t, filePath: savedPath, title: fileName, subtitle: savedPath } : t
+                                                    ));
+                                                    bumpEditorTabs();
+                                                }
+                                            });
+                                            return (
+                                                <div className="h-full w-full rounded-xl overflow-hidden border border-white/10">
+                                                    <YamlEditor
+                                                        initialYaml={tab.yamlContent ?? ''}
+                                                        onSave={saveHandler}
+                                                        onContentChange={(content) => {
+                                                            const clusterTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
+                                                            editorTabsByClusterRef.current.set(
+                                                                cluster,
+                                                                clusterTabs.map(t => t.id === tab.id ? { ...t, yamlContent: content } : t)
+                                                            );
+                                                        }}
+                                                    />
+                                                </div>
+                                            );
+                                        }
+                                        return (
+                                            <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3">
+                                                <PenTool size={32} className="opacity-20" />
+                                                <p className="text-sm">No file selected</p>
+                                                <p className="text-xs text-gray-600">Create a new file or open one from the sidebar</p>
+                                            </div>
+                                        );
+                                    })()
                                 ) : activeView === 'clusters' && !selectedCluster ? (
                                     connectionStatus === 'error' && attemptedCluster ? (
                                         <ConnectionErrorCard
@@ -1260,6 +1440,7 @@ function App() {
                                 onToggleMinimize={() => setIsBottomPanelOpen(false)}
                                 onChangeContainer={handleChangeContainer}
                                 onAnalyzeWithAI={handleAnalyzeLogsWithAI}
+                                onPopOutTab={handlePopOutTab}
                             />
                         </BottomPanel>
                     </div>
@@ -1346,6 +1527,7 @@ function App() {
                     />
                 )}
             </AnimatePresence>
+
 
             {/* Unpin Confirmation Modal */}
             <ConfirmModal

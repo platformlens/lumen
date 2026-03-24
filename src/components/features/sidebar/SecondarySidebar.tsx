@@ -33,12 +33,15 @@ import {
     Loader2,
     Pin,
     Brain,
-    Anchor
+    Anchor,
+    PenTool,
+    FilePlus,
+    FolderOpen
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface SecondarySidebarProps {
-    mode: 'clusters' | 'resources' | 'settings';
+    mode: 'clusters' | 'resources' | 'settings' | 'editor';
     onSelectView: (view: string) => void;
     activeView: string;
     // For cluster mode
@@ -53,6 +56,13 @@ interface SecondarySidebarProps {
     // Pinned Clusters
     pinnedClusters?: string[];
     onTogglePin?: (clusterName: string) => void;
+    // Editor mode
+    yamlTabs?: Array<{ id: string; title: string; subtitle?: string }>;
+    activeYamlTabId?: string | null;
+    onSelectYamlTab?: (tabId: string) => void;
+    onCloseYamlTab?: (tabId: string) => void;
+    onNewYamlFile?: () => void;
+    onOpenYamlFile?: () => void;
 }
 
 interface MenuItem {
@@ -117,7 +127,13 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     isEks,
     hasCertManager,
     pinnedClusters = [],
-    onTogglePin
+    onTogglePin,
+    yamlTabs = [],
+    activeYamlTabId,
+    onSelectYamlTab,
+    onCloseYamlTab,
+    onNewYamlFile,
+    onOpenYamlFile,
 }) => {
     const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; cluster: string } | null>(null);
 
@@ -606,6 +622,68 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                     />
                                 )}
                             </div>
+                        </div>
+                    )}
+
+                    {mode === 'editor' && (
+                        <div className="px-3">
+                            {/* Actions */}
+                            <div className="flex gap-1.5 mb-3">
+                                <button
+                                    onClick={onNewYamlFile}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-gray-300 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-colors"
+                                    title="New file"
+                                >
+                                    <FilePlus size={13} />
+                                    New
+                                </button>
+                                <button
+                                    onClick={onOpenYamlFile}
+                                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-gray-300 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-colors"
+                                    title="Open file from disk"
+                                >
+                                    <FolderOpen size={13} />
+                                    Open
+                                </button>
+                            </div>
+
+                            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Open Files</h3>
+                            {yamlTabs.length === 0 ? (
+                                <div className="px-2 py-4 text-xs text-gray-500 italic text-center">
+                                    No files open.<br />
+                                    <span className="text-gray-600">Edit a resource or open a file.</span>
+                                </div>
+                            ) : (
+                                <div className="space-y-0.5">
+                                    {yamlTabs.map(tab => (
+                                        <div
+                                            key={tab.id}
+                                            onClick={() => onSelectYamlTab?.(tab.id)}
+                                            className={clsx(
+                                                'group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors',
+                                                activeYamlTabId === tab.id
+                                                    ? 'bg-white/10 text-blue-400 font-medium'
+                                                    : 'text-gray-400 hover:bg-[#2a2a2a] hover:text-gray-200'
+                                            )}
+                                            style={{ fontSize: 'var(--lumen-sidebar-font-size)' }}
+                                        >
+                                            <PenTool size={14} className={activeYamlTabId === tab.id ? 'text-blue-400 shrink-0' : 'text-gray-500 shrink-0'} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="truncate text-sm">{tab.title}</div>
+                                                {tab.subtitle && (
+                                                    <div className="truncate text-[10px] text-gray-500">{tab.subtitle}</div>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onCloseYamlTab?.(tab.id); }}
+                                                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-white/10 hover:text-red-400 rounded transition-all shrink-0"
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

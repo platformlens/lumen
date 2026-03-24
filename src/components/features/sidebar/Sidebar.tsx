@@ -1,14 +1,15 @@
 import React from 'react';
-import { LayoutGrid, Server, Settings } from 'lucide-react';
+import { LayoutGrid, Server, Settings, PenTool } from 'lucide-react';
 import { clsx } from 'clsx';
 import logoUrl from '../../../assets/logo.png';
 
 interface SidebarProps {
-  activeView: 'clusters' | 'dashboard' | 'settings';
-  onChangeView: (view: 'clusters' | 'dashboard' | 'settings') => void;
+  activeView: 'clusters' | 'dashboard' | 'settings' | 'editor';
+  onChangeView: (view: 'clusters' | 'dashboard' | 'settings' | 'editor') => void;
+  editorTabCount?: number;
 }
 
-export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeView, onChangeView }) => {
+export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeView, onChangeView, editorTabCount = 0 }) => {
   return (
     <div className="w-16 h-full bg-transparent flex flex-col items-center py-4 border-r border-white/5">
       <div className="mb-8">
@@ -34,6 +35,13 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeView, onChang
           onClick={() => onChangeView('dashboard')}
           label="Resources"
         />
+        <NavButton
+          icon={<PenTool size={24} />}
+          active={activeView === 'editor'}
+          onClick={() => onChangeView('editor')}
+          label="Editor"
+          badge={editorTabCount > 0 ? editorTabCount : undefined}
+        />
       </div>
 
       <div className="mt-auto mb-4">
@@ -48,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeView, onChang
   );
 });
 
-const NavButton = ({ icon, active, onClick, label }: any) => (
+const NavButton = ({ icon, active, onClick, label, badge }: { icon: React.ReactNode; active: boolean; onClick: () => void; label: string; badge?: number }) => (
   <button
     onClick={onClick}
     className={clsx(
@@ -57,6 +65,11 @@ const NavButton = ({ icon, active, onClick, label }: any) => (
     )}
   >
     {icon}
+    {badge !== undefined && (
+      <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 bg-blue-500/80 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none backdrop-blur-sm">
+        {badge > 9 ? '9+' : badge}
+      </span>
+    )}
     <span className="absolute left-14 bg-[#333] px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
       {label}
     </span>

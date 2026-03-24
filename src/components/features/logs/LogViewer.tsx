@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool, Sparkles } from 'lucide-react';
+import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool, Sparkles, ExternalLink } from 'lucide-react';
 import { TerminalComponent } from '../terminal/TerminalComponent';
 import { YamlEditor } from '../yaml-editor/YamlEditor';
 
@@ -32,6 +32,7 @@ export interface PanelTab {
     // YAML Specific
     yamlContent?: string;
     onSaveYaml?: (content: string) => Promise<void>;
+    filePath?: string; // set for local files opened from disk
 }
 
 interface LogViewerProps {
@@ -45,6 +46,7 @@ interface LogViewerProps {
     isMinimized: boolean;
     onToggleMinimize: () => void;
     onAnalyzeWithAI?: (logs: string[], podName: string, containerName: string) => void;
+    onPopOutTab?: (tabId: string) => void;
 }
 
 export const LogViewer: React.FC<LogViewerProps> = React.memo(({
@@ -57,7 +59,8 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     onChangeContainer,
     isMinimized,
     onToggleMinimize,
-    onAnalyzeWithAI
+    onAnalyzeWithAI,
+    onPopOutTab,
 }) => {
     const logsEndRef = useRef<HTMLDivElement>(null);
     const activeTab = tabs.find(t => t.id === activeTabId);
@@ -91,7 +94,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                             {tab.type === 'terminal' ? (
                                 <Terminal size={14} className={activeTabId === tab.id ? 'text-green-400' : 'text-gray-500'} />
                             ) : tab.type === 'yaml' ? (
-                                <PenTool size={14} className={activeTabId === tab.id ? 'text-yellow-400' : 'text-gray-500'} />
+                                <PenTool size={14} className={activeTabId === tab.id ? 'text-blue-400' : 'text-gray-500'} />
                             ) : (
                                 <FileText size={14} className={activeTabId === tab.id ? 'text-blue-400' : 'text-gray-500'} />
                             )}
@@ -135,6 +138,16 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                             title="Clear Logs"
                         >
                             <Trash2 size={16} />
+                        </button>
+                    )}
+
+                    {activeTab && activeTab.type === 'yaml' && onPopOutTab && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onPopOutTab(activeTab.id); }}
+                            className="p-1.5 hover:bg-blue-500/20 text-gray-400 hover:text-blue-400 rounded transition-colors"
+                            title="Open in window"
+                        >
+                            <ExternalLink size={16} />
                         </button>
                     )}
 

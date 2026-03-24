@@ -406,6 +406,14 @@ contextBridge.exposeInMainWorld('k8s', {
     setLastSeenVersion: (version: string) => ipcRenderer.invoke('whatsNew:setLastSeenVersion', version),
   },
 
+  // --- File Dialog ---
+  dialog: {
+    openYamlFile: (): Promise<{ filePath: string; content: string } | null> =>
+      ipcRenderer.invoke('dialog:openYamlFile'),
+    saveYamlFile: (filePath: string | null, content: string): Promise<string | null> =>
+      ipcRenderer.invoke('dialog:saveYamlFile', filePath, content),
+  },
+
   // --- AI Events ---
   onBedrockAccessDenied: (callback: (message: string) => void) => {
     const listener = (_: any, message: string) => callback(message);

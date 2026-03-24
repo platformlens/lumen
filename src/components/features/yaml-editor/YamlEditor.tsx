@@ -7,9 +7,10 @@ import { DiffModal } from './DiffModal';
 interface YamlEditorProps {
     initialYaml: string;
     onSave: (newContent: string) => Promise<void>;
+    onContentChange?: (content: string) => void;
 }
 
-export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, onSave }) => {
+export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, onSave, onContentChange }) => {
     const [yaml, setYaml] = useState(initialYaml);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -18,9 +19,15 @@ export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, 
     const [hideSystemFields, setHideSystemFields] = useState(false);
     const [isReviewing, setIsReviewing] = useState(false);
     const editorRef = useRef<any>(null);
+    // Track the last initialYaml we synced from — only reset editor when it changes
+    // to a value we didn't write ourselves (i.e. a server-side update after save)
+    const lastSyncedYamlRef = useRef(initialYaml);
 
-    // Update internal state when prop changes, respecting view mode
+    // Only reset editor content when initialYaml changes AND it's different from what
+    // the user has typed (i.e. a fresh load or post-save server refresh, not our own writes)
     useEffect(() => {
+        if (initialYaml === lastSyncedYamlRef.current) return;
+        lastSyncedYamlRef.current = initialYaml;
         const content = hideSystemFields ? stripManagedFields(initialYaml) : initialYaml;
         setYaml(content);
         setIsDirty(false);
@@ -74,19 +81,20 @@ export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, 
         const newValue = value || '';
         setYaml(newValue);
         setIsDirty(true);
+        lastSyncedYamlRef.current = newValue; // track user edits so the effect doesn't overwrite them
+        onContentChange?.(newValue);
     };
 
     const handleSave = async () => {
-        // Allow saving even if not dirty? Usually no, but maybe user wants to force update?
-        // But if not dirty, no point.
         if (!isDirty && !hideSystemFields) return;
 
         setIsSaving(true);
         setError(null);
         try {
             await onSave(yaml);
+            lastSyncedYamlRef.current = yaml; // allow post-save server refresh to come through
             setIsDirty(false);
-            setIsReviewing(false); // Close modal if open
+            setIsReviewing(false);
         } catch (err: any) {
             setError(err.message || "Failed to save YAML");
         } finally {
