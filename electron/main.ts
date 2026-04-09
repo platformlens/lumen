@@ -119,7 +119,6 @@ let transformRequestId = 0;
 const auditLogWorkerPath = path.join(__dirname, 'audit-log-worker.js');
 let auditLogWorker: Worker | null = null;
 const pendingAuditLogRequests = new Map<string, (response: AuditLogWorkerResponse) => void>();
-let auditLogRequestId = 0;
 
 function getOrCreateWorker(): Worker {
   if (!transformWorker) {

@@ -8,6 +8,7 @@ import {
     CloudWatchLogsClient,
     StartQueryCommand,
     GetQueryResultsCommand,
+    type GetQueryResultsCommandOutput,
 } from '@aws-sdk/client-cloudwatch-logs';
 
 // --- Interfaces ---
@@ -50,7 +51,7 @@ async function pollQueryResults(
     client: CloudWatchLogsClient,
     queryId: string,
     maxWaitMs = 30000,
-): Promise<GetQueryResultsCommand['output']> {
+): Promise<GetQueryResultsCommandOutput> {
     const startedAt = Date.now();
     let delay = 500;
 

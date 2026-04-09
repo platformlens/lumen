@@ -234,11 +234,19 @@ interface Window {
         editorFontSize: number
         editorWordWrap: boolean
         terminalFontSize: number
+        fontFamily?: string
+        sidebarFontSize?: number
+        pinnedFontSize?: number
+        headingSize?: number
+        tableFontSize?: number
+        zoomFactor?: number
+        dateFormat?: string
       }>
       getKubeconfigPath: () => Promise<string>
       setKubeconfigPath: (path: string) => Promise<boolean>
       getContextConfig: () => Promise<{ tokenBudget: number; summariesEnabled: boolean; anomalyDetectionEnabled: boolean }>
       setContextConfig: (config: Partial<{ tokenBudget: number; summariesEnabled: boolean; anomalyDetectionEnabled: boolean }>) => Promise<boolean>
+      setZoomFactor: (factor: number) => Promise<boolean>
     }
 
     // --- Context Engine ---
@@ -285,6 +293,7 @@ interface Window {
     app: {
       restart: () => Promise<void>
       getVersion: () => Promise<string>
+      isPackaged: () => Promise<boolean>
     }
 
     // --- Onboarding ---
@@ -293,7 +302,25 @@ interface Window {
       setLastSeenVersion: (version: string) => Promise<boolean>
     }
 
+    // --- What's New ---
+    whatsNew: {
+      getLastSeenVersion: () => Promise<string | null>
+      setLastSeenVersion: (version: string) => Promise<boolean>
+    }
+
+    // --- File Dialog ---
+    dialog: {
+      openYamlFile: () => Promise<{ filePath: string; content: string } | null>
+      saveYamlFile: (filePath: string | null, content: string) => Promise<string | null>
+    }
+
     // --- AI Events ---
     onBedrockAccessDenied: (callback: (message: string) => void) => () => void
+
+    // --- Generic Resource Batch Watcher ---
+    onGenericResourceBatchChange: (callback: (resourceType: string, events: Array<{ type: string; resource: any }>) => void) => () => void
+
+    // --- Generic Resource Delete ---
+    deleteResource: (contextName: string, apiVersion: string, kind: string, name: string, namespace?: string) => Promise<any>
   }
 }

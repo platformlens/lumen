@@ -44,12 +44,10 @@ function getStatusBadgeClasses(status: string): string {
 
 export const HelmReleasesView: React.FC<HelmReleasesViewProps> = ({
     clusterName,
-    selectedNamespaces,
     searchQuery,
     onNavigateToDetail,
     showToast,
     helmReleases,
-    isLoading,
 }) => {
     const [deleteTarget, setDeleteTarget] = useState<HelmRelease | null>(null);
 

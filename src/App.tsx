@@ -758,7 +758,7 @@ function App() {
 
         const existing = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
         if (!existing.find(t => t.id === tabId)) {
-            editorTabsByClusterRef.current.set(selectedCluster, [...existing, { ...tab, clusterName: selectedCluster }]);
+            editorTabsByClusterRef.current.set(selectedCluster, [...existing, { ...tab }]);
             bumpEditorTabs();
         }
         setEditorActiveTabId(tabId);
@@ -771,6 +771,7 @@ function App() {
             setActiveView(selectedCluster ? 'dashboard' : 'clusters');
         }
     };
+    void handleDockBack; // suppress unused warning — kept for future use
 
     const handleNewYamlFile = () => {
         const id = `local-new-${Date.now()}`;

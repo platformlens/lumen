@@ -2,7 +2,7 @@
  * Property-based tests for whats-new-utils.
  * Uses fast-check to validate correctness properties from the design document.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'vitest';
 import fc from 'fast-check';
 import { shouldShowWhatsNew, findRelease, handleDismiss } from './whats-new-utils';
 import type { WhatsNewRelease } from '../data/whats-new';

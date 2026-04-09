@@ -3250,7 +3250,7 @@ export class K8sService {
                                         labels: { ...s.metadata.labels, status: 'superseded' },
                                     },
                                 },
-                            }, { headers: { 'Content-Type': 'application/strategic-merge-patch+json' } });
+                            } as any);
                         } catch {
                             // Non-critical — the rollback secret was already created
                         }

@@ -284,7 +284,7 @@ describe('Property 7: Verb filter returns only entries with selected verbs', () 
                         // Empty verb set returns all entries
                         expect(result).toEqual(entries);
                     } else {
-                        const verbSet = new Set(selectedVerbs);
+                        const verbSet = new Set<string>(selectedVerbs);
 
                         // Every result must have a verb in the selected set
                         for (const entry of result) {

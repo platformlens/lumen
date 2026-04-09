@@ -1156,13 +1156,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             try {
                 await window.k8s.deletePod(clusterName, selectedResource.namespace, selectedResource.name);
                 setIsDrawerOpen(false);
-                // Optimistic update or wait for watcher? Watcher should handle it.
             } catch (e) {
                 console.error("Failed to delete pod", e);
                 alert("Failed to delete pod.");
             }
         }
     };
+    void handleDeletePod; // suppress unused warning — kept for future use
 
     const handleTriggerCronJob = async () => {
         if (!selectedResource || selectedResource.type !== 'cronjob') return;

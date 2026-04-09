@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveResourceMeta, formatDeleteMessage, RESOURCE_TYPE_MAP } from './resource-utils';
+import { resolveResourceMeta, formatDeleteMessage } from './resource-utils';
 
 describe('resolveResourceMeta', () => {
     it('resolves full metadata from resource object', () => {
