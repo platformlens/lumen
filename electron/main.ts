@@ -425,6 +425,10 @@ function registerIpcHandlers() {
     return k8sService.getPods(contextName, namespaces);
   })
 
+  ipcMain.handle('k8s:getPodsForNode', (_, contextName, nodeName) => {
+    return k8sService.getPodsForNode(contextName, nodeName);
+  })
+
   ipcMain.handle('k8s:getPodsLite', async (_, contextName, namespaces) => {
     console.log('IPC: k8s:getPodsLite called with', contextName, namespaces);
     const result = await k8sService.getPodsLite(contextName, namespaces);

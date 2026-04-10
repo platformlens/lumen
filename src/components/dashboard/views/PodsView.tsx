@@ -147,6 +147,7 @@ interface PodsViewProps {
     onRowClick: (pod: any) => void;
     onNodeClick?: (nodeName: string) => void;
     searchQuery?: string;
+    selectedNamespaces?: string[];
     isLoading?: boolean;
     isSynced?: boolean;
     error?: string | null;
@@ -167,6 +168,7 @@ const PodsViewInner: React.FC<PodsViewProps> = ({
     onRowClick,
     onNodeClick,
     searchQuery = '',
+    selectedNamespaces,
     isLoading = false,
     onExec,
     onOpenLogs,
@@ -248,16 +250,30 @@ const PodsViewInner: React.FC<PodsViewProps> = ({
 
     // --- Filtering ---
     const filteredPods = useMemo(() => {
-        if (!searchQuery) return sortedPods;
-        const q = searchQuery.toLowerCase();
-        return sortedPods.filter(pod =>
-            (pod.name ?? '').toLowerCase().includes(q) ||
-            (pod.namespace ?? '').toLowerCase().includes(q) ||
-            (pod.status ?? '').toLowerCase().includes(q) ||
-            (pod.cpu ?? '').toLowerCase().includes(q) ||
-            (pod.memory ?? '').toLowerCase().includes(q)
-        );
-    }, [sortedPods, searchQuery]);
+        let result = sortedPods;
+
+        // Namespace filter
+        if (selectedNamespaces && selectedNamespaces.length > 0 && !selectedNamespaces.includes('all')) {
+            result = result.filter(pod => {
+                const ns = pod.namespace ?? '';
+                return selectedNamespaces.includes(ns);
+            });
+        }
+
+        // Search filter
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase();
+            result = result.filter(pod =>
+                (pod.name ?? '').toLowerCase().includes(q) ||
+                (pod.namespace ?? '').toLowerCase().includes(q) ||
+                (pod.status ?? '').toLowerCase().includes(q) ||
+                (pod.cpu ?? '').toLowerCase().includes(q) ||
+                (pod.memory ?? '').toLowerCase().includes(q)
+            );
+        }
+
+        return result;
+    }, [sortedPods, searchQuery, selectedNamespaces]);
 
     // Refs for stable TableVirtuoso component callbacks (avoids recreating components object on every render)
     const effectiveTotalWidthRef = useRef(effectiveTotalWidth);

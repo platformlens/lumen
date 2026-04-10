@@ -626,21 +626,49 @@ export class K8sService {
     }
 
     /**
+     * Get pods running on a specific node using field selector for efficiency.
+     * This avoids fetching all pods and filtering client-side.
+     */
+    async getPodsForNode(contextName: string, nodeName: string) {
+        await this.setContextWithSmartReload(contextName);
+
+        return this.withAuthRetry(contextName, async () => {
+            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+            const res = await k8sApi.listPodForAllNamespaces({ fieldSelector: `spec.nodeName=${nodeName}` });
+            const items: any[] = (res as any).body ? (res as any).body.items : (res as any).items;
+
+            return items.map((pod: any) => {
+                const containerStatuses = pod.status?.containerStatuses || [];
+                const initContainerStatuses = pod.status?.initContainerStatuses || [];
+                const allStatuses = [...initContainerStatuses, ...containerStatuses];
+                const phase = pod.metadata?.deletionTimestamp ? 'Terminating' : (pod.status?.phase || 'Unknown');
+
+                return {
+                    name: pod.metadata?.name,
+                    namespace: pod.metadata?.namespace,
+                    status: phase,
+                    restarts: containerStatuses.reduce((acc: number, c: any) => acc + c.restartCount, 0) || 0,
+                    age: pod.metadata?.creationTimestamp,
+                    containers: allStatuses.map((c: any) => ({
+                        name: c.name,
+                        state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
+                        ready: c.ready,
+                        image: c.image,
+                        restartCount: c.restartCount
+                    })),
+                    metadata: pod.metadata,
+                    spec: pod.spec,
+                    node: pod.spec?.nodeName
+                };
+            });
+        });
+    }
+
+    /**
      * Lightweight bulk pod list for table display. Strips heavy fields (managed fields,
      * full spec, full status) to minimize IPC serialization. Detail fields are fetched
      * on-demand via getPod when the user opens the drawer.
      */
-    /**
-         * Lightweight bulk pod list for table display. Uses raw HTTP to bypass the
-         * @kubernetes/client-node typed client overhead. The K8s API still returns full
-         * objects, but we use a raw request to avoid the client's double-parse overhead
-         * and stream the response more efficiently.
-         */
-        /**
-             * Lightweight bulk pod list for table display. Strips heavy fields (managed fields,
-             * full spec, full status) to minimize IPC serialization. Detail fields are fetched
-             * on-demand via getPod when the user opens the drawer.
-             */
             async getPodsLite(contextName: string, namespaces: string[] = []) {
                 await this.setContextWithSmartReload(contextName);
 

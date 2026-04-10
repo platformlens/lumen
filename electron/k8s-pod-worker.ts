@@ -158,11 +158,12 @@ if (process.parentPort) {
 
           // 3. Build list function and path based on namespace scope
           const isAllNamespaces = msg.namespaces.length === 0 || msg.namespaces.includes('all');
-          const path = isAllNamespaces
+          const isSingleNamespace = !isAllNamespaces && msg.namespaces.length === 1;
+          const path = isAllNamespaces || !isSingleNamespace
             ? '/api/v1/pods'
             : `/api/v1/namespaces/${msg.namespaces[0]}/pods`;
 
-          const listFn = isAllNamespaces
+          const listFn = isAllNamespaces || !isSingleNamespace
             ? () => k8sApi.listPodForAllNamespaces()
             : () => k8sApi.listNamespacedPod({ namespace: msg.namespaces[0] });
 

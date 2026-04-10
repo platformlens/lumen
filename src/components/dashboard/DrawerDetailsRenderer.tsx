@@ -21,6 +21,12 @@ import { NamespaceDetails } from '../resources/details/NamespaceDetails';
 import { NodePoolDetails } from '../resources/details/NodePoolDetails';
 import { SecretDetails } from '../resources/details/SecretDetails';
 import { Ec2InstanceDetails } from '../dashboard/views/Ec2InstanceDetails';
+import { GatewayDetails } from '../resources/details/GatewayDetails';
+import { VirtualServiceDetails } from '../resources/details/VirtualServiceDetails';
+import { WebhookConfigurationDetails } from '../resources/details/WebhookConfigurationDetails';
+import { ConfigMapDetails } from '../resources/details/ConfigMapDetails';
+import { PersistentVolumeClaimDetails } from '../resources/details/PersistentVolumeClaimDetails';
+import { ScaledObjectDetails } from '../resources/details/ScaledObjectDetails';
 
 interface DrawerDetailsRendererProps {
     selectedResource: any;
@@ -185,7 +191,35 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                         onOpenYaml={handleOpenYaml}
                     />
                 );
-
+            }
+            if (detailedResource.kind === 'Gateway' && detailedResource.apiVersion?.includes('networking.istio.io')) {
+                return (
+                    <GatewayDetails
+                        gateway={detailedResource}
+                        onExplain={handleExplain}
+                        onOpenYaml={handleOpenYaml}
+                    />
+                );
+            }
+            if (detailedResource.kind === 'VirtualService' && detailedResource.apiVersion?.includes('networking.istio.io')) {
+                return (
+                    <VirtualServiceDetails
+                        virtualService={detailedResource}
+                        onExplain={handleExplain}
+                        onOpenYaml={handleOpenYaml}
+                        onNavigate={onNavigate}
+                    />
+                );
+            }
+            if (detailedResource.kind === 'ScaledObject' && detailedResource.apiVersion?.includes('keda.sh')) {
+                return (
+                    <ScaledObjectDetails
+                        scaledObject={detailedResource}
+                        onExplain={handleExplain}
+                        onOpenYaml={handleOpenYaml}
+                        onNavigate={onNavigate}
+                    />
+                );
             }
             // Fallthrough to generic if not handled specifically above
             return (
@@ -200,13 +234,27 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
         case 'ingress':
         case 'ingressclass':
         case 'networkpolicy':
-        case 'persistentvolumeclaim':
-        case 'persistentvolume':
         case 'storageclass':
-        case 'configmap':
             return (
                 <GenericResourceDetails
                     resource={detailedResource}
+                    onExplain={handleExplain}
+                    onOpenYaml={handleOpenYaml}
+                />
+            );
+        case 'persistentvolumeclaim':
+        case 'persistentvolume':
+            return (
+                <PersistentVolumeClaimDetails
+                    pvc={detailedResource}
+                    onExplain={handleExplain}
+                    onOpenYaml={handleOpenYaml}
+                />
+            );
+        case 'configmap':
+            return (
+                <ConfigMapDetails
+                    configMap={detailedResource}
                     onExplain={handleExplain}
                     onOpenYaml={handleOpenYaml}
                 />
@@ -222,6 +270,13 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
         case 'horizontalpodautoscaler':
         case 'mutatingwebhookconfiguration':
         case 'validatingwebhookconfiguration':
+            return (
+                <WebhookConfigurationDetails
+                    resource={detailedResource}
+                    onExplain={handleExplain}
+                    onOpenYaml={handleOpenYaml}
+                />
+            );
         case 'runtimeclass':
             return (
                 <GenericResourceDetails

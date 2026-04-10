@@ -17,6 +17,7 @@ interface DeploymentsViewProps {
 const DeploymentsViewInner: React.FC<DeploymentsViewProps> = ({
     deployments,
     isLoading,
+    selectedNamespaces,
     searchQuery,
     onRowClick,
     isUpdating
@@ -52,6 +53,7 @@ const DeploymentsViewInner: React.FC<DeploymentsViewProps> = ({
             sortConfig={sortConfig}
             onSort={handleSort}
             searchQuery={searchQuery}
+            selectedNamespaces={selectedNamespaces}
             isLoading={isLoading}
             isUpdating={isUpdating}
         />

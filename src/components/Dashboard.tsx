@@ -516,7 +516,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             }),
         };
 
-        // Helper for namespaced API paths
+        // Helper for namespaced API paths (single namespace only — multi-ns handled by parallel watchers above)
         const nsPath = (base: string, resource: string) => (ns: string[]) =>
             ns.includes('all') ? `${base}/${resource}` : `${base}/namespaces/${ns[0]}/${resource}`;
 
@@ -576,12 +576,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (!config) return;
 
         const nsFilter = selectedNamespaces.length === 0 ? ['all'] : selectedNamespaces;
-        const apiPath = config.apiPath(nsFilter);
+        const isAllNamespaces = nsFilter.includes('all');
+        const isSingleNamespace = !isAllNamespaces && nsFilter.length === 1;
+
+        // For multi-namespace, start one watcher per namespace (server-side filtered)
+        // For single or all, start one watcher
+        const watchEntries: Array<{ key: string; path: string }> = [];
+        if (isAllNamespaces || isSingleNamespace) {
+            watchEntries.push({ key: watchKey, path: config.apiPath(nsFilter) });
+        } else {
+            // Multiple specific namespaces: one watcher per namespace
+            for (const ns of nsFilter) {
+                watchEntries.push({ key: `${watchKey}:${ns}`, path: config.apiPath([ns]) });
+            }
+        }
+
         let genericCleanup: (() => void) | undefined;
         let batchTimeout: ReturnType<typeof setTimeout> | null = null;
         const pendingUpdates = new Map<string, { type: string; resource: any }>();
+        const activeWatchKeys = new Set<string>();
 
-        window.k8s.watchGenericResource(clusterName, watchKey, apiPath);
+        // Start all watchers
+        for (const entry of watchEntries) {
+            window.k8s.watchGenericResource(clusterName, entry.key, entry.path);
+            activeWatchKeys.add(entry.key);
+        }
 
         // Resource types that receive pre-transformed batch events from the worker thread
         const WORKER_BATCH_TYPES = new Set(['replicasets', 'secrets', 'persistentvolumes', 'persistentvolumeclaims']);
@@ -632,7 +651,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (useWorkerBatch) {
             // For worker-transformed types, consume pre-shaped batch events
             genericBatchCleanup = window.k8s.onGenericResourceBatchChange((resourceType, events) => {
-                if (resourceType !== watchKey) return;
+                if (!activeWatchKeys.has(resourceType)) return;
                 setWatcherReady(true);
                 for (const evt of events) {
                     const key = evt.resource.namespace
@@ -647,7 +666,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         } else {
             // For other types, use individual raw events with client-side shaping
             genericCleanup = window.k8s.onGenericResourceChange((resourceType, type, resource) => {
-                if (resourceType !== watchKey) return;
+                if (!activeWatchKeys.has(resourceType)) return;
                 setWatcherReady(true);
                 const key = resource.metadata?.namespace
                     ? `${resource.metadata.namespace}/${resource.metadata.name}`
@@ -663,7 +682,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             if (genericCleanup) genericCleanup();
             if (genericBatchCleanup) genericBatchCleanup();
             if (batchTimeout) clearTimeout(batchTimeout);
-            window.k8s.stopWatchGenericResource(watchKey);
+            for (const key of activeWatchKeys) {
+                window.k8s.stopWatchGenericResource(key);
+            }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clusterName, selectedNamespaces, activeView, watchEpoch]);

@@ -96,6 +96,7 @@ interface GenericResourceViewProps {
     onSort?: (key: string) => void;
     viewKey?: string;
     searchQuery?: string;
+    selectedNamespaces?: string[];
     isLoading?: boolean;
     isUpdating?: boolean;
 }
@@ -130,6 +131,7 @@ const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
     onSort: externalOnSort,
     viewKey = 'resource-view',
     searchQuery = '',
+    selectedNamespaces,
     isLoading = false,
     isUpdating,
 }) => {
@@ -206,14 +208,29 @@ const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
 
     // Filtering
     const filteredData = useMemo(() => {
-        if (!searchQuery) return data;
-        const lowerQuery = searchQuery.toLowerCase();
-        return data.filter(item => {
-            const name = item.metadata?.name?.toLowerCase() || item.name?.toLowerCase() || '';
-            const namespace = item.metadata?.namespace?.toLowerCase() || item.namespace?.toLowerCase() || '';
-            return name.includes(lowerQuery) || namespace.includes(lowerQuery);
-        });
-    }, [data, searchQuery]);
+        let result = data;
+
+        // Namespace filter (skip for 'all' or when not provided)
+        if (selectedNamespaces && selectedNamespaces.length > 0 && !selectedNamespaces.includes('all')) {
+            result = result.filter(item => {
+                const ns = item.namespace || item.metadata?.namespace;
+                // Keep cluster-scoped resources (no namespace) and matching namespaced ones
+                return !ns || selectedNamespaces.includes(ns);
+            });
+        }
+
+        // Search filter
+        if (searchQuery) {
+            const lowerQuery = searchQuery.toLowerCase();
+            result = result.filter(item => {
+                const name = item.metadata?.name?.toLowerCase() || item.name?.toLowerCase() || '';
+                const namespace = item.metadata?.namespace?.toLowerCase() || item.namespace?.toLowerCase() || '';
+                return name.includes(lowerQuery) || namespace.includes(lowerQuery);
+            });
+        }
+
+        return result;
+    }, [data, searchQuery, selectedNamespaces]);
 
     // Apply internal sorting when no external sort is provided
     const sortedData = useMemo(() => {

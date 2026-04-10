@@ -44,27 +44,26 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onN
         setTimeout(() => setCopiedAddress(null), 2000);
     };
 
-    // Fetch pods running on this node
+    // Fetch pods running on this node (server-side filtered by field selector)
     useEffect(() => {
         if (!clusterName || !metadata.name) return;
+        let cancelled = false;
 
         const fetchPods = async () => {
             setLoadingPods(true);
             try {
-                // Get all pods across all namespaces
-                const allPods = await window.k8s.getPods(clusterName, ['all']);
-                // Filter pods running on this node
-                const nodePods = allPods.filter((p: any) => p.spec?.nodeName === metadata.name);
-                setPods(nodePods);
+                const nodePods = await window.k8s.getPodsForNode(clusterName, metadata.name);
+                if (!cancelled) setPods(nodePods);
             } catch (err) {
                 console.error('Failed to fetch pods for node:', err);
-                setPods([]);
+                if (!cancelled) setPods([]);
             } finally {
-                setLoadingPods(false);
+                if (!cancelled) setLoadingPods(false);
             }
         };
 
         fetchPods();
+        return () => { cancelled = true; };
     }, [clusterName, metadata.name]);
 
     // Categorize pods by workload type
@@ -289,7 +288,17 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({ node, clusterName, onN
                 </div>
 
                 {loadingPods ? (
-                    <div className="text-center text-gray-500 text-sm py-4">Loading pods...</div>
+                    <div className="space-y-2 animate-pulse">
+                        {[...Array(5)].map((_, i) => (
+                            <div key={i} className="flex items-center justify-between py-2 px-3 bg-white/5 rounded border border-white/10">
+                                <div className="flex-1 space-y-2">
+                                    <div className="h-3 bg-white/10 rounded w-3/5"></div>
+                                    <div className="h-2 bg-white/5 rounded w-2/5"></div>
+                                </div>
+                                <div className="h-5 bg-white/10 rounded w-16 ml-2"></div>
+                            </div>
+                        ))}
+                    </div>
                 ) : pods.length === 0 ? (
                     <div className="text-center text-gray-500 text-sm py-4">No pods running on this node</div>
                 ) : (

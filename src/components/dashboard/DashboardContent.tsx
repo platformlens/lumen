@@ -226,6 +226,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={namespacesList}
                 onRowClick={(ns: any) => onResourceClick({ ...ns, type: 'namespace' }, 'namespace' as any)}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -249,6 +250,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={customObjects}
                 onRowClick={(obj: any) => onResourceClick(obj, 'custom-resource')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -269,6 +271,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={crdDefinitions}
                 onRowClick={(crd: any) => onResourceClick(crd, 'crd-definition')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -325,6 +328,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                         if (node) onResourceClick(node, 'node');
                     }}
                     searchQuery={searchQuery}
+                    selectedNamespaces={selectedNamespaces}
                     isLoading={usePodWorkerData ? podWorker.isLoading : loading}
                     isSynced={usePodWorkerData ? podWorker.isSynced : undefined}
                     error={usePodWorkerData ? podWorker.error : undefined}
@@ -358,6 +362,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={replicaSets}
                 onRowClick={(rs: any) => onResourceClick(rs, 'replicaset')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
                 isLoading={replicaSets.length === 0 && !watcherReady}
             />
         );
@@ -380,6 +385,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={services}
                 onRowClick={(svc: any) => onResourceClick(svc, 'service')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -401,6 +407,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={daemonSets}
                 onRowClick={(ds: any) => onResourceClick(ds, 'daemonset')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -422,6 +429,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={statefulSets}
                 onRowClick={(ss: any) => onResourceClick(ss, 'statefulset')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -442,6 +450,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={jobs}
                 onRowClick={(job: any) => onResourceClick(job, 'job')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -464,6 +473,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={cronJobs}
                 onRowClick={(cj: any) => onResourceClick(cj, 'cronjob')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -483,6 +493,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={configMaps}
                 onRowClick={(cm: any) => onResourceClick(cm, 'configmap')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -503,6 +514,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={secrets}
                 onRowClick={(secret: any) => onResourceClick(secret, 'secret')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
                 isLoading={secrets.length === 0 && !watcherReady}
             />
         );
@@ -525,6 +537,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_pvcs}
                 onRowClick={(pvc: any) => onResourceClick(pvc, 'persistentvolumeclaim')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
                 isLoading={_pvcs.length === 0 && !watcherReady}
             />
         );
@@ -547,6 +560,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_pvs}
                 onRowClick={(pv: any) => onResourceClick(pv, 'persistentvolume')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
                 isLoading={_pvs.length === 0 && !watcherReady}
             />
         );
@@ -568,6 +582,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_storageClasses}
                 onRowClick={(sc: any) => onResourceClick(sc, 'storageclass')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -588,6 +603,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_ingresses}
                 onRowClick={(ing: any) => onResourceClick(ing, 'ingress')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -606,6 +622,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_ingressClasses}
                 onRowClick={(ic: any) => onResourceClick(ic, 'ingressclass')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -626,6 +643,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_endpointSlices}
                 onRowClick={(es: any) => onResourceClick(es, 'endpointslice')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -645,6 +663,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_endpoints}
                 onRowClick={(ep: any) => onResourceClick(ep, 'endpoint')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -664,6 +683,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_networkPolicies}
                 onRowClick={(np: any) => onResourceClick(np, 'networkpolicy')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -683,6 +703,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_serviceAccounts}
                 onRowClick={(sa: any) => onResourceClick(sa, 'serviceaccount')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -701,6 +722,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_roles}
                 onRowClick={(role: any) => onResourceClick(role, 'role')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -720,6 +742,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_roleBindings}
                 onRowClick={(rb: any) => onResourceClick(rb, 'rolebinding')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -737,6 +760,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_clusterRoles}
                 onRowClick={(cr: any) => onResourceClick(cr, 'clusterrole')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -755,6 +779,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_clusterRoleBindings}
                 onRowClick={(crb: any) => onResourceClick(crb, 'clusterrolebinding')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -776,6 +801,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_horizontalPodAutoscalers}
                 onRowClick={(hpa: any) => onResourceClick(hpa, 'horizontalpodautoscaler')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -796,6 +822,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_podDisruptionBudgets}
                 onRowClick={(pdb: any) => onResourceClick(pdb, 'poddisruptionbudget')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -814,6 +841,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_mutatingWebhookConfigurations}
                 onRowClick={(mwc: any) => onResourceClick(mwc, 'mutatingwebhookconfiguration')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -832,6 +860,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_validatingWebhookConfigurations}
                 onRowClick={(vwc: any) => onResourceClick(vwc, 'validatingwebhookconfiguration')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -851,6 +880,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_priorityClasses}
                 onRowClick={(pc: any) => onResourceClick(pc, 'priorityclass')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -869,6 +899,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 data={_runtimeClasses}
                 onRowClick={(rc: any) => onResourceClick(rc, 'runtimeclass')}
                 searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
             />
         );
     }
@@ -878,7 +909,6 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
         return (
             <HelmReleasesView
                 clusterName={clusterName}
-                selectedNamespaces={selectedNamespaces}
                 searchQuery={searchQuery}
                 onNavigateToDetail={(namespace, name) => onNavigate?.(`helm-release-detail/${namespace}/${name}`)}
                 showToast={showToast || (() => { })}
