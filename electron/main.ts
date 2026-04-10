@@ -603,7 +603,7 @@ function registerIpcHandlers() {
 
   ipcMain.on('ai:explainResourceStream', async (event, resource, options) => {
     try {
-      const { provider = 'google', model = 'gemini-1.5-flash' } = options || {};
+      const { provider = 'google', model = 'gemini-1.5-flash', clusterName } = options || {};
       let aiModel;
 
       if (provider === 'google') {
@@ -625,6 +625,31 @@ function registerIpcHandlers() {
 
       const { getPromptForResource } = await import('./prompts');
       const basePrompt = getPromptForResource(resource);
+
+      // Fetch recent events for this resource (describe-style context)
+      let eventsContext = '';
+      try {
+        const resourceName = resource?.metadata?.name || resource?.name;
+        const resourceNamespace = resource?.metadata?.namespace || resource?.namespace;
+        const resourceKind = resource?.kind || resource?.type;
+        if (clusterName && resourceName) {
+          const fieldSelector = resourceKind
+            ? `involvedObject.name=${resourceName},involvedObject.kind=${resourceKind}`
+            : `involvedObject.name=${resourceName}`;
+          const namespaces = resourceNamespace ? [resourceNamespace] : ['all'];
+          const events = await k8sService.getEvents(clusterName, namespaces, fieldSelector);
+          if (events.length > 0) {
+            // Take the 10 most recent events, compress to one line each
+            const recentEvents = events.slice(0, 10).map(
+              (e: { type: string; reason: string; message: string; count: number; lastTimestamp: string }) =>
+                `${e.type} | ${e.reason} | ${e.message} (x${e.count || 1}, ${e.lastTimestamp})`
+            );
+            eventsContext = `\n\n--- RECENT EVENTS (kubectl describe) ---\n${recentEvents.join('\n')}\n--- END EVENTS ---`;
+          }
+        }
+      } catch (evtErr) {
+        console.error('[AI] Error fetching events for explain:', evtErr);
+      }
 
       // Build related context from ContextStore for resources in the same namespace
       let relatedContext = '';
@@ -648,15 +673,17 @@ function registerIpcHandlers() {
 
       const prompt = `
         ${basePrompt}
+        ${eventsContext}
         ${relatedContext}
         
         Resource JSON:
-        ${JSON.stringify(resource, null, 2)}
+        ${JSON.stringify(stripResourceForAI(resource), null, 2)}
       `;
 
       const result = streamText({
         model: aiModel,
         prompt: prompt,
+        maxOutputTokens: 1024,
         onError: ({ error }: { error: unknown }) => {
           console.error('[AI] streamText onError:', error);
           const { message: errMsg, isAccessDenied } = extractAiErrorInfo(error);
@@ -1909,6 +1936,38 @@ function registerIpcHandlers() {
 }
 
 // Helper functions for AI
+
+/**
+ * Strip noisy/verbose fields from a K8s resource before sending to the LLM.
+ * Removes managedFields, last-applied-configuration, and other metadata bloat
+ * that wastes tokens without adding analytical value.
+ */
+function stripResourceForAI(resource: Record<string, unknown>): Record<string, unknown> {
+  const clone = JSON.parse(JSON.stringify(resource));
+  const meta = clone.metadata;
+  if (meta) {
+    delete meta.managedFields;
+    delete meta.generation;
+    delete meta.uid;
+    delete meta.resourceVersion;
+    delete meta.selfLink;
+    delete meta.creationTimestamp;
+    if (meta.annotations) {
+      delete meta.annotations['kubectl.kubernetes.io/last-applied-configuration'];
+      delete meta.annotations['deployment.kubernetes.io/revision'];
+      // Remove empty annotations object
+      if (Object.keys(meta.annotations).length === 0) delete meta.annotations;
+    }
+  }
+  // Strip status.conditions[].lastTransitionTime and lastHeartbeatTime noise
+  if (clone.status?.conditions && Array.isArray(clone.status.conditions)) {
+    clone.status.conditions = clone.status.conditions.map((c: Record<string, unknown>) => {
+      const { lastHeartbeatTime, ...rest } = c;
+      return rest;
+    });
+  }
+  return clone;
+}
 
 function extractAiErrorInfo(error: unknown): { message: string; isAccessDenied: boolean } {
   // Try to get a clean message from various error shapes

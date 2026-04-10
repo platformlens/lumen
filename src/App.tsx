@@ -1026,7 +1026,7 @@ function App() {
         try {
             aiCleanupRef.current = window.k8s.streamExplainResource(
                 context,
-                { model, provider },
+                { model, provider, clusterName: selectedCluster },
                 (chunk) => {
                     setAiStreamingContent(prev => prev + chunk);
                 },

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Send, MessageSquare, Trash2, ChevronRight, Copy, Check, AlertTriangle, Server, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { motion } from 'framer-motion';
 
 interface ChatMessage {
@@ -91,6 +92,18 @@ const MessageContent: React.FC<{ content: string; role: 'user' | 'assistant' }> 
     const commands = extractKubectlCommands(content);
     const hasDestructive = commands.some(isDestructiveCommand);
 
+    // Preprocess: strip trailing unmatched backtick from streaming chunks
+    // so the parser doesn't render it as literal text mid-stream
+    let processed = content;
+    // Count backticks outside of fenced code blocks (``` ... ```)
+    const withoutFenced = processed.replace(/```[\s\S]*?```/g, '');
+    const backtickCount = (withoutFenced.match(/`/g) || []).length;
+    if (backtickCount % 2 !== 0) {
+        // Odd number of backticks — remove the trailing one
+        const lastIdx = processed.lastIndexOf('`');
+        processed = processed.slice(0, lastIdx) + processed.slice(lastIdx + 1);
+    }
+
     return (
         <div className="markdown-body prose prose-invert prose-sm max-w-none">
             {hasDestructive && (
@@ -100,7 +113,27 @@ const MessageContent: React.FC<{ content: string; role: 'user' | 'assistant' }> 
                 </div>
             )}
             <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
+                    table({ children }) {
+                        return (
+                            <div className="overflow-x-auto my-2 rounded-lg border border-white/10">
+                                <table className="w-full text-sm">{children}</table>
+                            </div>
+                        );
+                    },
+                    thead({ children }) {
+                        return <thead className="bg-white/5 text-gray-400 text-xs font-medium">{children}</thead>;
+                    },
+                    th({ children }) {
+                        return <th className="px-3 py-2 text-left border-b border-white/10 font-medium">{children}</th>;
+                    },
+                    td({ children }) {
+                        return <td className="px-3 py-1.5 border-b border-white/5 text-gray-300">{children}</td>;
+                    },
+                    tr({ children }) {
+                        return <tr className="hover:bg-white/5 transition-colors">{children}</tr>;
+                    },
                     code({ className, children, ...props }) {
                         const match = /language-(\w+)/.exec(className || '');
                         const codeStr = String(children).replace(/\n$/, '');
@@ -118,10 +151,10 @@ const MessageContent: React.FC<{ content: string; role: 'user' | 'assistant' }> 
                                 </div>
                             );
                         }
-                        return <code {...props} className={className}>{children}</code>;
+                        return <code {...props} className="bg-white/10 text-blue-300 px-1.5 py-0.5 rounded text-xs font-mono">{String(children).replace(/^`|`$/g, '')}</code>;
                     }
                 }}
-            >{content}</ReactMarkdown>
+            >{processed}</ReactMarkdown>
         </div>
     );
 };
