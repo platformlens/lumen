@@ -100,6 +100,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const isCrdView = activeView.startsWith('crd/');
     const crdParams = isCrdView ? activeView.split('/') : []; // ['crd', group, version, plural]
 
+    // Bump this counter when the window regains focus to force watchers to restart.
+    // macOS throttles background processes, silently killing watch connections.
+    // Only restart if the window was blurred for >30s to avoid churn from quick alt-tabs.
+    const [watchEpoch, setWatchEpoch] = useState(0);
+    const lastBlurRef = useRef<number>(0);
+    useEffect(() => {
+        const handleBlur = () => { lastBlurRef.current = Date.now(); };
+        window.addEventListener('blur', handleBlur);
+
+        const cleanup = (window as any).k8s.app.onWindowFocused(() => {
+            const blurDuration = lastBlurRef.current ? Date.now() - lastBlurRef.current : 0;
+            if (blurDuration < 30_000) {
+                console.log(`[Dashboard] Window focused after ${Math.round(blurDuration / 1000)}s — skipping watcher restart`);
+                return;
+            }
+            setWatchEpoch(e => {
+                const next = e + 1;
+                console.log(`[Dashboard] Window regained focus after ${Math.round(blurDuration / 1000)}s, bumping watchEpoch to ${next}`);
+                return next;
+            });
+        });
+        return () => {
+            window.removeEventListener('blur', handleBlur);
+            cleanup();
+        };
+    }, []);
+
     // Selection State
     const [selectedResource, setSelectedResource] = useState<any>(null);
     const [detailedResource, setDetailedResource] = useState<any>(null);
@@ -113,6 +140,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [podViewMode, setPodViewMode] = useState<'list' | 'visual'>('list');
     const [summariesEnabled, setSummariesEnabled] = useState(false);
 
+    // Pod worker count — reported by DashboardContent when pod worker is active
+    const [podWorkerCount, setPodWorkerCount] = useState<number | null>(null);
+
     // Fetch context engine config for summariesEnabled
     useEffect(() => {
         (window as any).k8s.settings.getContextConfig().then((config: any) => {
@@ -123,11 +153,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     // Performance: Use batched IPC watchers for pods and deployments
     const { isUpdating } = useDashboardWatchers({
         clusterName,
-        activeView,
         selectedNamespaces,
         setPods,
         setDeployments,
         startTransition,
+        watchEpoch,
     });
 
     // Sorting State
@@ -261,49 +291,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
     }, [clusterName, activeView]);
 
-    // Node Watcher Effect - Uses worker thread batched events
+    // Node Watcher Effect - Runs continuously, independent of active view.
     useEffect(() => {
-        let nodeBatchCleanup: (() => void) | undefined;
-        const needsNodes = activeView === 'nodes';
+        console.log(`[NodeWatcher] Starting — cluster=${clusterName}, epoch=${watchEpoch}`);
+        window.k8s.watchNodes(clusterName);
 
-        if (needsNodes) {
-            window.k8s.watchNodes(clusterName);
+        const nodeBatchCleanup = window.k8s.onNodeBatchChange((events) => {
+            startTransition(() => {
+                setNodes(prev => {
+                    const nodeMap = new Map(prev.map(n => [n.name, n]));
 
-            nodeBatchCleanup = window.k8s.onNodeBatchChange((events) => {
-                startTransition(() => {
-                    setNodes(prev => {
-                        const nodeMap = new Map(prev.map(n => [n.name, n]));
-
-                        for (const { type, node } of events) {
-                            if (type === 'ADDED' || type === 'MODIFIED') {
-                                nodeMap.set(node.name, node);
-                            } else if (type === 'DELETED') {
-                                nodeMap.delete(node.name);
-                            }
+                    for (const { type, node } of events) {
+                        if (type === 'ADDED' || type === 'MODIFIED') {
+                            nodeMap.set(node.name, node);
+                        } else if (type === 'DELETED') {
+                            nodeMap.delete(node.name);
                         }
+                    }
 
-                        return Array.from(nodeMap.values());
-                    });
+                    return Array.from(nodeMap.values());
                 });
             });
-        }
+        });
 
         return () => {
-            if (nodeBatchCleanup) nodeBatchCleanup();
-            if (needsNodes) {
-                window.k8s.stopWatchNodes();
-            }
+            console.log(`[NodeWatcher] Cleanup — epoch=${watchEpoch}`);
+            nodeBatchCleanup();
+            window.k8s.stopWatchNodes();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, activeView]);
+    }, [clusterName, watchEpoch]);
 
-    // Helm Release Watcher Effect - Uses worker thread batched events with revision deduplication
-    // Preserves cached data when navigating back to the view; only clears on namespace change.
+    // Helm Release Watcher Effect - Runs continuously, independent of active view.
+    // Preserves cached data; only clears on namespace change.
     const prevHelmNsRef = useRef<string>(JSON.stringify(selectedNamespaces));
     useEffect(() => {
-        const needsHelm = activeView === 'helm-releases' || activeView.startsWith('helm-release-detail/');
-        if (!needsHelm) return;
-
         // Only clear state when namespaces actually changed (not on view re-entry)
         const nsKey = JSON.stringify(selectedNamespaces);
         if (prevHelmNsRef.current !== nsKey) {
@@ -313,7 +335,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             helmReleasesMapRef.current = new Map();
         }
 
-        console.log('[HelmWatcher] Starting watch for cluster:', clusterName, 'namespaces:', selectedNamespaces);
+        console.log(`[HelmWatcher] Starting — cluster=${clusterName}, ns=${selectedNamespaces.join(',')}, epoch=${watchEpoch}`);
         (window as any).k8s.helm.watchHelmReleases(clusterName, selectedNamespaces);
 
         const unsubscribe = (window as any).k8s.helm.onHelmReleaseBatchChange((events: Array<{ type: string; resource: any }>) => {
@@ -328,12 +350,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         });
 
         return () => {
-            console.log('[HelmWatcher] Stopping watch for cluster:', clusterName);
+            console.log(`[HelmWatcher] Cleanup — epoch=${watchEpoch}`);
             unsubscribe();
             (window as any).k8s.helm.stopWatchHelmReleases();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, activeView]);
+    }, [clusterName, selectedNamespaces, watchEpoch]);
 
     // Config Resource Watcher Effect - Watch config resources when their view is active
     useEffect(() => {
@@ -644,7 +666,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             window.k8s.stopWatchGenericResource(watchKey);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, activeView]);
+    }, [clusterName, selectedNamespaces, activeView, watchEpoch]);
 
     // Pod Metrics Refresh Effect - Refresh metrics every 30 seconds when on pods view
     useEffect(() => {
@@ -1199,7 +1221,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
     const getResourceCount = () => {
         if (activeView === 'deployments') return deployments.length;
-        if (activeView === 'pods') return pods.length;
+        if (activeView === 'pods') return podWorkerCount ?? pods.length;
         if (activeView === 'replicasets') return replicaSets.length;
         if (activeView === 'services') return services.length;
         if (activeView === 'configmaps') return configMaps.length;
@@ -1315,6 +1337,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     helmReleases={helmReleases}
                     helmReleasesLoading={!helmReleasesLoaded}
                     showToast={showToast}
+                    onPodWorkerCount={setPodWorkerCount}
                 />
             </div>
             < Drawer

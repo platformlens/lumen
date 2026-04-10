@@ -270,7 +270,7 @@ const VirtualizedTableInner: React.FC<VirtualizedTableProps> = ({
     };
 
     return (
-        <div className="relative flex-1 h-full w-full min-h-[400px] flex flex-col overflow-hidden virtualized-table-container-outer">
+        <div className="relative flex-1 h-full w-full min-h-[400px] flex flex-col overflow-x-auto overflow-y-hidden virtualized-table-container-outer">
 
             <style>{tableStyles}</style>
             <div className="flex-1 virtualized-table-container overflow-x-auto overflow-y-hidden">
@@ -287,6 +287,7 @@ const VirtualizedTableInner: React.FC<VirtualizedTableProps> = ({
                         }
 
                         return (
+                            <div style={{ width: tableWidth, height }}>
                             <Table
                                 ref={tableRef}
                                 width={tableWidth}
@@ -320,6 +321,7 @@ const VirtualizedTableInner: React.FC<VirtualizedTableProps> = ({
                                     />
                                 ))}
                             </Table>
+                            </div>
                         );
                     }}
                 </AutoSizer>

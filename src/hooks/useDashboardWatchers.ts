@@ -12,20 +12,20 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 
 interface WatcherConfig {
     clusterName: string;
-    activeView: string;
     selectedNamespaces: string[];
     setPods: React.Dispatch<React.SetStateAction<any[]>>;
     setDeployments: React.Dispatch<React.SetStateAction<any[]>>;
     startTransition: (callback: () => void) => void;
+    watchEpoch: number;
 }
 
 export function useDashboardWatchers({
     clusterName,
-    activeView,
     selectedNamespaces,
     setPods,
     setDeployments,
     startTransition,
+    watchEpoch,
 }: WatcherConfig): { isUpdating: boolean } {
 
     const [isUpdating, setIsUpdating] = useState(false);
@@ -39,109 +39,61 @@ export function useDashboardWatchers({
         }, 1000);
     }, []);
 
-    // Pod Watcher Effect - Performance: Only watch when view is active
+    // Pod Watcher Effect — DISABLED.
+    // Pod watching is now handled by the usePodWorker hook (utilityProcess-based)
+    // in DashboardContent.tsx. The old main-process watcher is no longer needed.
+    const podMapRef = useRef<Map<string, any>>(new Map());
     useEffect(() => {
-        let cleanup: (() => void) | undefined;
+        // No-op: pods are now managed by usePodWorker via the k8s-pod-worker utilityProcess.
+        // This effect is kept as a placeholder so the hook's return shape doesn't change.
+        return () => {};
+    }, [clusterName, selectedNamespaces, watchEpoch]);
 
-        // Performance: Only watch if we are in a view that needs pods
-        const needsPods = activeView === 'overview' || activeView === 'pods';
+    // Deployment Watcher Effect - Runs continuously, independent of active view.
+    const depMapRef = useRef<Map<string, any>>(new Map());
+    useEffect(() => {
+        console.log(`[DeploymentWatcher] Starting — cluster=${clusterName}, ns=${selectedNamespaces.join(',')}, epoch=${watchEpoch}`);
+        const nsToWatch = selectedNamespaces;
 
-        if (needsPods) {
-            const nsToWatch = selectedNamespaces;
-
-            // Clear stale pods from previously selected namespaces before restarting watcher.
-            // The Map-based merge only processes incoming events (ADDED/MODIFIED/DELETED) and
-            // never removes resources from namespaces that are no longer selected.
-            setPods(prev => {
-                if (nsToWatch.includes('all')) return prev;
-                return prev.filter(p => nsToWatch.includes(p.namespace));
-            });
-
-            // Start watching
-            window.k8s.watchPods(clusterName, nsToWatch);
-
-            // Listen for pre-batched events from main process
-            cleanup = window.k8s.onPodBatchChange((events) => {
-                startTransition(() => {
-                    setPods(prev => {
-                        const podMap = new Map(prev.map(p => [`${p.namespace}/${p.name}`, p]));
-                        for (const { type, pod } of events) {
-                            const key = `${pod.namespace}/${pod.name}`;
-                            const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(pod.namespace);
-                            if (type === 'DELETED') {
-                                podMap.delete(key);
-                            } else if (isSelected) {
-                                podMap.set(key, pod);
-                            } else if (podMap.has(key)) {
-                                podMap.delete(key);
-                            }
-                        }
-                        return Array.from(podMap.values());
-                    });
-                });
-                setIsUpdating(true);
-                resetIdleTimer();
-            });
+        if (!nsToWatch.includes('all')) {
+            for (const [key, dep] of depMapRef.current) {
+                if (!nsToWatch.includes(dep.namespace)) depMapRef.current.delete(key);
+            }
+            setDeployments(Array.from(depMapRef.current.values()));
         }
 
-        return () => {
-            if (cleanup) cleanup();
-            if (needsPods) {
-                window.k8s.stopWatchPods();
+        window.k8s.watchDeployments(clusterName, nsToWatch);
+
+        const depCleanup = window.k8s.onDeploymentBatchChange((events) => {
+            let changed = false;
+            for (const { type, deployment } of events) {
+                const key = `${deployment.namespace}/${deployment.name}`;
+                const isSelected = nsToWatch.includes('all') || nsToWatch.includes(deployment.namespace);
+                if (type === 'DELETED') {
+                    if (depMapRef.current.delete(key)) changed = true;
+                } else if (isSelected) {
+                    depMapRef.current.set(key, deployment);
+                    changed = true;
+                } else if (depMapRef.current.has(key)) {
+                    depMapRef.current.delete(key);
+                    changed = true;
+                }
             }
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, activeView]);
-
-    // Deployment Watcher Effect - Separate to avoid unnecessary restarts
-    useEffect(() => {
-        let depCleanup: (() => void) | undefined;
-        const needsDeployments = activeView === 'overview' || activeView === 'deployments';
-
-        if (needsDeployments) {
-            const nsToWatch = selectedNamespaces;
-
-            // Clear stale deployments from previously selected namespaces before restarting watcher.
-            setDeployments(prev => {
-                if (nsToWatch.includes('all')) return prev;
-                return prev.filter(d => nsToWatch.includes(d.namespace));
-            });
-
-            window.k8s.watchDeployments(clusterName, nsToWatch);
-
-            // Listen for pre-batched events from main process
-            // Worker thread already transforms raw K8s objects to UI-ready format
-            depCleanup = window.k8s.onDeploymentBatchChange((events) => {
-                startTransition(() => {
-                    setDeployments(prev => {
-                        const depMap = new Map(prev.map(d => [`${d.namespace}/${d.name}`, d]));
-                        for (const { type, deployment } of events) {
-                            const key = `${deployment.namespace}/${deployment.name}`;
-                            const isSelected = selectedNamespaces.includes('all') || selectedNamespaces.includes(deployment.namespace);
-                            if (type === 'DELETED') {
-                                depMap.delete(key);
-                            } else if (isSelected) {
-                                depMap.set(key, deployment);
-                            } else if (depMap.has(key)) {
-                                depMap.delete(key);
-                            }
-                        }
-                        return Array.from(depMap.values());
-                    });
-                });
-                setIsUpdating(true);
-                resetIdleTimer();
-            });
-        }
+            if (changed) {
+                const snapshot = Array.from(depMapRef.current.values());
+                startTransition(() => setDeployments(snapshot));
+            }
+            setIsUpdating(true);
+            resetIdleTimer();
+        });
 
         return () => {
-            if (depCleanup) depCleanup();
-            if (needsDeployments) {
-                window.k8s.stopWatchDeployments();
-            }
+            console.log(`[DeploymentWatcher] Cleanup — epoch=${watchEpoch}`);
+            depCleanup();
+            window.k8s.stopWatchDeployments();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, activeView]);
+    }, [clusterName, selectedNamespaces, watchEpoch]);
 
     // Clean up idle timer on unmount
     useEffect(() => {

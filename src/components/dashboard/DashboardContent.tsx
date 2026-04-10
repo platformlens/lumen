@@ -10,6 +10,8 @@ import { HelmReleasesView } from './views/HelmReleasesView';
 import { HelmReleaseDetail } from './views/HelmReleaseDetail';
 import { ViewSummary } from '../shared/ViewSummary';
 import { TimeAgo } from '../shared/TimeAgo';
+import { usePodWorker } from '../../hooks/usePodWorker';
+import { useResourceSorting } from '../../hooks/useResourceSorting';
 
 // Resource type union matching Dashboard's handleResourceClick
 type ResourceType = 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'other';
@@ -80,6 +82,7 @@ interface DashboardContentProps {
     helmReleases?: any[];
     helmReleasesLoading?: boolean;
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
+    onPodWorkerCount?: (count: number) => void;
 }
 
 /**
@@ -144,7 +147,28 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     helmReleases = [],
     helmReleasesLoading = false,
     showToast,
+    onPodWorkerCount,
 }) => {
+    // Pod worker hook — runs continuously regardless of active view so tab switches are instant
+    const podWorker = usePodWorker({
+        context: clusterName,
+        namespaces: selectedNamespaces,
+        enabled: true,
+    });
+
+    // Report pod worker count back to parent for header resource count
+    React.useEffect(() => {
+        if (podWorker.isSynced && onPodWorkerCount) {
+            onPodWorkerCount(podWorker.podCount);
+        }
+    }, [podWorker.isSynced, podWorker.podCount, onPodWorkerCount]);
+
+    // Local sorting for pod-worker pods
+    const { sortConfig: workerSortConfig, handleSort: workerHandleSort, getSortedData: workerGetSortedData } = useResourceSorting();
+
+    // Use pod-worker data when synced, fall back to prop-passed pods
+    const usePodWorkerData = activeView === 'pods' && podWorker.isSynced;
+
     // Overview View
     if (activeView === 'overview') {
         return (
@@ -269,8 +293,14 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
 
     // Pods View
     if (activeView === 'pods') {
+        // Choose data source: pod worker when synced, otherwise legacy props
+        const sourcePods = usePodWorkerData ? podWorker.pods : pods;
+        const activeSortConfig = usePodWorkerData ? workerSortConfig : sortConfig;
+        const activeOnSort = usePodWorkerData ? workerHandleSort : onSort;
+        const activeGetSortedData = usePodWorkerData ? workerGetSortedData : getSortedData;
+
         // Enrich pods with metrics BEFORE sorting so cpu/memory columns sort correctly
-        const enrichedPods = pods.map(pod => {
+        const enrichedPods = sourcePods.map(pod => {
             const key = `${pod.namespace}/${pod.name}`;
             const metrics = podMetrics[key];
             return {
@@ -285,13 +315,19 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 <PodsView
                     viewMode={podViewMode}
                     pods={enrichedPods}
-                    sortedPods={getSortedData(enrichedPods)}
+                    sortedPods={activeGetSortedData(enrichedPods)}
                     nodes={nodes}
-                    sortConfig={sortConfig}
-                    onSort={onSort}
+                    sortConfig={activeSortConfig}
+                    onSort={activeOnSort}
                     onRowClick={(pod: any) => onResourceClick(pod, 'pod')}
+                    onNodeClick={(nodeName: string) => {
+                        const node = nodes.find((n: any) => n.name === nodeName);
+                        if (node) onResourceClick(node, 'node');
+                    }}
                     searchQuery={searchQuery}
-                    isLoading={loading}
+                    isLoading={usePodWorkerData ? podWorker.isLoading : loading}
+                    isSynced={usePodWorkerData ? podWorker.isSynced : undefined}
+                    error={usePodWorkerData ? podWorker.error : undefined}
                     podMetrics={podMetrics}
                     onExec={onExec}
                     onOpenLogs={onOpenLogs}

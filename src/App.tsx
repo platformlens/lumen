@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useTransition, useMemo } from 'react'
+import { useState, useEffect, useRef, useTransition, useMemo, useCallback } from 'react'
 import { Sparkles, Pin, PenTool } from 'lucide-react';
 import { Sidebar } from './components/features/sidebar/Sidebar'
 import { SecondarySidebar } from './components/features/sidebar/SecondarySidebar'
@@ -21,6 +21,8 @@ import { ConnectionErrorCard } from './components/dashboard/ConnectionErrorCard'
 import { isEksCluster } from './utils/cluster-utils';
 import { RESOURCE_TYPE_MAP } from './utils/resource-utils';
 import { AIPanel } from './components/features/ai/AIPanel';
+import { ViewTabBar, ViewTab } from './components/dashboard/ViewTabBar';
+import { getViewLabel } from './utils/view-labels';
 
 function App() {
     const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor'>('clusters')
@@ -53,6 +55,18 @@ function App() {
     // Dashboard Sub-views
     const [resourceView, setResourceView] = useState<string>('overview')
     const lastResourceViewRef = useRef<string>('overview');
+
+    // Per-cluster view tabs (in-memory only — resets on app restart)
+    const viewTabsByClusterRef = useRef<Map<string, ViewTab[]>>(new Map());
+    const [viewTabsVersion, setViewTabsVersion] = useState(0);
+    const bumpViewTabs = () => setViewTabsVersion(v => v + 1);
+
+    // Derived: tabs for the currently selected cluster
+    const viewTabs = useMemo(
+        () => selectedCluster ? (viewTabsByClusterRef.current.get(selectedCluster) ?? []) : [],
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [selectedCluster, viewTabsVersion]
+    );
 
     // Onboarding State
     const [showOnboarding, setShowOnboarding] = useState(false);
@@ -311,7 +325,33 @@ function App() {
         startViewTransition(() => {
             setResourceView(view);
         });
+
+        // Add tab for this view if it doesn't exist yet (per-cluster)
+        if (selectedCluster && !view.startsWith('settings-')) {
+            const cluster = selectedCluster;
+            const existing = viewTabsByClusterRef.current.get(cluster) ?? [];
+            if (!existing.find(t => t.id === view)) {
+                const label = getViewLabel(view);
+                viewTabsByClusterRef.current.set(cluster, [...existing, { id: view, label }]);
+                bumpViewTabs();
+            }
+        }
     };
+
+    const handleCloseViewTab = useCallback((tabId: string) => {
+        if (!selectedCluster || tabId === 'overview') return;
+        const cluster = selectedCluster;
+        const existing = viewTabsByClusterRef.current.get(cluster) ?? [];
+        const newTabs = existing.filter(t => t.id !== tabId);
+        viewTabsByClusterRef.current.set(cluster, newTabs);
+        bumpViewTabs();
+
+        // If closing the active tab, switch to the last remaining tab or overview
+        if (resourceView === tabId) {
+            const next = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : 'overview';
+            startViewTransition(() => setResourceView(next));
+        }
+    }, [selectedCluster, resourceView]);
 
     // AI State
     const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
@@ -390,6 +430,18 @@ function App() {
             // If we're in editor view and there are no tabs for this cluster, navigate away
             if (tabs.length === 0 && activeView === 'editor') {
                 setActiveView(selectedCluster ? 'dashboard' : 'clusters');
+            }
+
+            // Restore the last active view tab for this cluster (or default to overview)
+            if (selectedCluster) {
+                const vTabs = viewTabsByClusterRef.current.get(selectedCluster) ?? [];
+                if (vTabs.length > 0) {
+                    // Keep the current resourceView if it exists in the tabs, otherwise use the last tab
+                    const hasCurrentView = vTabs.find(t => t.id === resourceView);
+                    if (!hasCurrentView) {
+                        setResourceView(vTabs[vTabs.length - 1].id);
+                    }
+                }
             }
         }
     }, [selectedCluster, activeView]);
@@ -529,6 +581,12 @@ function App() {
             setConnectionStatus('connected');
             setResourceView('overview');
             setActiveView('dashboard');
+
+            // Seed the overview tab for this cluster if no tabs exist yet
+            if (!viewTabsByClusterRef.current.has(clusterName)) {
+                viewTabsByClusterRef.current.set(clusterName, [{ id: 'overview', label: 'Overview' }]);
+                bumpViewTabs();
+            }
 
             // Check EKS status
             window.k8s.getNodes(clusterName).then(nodes => {
@@ -1336,6 +1394,14 @@ function App() {
                         </div>
 
                         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+                            {activeView === 'dashboard' && selectedCluster && viewTabs.length > 1 && (
+                                <ViewTabBar
+                                    tabs={viewTabs}
+                                    activeTabId={resourceView}
+                                    onSelectTab={handleViewChange}
+                                    onCloseTab={handleCloseViewTab}
+                                />
+                            )}
                             <div className="flex-1 min-h-0 w-full relative overflow-hidden">
                                 {activeView === 'settings' ? (
                                     <Settings activeSection={resourceView} />

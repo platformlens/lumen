@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('k8s', {
   getDeploymentYaml: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getDeploymentYaml', contextName, namespace, name),
   updateDeploymentYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => ipcRenderer.invoke('k8s:updateDeploymentYaml', contextName, namespace, name, yamlContent),
   getPods: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPods', contextName, namespaces),
+  getPodsLite: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPodsLite', contextName, namespaces),
   getPodMetrics: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPodMetrics', contextName, namespaces),
   getPod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getPod', contextName, namespace, name),
   getReplicaSets: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getReplicaSets', contextName, namespaces),
@@ -369,6 +370,13 @@ contextBridge.exposeInMainWorld('k8s', {
     restart: () => ipcRenderer.invoke('app:restart'),
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     isPackaged: () => ipcRenderer.invoke('app:isPackaged'),
+    onWindowFocused: (callback: () => void) => {
+      ipcRenderer.on('app:windowFocused', () => {
+        console.log('[preload] Received app:windowFocused from main');
+        callback();
+      });
+      return () => { ipcRenderer.removeAllListeners('app:windowFocused'); };
+    },
   },
 
   // --- Helm ---
@@ -391,6 +399,31 @@ contextBridge.exposeInMainWorld('k8s', {
       const listener = (_: any, events: Array<{ type: string; resource: any }>) => callback(events);
       ipcRenderer.on('k8s:helmReleaseBatchChange', listener);
       return () => ipcRenderer.off('k8s:helmReleaseBatchChange', listener);
+    },
+  },
+
+  // --- Pod Worker ---
+  podWorker: {
+    startInformer: (context: string, namespaces: string[]) =>
+      ipcRenderer.invoke('start-pod-informer', context, namespaces),
+    stopInformer: () =>
+      ipcRenderer.invoke('stop-pod-informer'),
+    getPodsChunk: (offset: number, limit: number) =>
+      ipcRenderer.invoke('get-pods-chunk', { offset, limit }),
+    onDeltaBatch: (callback: (deltas: any[]) => void) => {
+      const listener = (_: any, deltas: any[]) => callback(deltas);
+      ipcRenderer.on('k8s-pod-delta-batch', listener);
+      return () => ipcRenderer.off('k8s-pod-delta-batch', listener);
+    },
+    onSynced: (callback: (data: { count: number }) => void) => {
+      const listener = (_: any, data: { count: number }) => callback(data);
+      ipcRenderer.on('k8s-pod-informer-synced', listener);
+      return () => ipcRenderer.off('k8s-pod-informer-synced', listener);
+    },
+    onError: (callback: (data: { error: string; recoverable: boolean }) => void) => {
+      const listener = (_: any, data: { error: string; recoverable: boolean }) => callback(data);
+      ipcRenderer.on('k8s-pod-informer-error', listener);
+      return () => ipcRenderer.off('k8s-pod-informer-error', listener);
     },
   },
 

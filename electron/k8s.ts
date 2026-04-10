@@ -50,6 +50,12 @@ export class K8sService {
     private readonly RELOAD_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
     // Cache: "context::apiVersion/kind" → plural name from API discovery
     private resourcePluralCache: Map<string, string> = new Map();
+    // Track last-seen resourceVersion per watcher for efficient reconnects
+    private watchResourceVersions: Map<string, string> = new Map();
+    // Track consecutive reconnect failures for exponential backoff
+    private watchReconnectAttempts: Map<string, number> = new Map();
+    // Generation counter per watcher — incremented on every start/stop to invalidate stale reconnect timers
+    private watchGenerations: Map<string, number> = new Map();
 
     constructor() {
         this.kc = new KubeConfig();
@@ -59,6 +65,29 @@ export class K8sService {
             console.log('KubeConfig loaded from default.');
         } catch (err) {
             console.error('Error loading KubeConfig:', err);
+        }
+    }
+
+    /**
+     * Compute reconnect delay with exponential backoff (1s, 2s, 4s, 8s, max 30s).
+     * Resets to 0 attempts on success (call when events flow normally).
+     */
+    private getWatchReconnectDelay(watcherKey: string): number {
+        const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
+        this.watchReconnectAttempts.set(watcherKey, attempts + 1);
+        return Math.min(1000 * Math.pow(2, attempts), 30000);
+    }
+
+    /** Clear all cached resourceVersions (e.g. on cluster switch). */
+    public clearWatchResourceVersions() {
+        console.log('[k8s] Clearing all watch resourceVersions');
+        this.watchResourceVersions.clear();
+    }
+
+    /** Seed a watcher's resourceVersion so the next watch starts from this point. */
+    public seedWatchResourceVersion(watcherKey: string, rv: string) {
+        if (rv) {
+            this.watchResourceVersions.set(watcherKey, rv);
         }
     }
 
@@ -596,6 +625,85 @@ export class K8sService {
         });
     }
 
+    /**
+     * Lightweight bulk pod list for table display. Strips heavy fields (managed fields,
+     * full spec, full status) to minimize IPC serialization. Detail fields are fetched
+     * on-demand via getPod when the user opens the drawer.
+     */
+    /**
+         * Lightweight bulk pod list for table display. Uses raw HTTP to bypass the
+         * @kubernetes/client-node typed client overhead. The K8s API still returns full
+         * objects, but we use a raw request to avoid the client's double-parse overhead
+         * and stream the response more efficiently.
+         */
+        /**
+             * Lightweight bulk pod list for table display. Strips heavy fields (managed fields,
+             * full spec, full status) to minimize IPC serialization. Detail fields are fetched
+             * on-demand via getPod when the user opens the drawer.
+             */
+            async getPodsLite(contextName: string, namespaces: string[] = []) {
+                await this.setContextWithSmartReload(contextName);
+
+                return this.withAuthRetry(contextName, async () => {
+                    const k8sApi = this.kc.makeApiClient(CoreV1Api);
+
+                    let items: any[] = [];
+                    let listResourceVersion = '';
+
+                    const t0 = Date.now();
+                    if (namespaces.length === 0 || namespaces.includes('all')) {
+                        const res = await k8sApi.listPodForAllNamespaces();
+                        const body = (res as any).body ?? res;
+                        items = body.items ?? [];
+                        listResourceVersion = body.metadata?.resourceVersion ?? '';
+                    } else {
+                        const promises = namespaces.map(ns => k8sApi.listNamespacedPod({ namespace: ns }));
+                        const results = await Promise.all(promises);
+                        for (const res of results) {
+                            const body = (res as any).body ?? res;
+                            items.push(...(body.items ?? []));
+                            const rv = body.metadata?.resourceVersion ?? '';
+                            if (rv && (!listResourceVersion || rv > listResourceVersion)) {
+                                listResourceVersion = rv;
+                            }
+                        }
+                    }
+                    const t1 = Date.now();
+
+                    const pods = items.map((pod: any) => {
+                        const containerStatuses = pod.status?.containerStatuses || [];
+                        const initContainerStatuses = pod.status?.initContainerStatuses || [];
+                        const allStatuses = [...initContainerStatuses, ...containerStatuses];
+                        const phase = pod.metadata?.deletionTimestamp ? 'Terminating' : (pod.status?.phase || 'Unknown');
+
+                        return {
+                            name: pod.metadata?.name,
+                            namespace: pod.metadata?.namespace,
+                            status: phase,
+                            restarts: containerStatuses.reduce((acc: number, c: any) => acc + (c.restartCount || 0), 0),
+                            age: pod.metadata?.creationTimestamp,
+                            containers: allStatuses.map((c: any) => ({
+                                name: c.name,
+                                state: c.state?.running ? 'running' : (c.state?.waiting ? 'waiting' : 'terminated'),
+                                ready: c.ready ?? false,
+                                restartCount: c.restartCount || 0,
+                            })),
+                            node: pod.spec?.nodeName || '',
+                            metadata: {
+                                name: pod.metadata?.name,
+                                namespace: pod.metadata?.namespace,
+                                creationTimestamp: pod.metadata?.creationTimestamp,
+                            },
+                        };
+                    });
+
+                    const t2 = Date.now();
+                    console.log(`[k8s] getPodsLite: API=${t1 - t0}ms, transform=${t2 - t1}ms, total=${t2 - t0}ms, ${pods.length} pods`);
+
+                    return { pods, resourceVersion: listResourceVersion };
+                });
+            }
+
     async getPod(contextName: string, namespace: string, name: string) {
         console.log(`[k8s] getPod called for ${namespace}/${name}`);
         this.kc.setCurrentContext(contextName);
@@ -741,8 +849,15 @@ export class K8sService {
         // Stop existing watcher if any to avoid duplicates
         this.stopPodWatch();
 
+        const watcherKey = 'pods';
+        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
+        this.watchGenerations.set(watcherKey, gen);
+
         const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        console.log(`[k8s] Starting watch for pods in ${activeWatchersKey(namespaces)}`);
+        const rv = this.watchResourceVersions.get(watcherKey);
+        if (!rv) {
+            console.log(`[k8s] Starting watch for pods in ${activeWatchersKey(namespaces)} [gen=${gen}] (FRESH — no resourceVersion)`);
+        }
         await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
 
@@ -750,43 +865,103 @@ export class K8sService {
             ? '/api/v1/pods'
             : `/api/v1/namespaces/${namespaces[0]}/pods`;
 
+        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
+        if (rv) queryParams.resourceVersion = rv;
+
         try {
             const req = await watch.watch(
                 path,
-                {},
+                queryParams,
                 (type, apiObj, _watchObj) => {
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    const objRv = apiObj?.metadata?.resourceVersion;
+                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
+                    this.watchReconnectAttempts.delete(watcherKey);
+
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
                         onEvent(type, apiObj);
                     }
                 },
                 (err) => {
-                    if (err) console.error('Watch exited with error', err);
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
+                        console.log('[k8s] Pod watch aborted (expected)');
+                        return;
+                    }
+
+                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
+                    const hasRv = this.watchResourceVersions.has(watcherKey);
+                    // Normal server-side close with a valid rv — quiet reconnect
+                    const isNormalClose = !err && hasRv;
+
+                    if (!isNormalClose) {
+                        console.error(`[k8s] Pod watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
+                    }
+
+                    // Detect 410 Gone — the resourceVersion is too old
+                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
+                    if (is410) {
+                        console.log('[k8s] Pod watch rv expired (410 Gone), clearing for fresh re-list');
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+
+                    // If we've failed 3+ times with the same rv, it's probably stale — clear it
+                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
+                    if (attempts >= 3 && hasRv) {
+                        console.log(`[k8s] Pod watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+
+                    if (this.activeWatchers.has(watcherKey)) {
+                        // Use a short delay for normal closes (server just rotated the connection)
+                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
+                        if (!isNormalClose) {
+                            console.log(`[k8s] Pod watch reconnecting in ${delay}ms... [gen=${gen}]`);
+                        }
+                        this.activeWatchers.delete(watcherKey);
+                        setTimeout(() => {
+                            if (gen !== this.watchGenerations.get(watcherKey)) return;
+                            this.startPodWatch(contextName, namespaces, onEvent);
+                        }, delay);
+                    }
                 }
             );
 
-            // Store the request object which has the abort method
-            this.activeWatchers.set('pods', req);
+            if (gen === this.watchGenerations.get(watcherKey)) {
+                this.activeWatchers.set(watcherKey, req);
+            } else {
+                req?.abort?.();
+            }
         } catch (err) {
             console.error('[k8s] Failed to start pod watch:', err);
         }
     }
 
     stopPodWatch() {
-        if (this.activeWatchers.has('pods')) {
-            console.log('[k8s] Stopping pod watch');
-            const req = this.activeWatchers.get('pods');
-            if (req && req.abort) req.abort(); // Check if req has abort
-            this.activeWatchers.delete('pods');
+        const watcherKey = 'pods';
+        // Bump generation to invalidate any pending reconnect timers
+        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
+        if (this.activeWatchers.has(watcherKey)) {
+            console.log('[k8s] Stopping pod watch (preserving resourceVersion for resume)');
+            const req = this.activeWatchers.get(watcherKey);
+            if (req && req.abort) req.abort();
+            this.activeWatchers.delete(watcherKey);
+            // Keep watchResourceVersions so the next start resumes instead of re-listing
+            this.watchReconnectAttempts.delete(watcherKey);
         }
-
     }
 
     async startDeploymentWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, deployment: any) => void) {
         this.stopDeploymentWatch();
 
+        const watcherKey = 'deployments';
+        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
+        this.watchGenerations.set(watcherKey, gen);
+
         const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        console.log(`[k8s] Starting watch for deployments in ${activeWatchersKey(namespaces)}`);
+        const rv = this.watchResourceVersions.get(watcherKey);
+        console.log(`[k8s] Starting watch for deployments in ${activeWatchersKey(namespaces)}${rv ? ` (resuming from rv=${rv})` : ''}`);
         await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
 
@@ -794,47 +969,79 @@ export class K8sService {
             ? '/apis/apps/v1/deployments'
             : `/apis/apps/v1/namespaces/${namespaces[0]}/deployments`;
 
+        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
+        if (rv) queryParams.resourceVersion = rv;
+
         try {
             const req = await watch.watch(
                 path,
-                {},
+                queryParams,
                 (type, apiObj, _watchObj) => {
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    const objRv = apiObj?.metadata?.resourceVersion;
+                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
+                    this.watchReconnectAttempts.delete(watcherKey);
+
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
                         onEvent(type, apiObj);
                     }
                 },
                 (err) => {
-                    // Ignore abort errors as they are expected when stopping the watch
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
                     if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
                         console.log('[k8s] Deployment watch aborted (expected)');
                         return;
                     }
-                    if (err) console.error('Deployment Watch exited with error', err);
+                    if (err) console.error('[k8s] Deployment watch exited with error:', err);
+                    if (err?.statusCode === 410) {
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+                    if (this.activeWatchers.has(watcherKey)) {
+                        const delay = this.getWatchReconnectDelay(watcherKey);
+                        console.log(`[k8s] Deployment watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        this.activeWatchers.delete(watcherKey);
+                        setTimeout(() => {
+                            if (gen !== this.watchGenerations.get(watcherKey)) return;
+                            this.startDeploymentWatch(contextName, namespaces, onEvent);
+                        }, delay);
+                    }
                 }
             );
 
-            this.activeWatchers.set('deployments', req);
+            if (gen === this.watchGenerations.get(watcherKey)) {
+                this.activeWatchers.set(watcherKey, req);
+            } else {
+                req?.abort?.();
+            }
         } catch (err) {
             console.error('[k8s] Failed to start deployment watch:', err);
         }
     }
 
     stopDeploymentWatch() {
-        if (this.activeWatchers.has('deployments')) {
+        const watcherKey = 'deployments';
+        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
+        if (this.activeWatchers.has(watcherKey)) {
             console.log('[k8s] Stopping deployment watch');
-            const req = this.activeWatchers.get('deployments');
+            const req = this.activeWatchers.get(watcherKey);
             if (req && req.abort) req.abort();
-            this.activeWatchers.delete('deployments');
+            this.activeWatchers.delete(watcherKey);
+            this.watchResourceVersions.delete(watcherKey);
+            this.watchReconnectAttempts.delete(watcherKey);
         }
     }
 
     async startHelmReleaseWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, secret: any) => void) {
-        // Stop existing watcher if any to avoid duplicates
         this.stopHelmReleaseWatch();
 
+        const watcherKey = 'helm-releases';
+        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
+        this.watchGenerations.set(watcherKey, gen);
+
         const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        console.log(`[k8s] Starting watch for helm releases in ${activeWatchersKey(namespaces)}`);
+        const rv = this.watchResourceVersions.get(watcherKey);
+        console.log(`[k8s] Starting watch for helm releases in ${activeWatchersKey(namespaces)}${rv ? ` (resuming from rv=${rv})` : ''}`);
         await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
 
@@ -842,34 +1049,66 @@ export class K8sService {
             ? '/api/v1/secrets'
             : `/api/v1/namespaces/${namespaces[0]}/secrets`;
 
+        const queryParams: Record<string, string> = { fieldSelector: 'type=helm.sh/release.v1', allowWatchBookmarks: 'true' };
+        if (rv) queryParams.resourceVersion = rv;
+
         try {
             const req = await watch.watch(
                 path,
-                { fieldSelector: 'type=helm.sh/release.v1' },
+                queryParams,
                 (type, apiObj, _watchObj) => {
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    const objRv = apiObj?.metadata?.resourceVersion;
+                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
+                    this.watchReconnectAttempts.delete(watcherKey);
+
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
                         onEvent(type, apiObj);
                     }
                 },
                 (err) => {
-                    if (err) console.error('[k8s] Helm release watch error:', err);
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
+                        console.log('[k8s] Helm release watch aborted (expected)');
+                        return;
+                    }
+                    if (err) console.error('[k8s] Helm release watch exited with error:', err);
+                    if (err?.statusCode === 410) {
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+                    if (this.activeWatchers.has(watcherKey)) {
+                        const delay = this.getWatchReconnectDelay(watcherKey);
+                        console.log(`[k8s] Helm release watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        this.activeWatchers.delete(watcherKey);
+                        setTimeout(() => {
+                            if (gen !== this.watchGenerations.get(watcherKey)) return;
+                            this.startHelmReleaseWatch(contextName, namespaces, onEvent);
+                        }, delay);
+                    }
                 }
             );
 
-            // Store the request object which has the abort method
-            this.activeWatchers.set('helm-releases', req);
+            if (gen === this.watchGenerations.get(watcherKey)) {
+                this.activeWatchers.set(watcherKey, req);
+            } else {
+                req?.abort?.();
+            }
         } catch (err) {
             console.error('[k8s] Failed to start helm release watch:', err);
         }
     }
 
     stopHelmReleaseWatch() {
-        if (this.activeWatchers.has('helm-releases')) {
+        const watcherKey = 'helm-releases';
+        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
+        if (this.activeWatchers.has(watcherKey)) {
             console.log('[k8s] Stopping helm release watch');
-            const req = this.activeWatchers.get('helm-releases');
+            const req = this.activeWatchers.get(watcherKey);
             if (req && req.abort) req.abort();
-            this.activeWatchers.delete('helm-releases');
+            this.activeWatchers.delete(watcherKey);
+            this.watchResourceVersions.delete(watcherKey);
+            this.watchReconnectAttempts.delete(watcherKey);
         }
     }
 
@@ -1468,17 +1707,29 @@ export class K8sService {
     async startNodeWatch(contextName: string, onEvent: (event: string, node: any) => void) {
         this.stopNodeWatch();
 
-        console.log(`[k8s] Starting watch for nodes`);
+        const watcherKey = 'nodes';
+        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
+        this.watchGenerations.set(watcherKey, gen);
+
+        const rv = this.watchResourceVersions.get(watcherKey);
+        console.log(`[k8s] Starting watch for nodes${rv ? ` (resuming from rv=${rv})` : ''}`);
         await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
 
         const path = '/api/v1/nodes';
+        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
+        if (rv) queryParams.resourceVersion = rv;
 
         try {
             const req = await watch.watch(
                 path,
-                {},
+                queryParams,
                 (type, apiObj, _watchObj) => {
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    const objRv = apiObj?.metadata?.resourceVersion;
+                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
+                    this.watchReconnectAttempts.delete(watcherKey);
+
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
 
@@ -1501,27 +1752,47 @@ export class K8sService {
                     }
                 },
                 (err) => {
-                    // Ignore abort errors as they are expected when stopping the watch
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
                     if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
                         console.log('[k8s] Node watch aborted (expected)');
                         return;
                     }
-                    if (err) console.error('Node Watch exited with error', err);
+                    if (err) console.error('[k8s] Node watch exited with error:', err);
+                    if (err?.statusCode === 410) {
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+                    if (this.activeWatchers.has(watcherKey)) {
+                        const delay = this.getWatchReconnectDelay(watcherKey);
+                        console.log(`[k8s] Node watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        this.activeWatchers.delete(watcherKey);
+                        setTimeout(() => {
+                            if (gen !== this.watchGenerations.get(watcherKey)) return;
+                            this.startNodeWatch(contextName, onEvent);
+                        }, delay);
+                    }
                 }
             );
 
-            this.activeWatchers.set('nodes', req);
+            if (gen === this.watchGenerations.get(watcherKey)) {
+                this.activeWatchers.set(watcherKey, req);
+            } else {
+                req?.abort?.();
+            }
         } catch (err) {
             console.error('[k8s] Failed to start node watch:', err);
         }
     }
 
     stopNodeWatch() {
-        if (this.activeWatchers.has('nodes')) {
+        const watcherKey = 'nodes';
+        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
+        if (this.activeWatchers.has(watcherKey)) {
             console.log('[k8s] Stopping node watch');
-            const req = this.activeWatchers.get('nodes');
+            const req = this.activeWatchers.get(watcherKey);
             if (req && req.abort) req.abort();
-            this.activeWatchers.delete('nodes');
+            this.activeWatchers.delete(watcherKey);
+            this.watchResourceVersions.delete(watcherKey);
+            this.watchReconnectAttempts.delete(watcherKey);
         }
     }
 
@@ -1537,30 +1808,60 @@ export class K8sService {
     ) {
         this.stopGenericWatch(resourceType);
 
-        console.log(`[k8s] Starting generic watch for ${resourceType} at ${apiPath}`);
+        const watcherKey = `generic:${resourceType}`;
+        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
+        this.watchGenerations.set(watcherKey, gen);
+
+        const rv = this.watchResourceVersions.get(watcherKey);
+        console.log(`[k8s] Starting generic watch for ${resourceType} at ${apiPath}${rv ? ` (resuming from rv=${rv})` : ''}`);
         await this.setContextWithSmartReload(contextName);
         const watch = new Watch(this.kc);
+
+        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
+        if (rv) queryParams.resourceVersion = rv;
 
         try {
             const req = await watch.watch(
                 apiPath,
-                {},
+                queryParams,
                 (type, apiObj, _watchObj) => {
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
+                    const objRv = apiObj?.metadata?.resourceVersion;
+                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
+                    this.watchReconnectAttempts.delete(watcherKey);
+
                     if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
                         if (!apiObj || !apiObj.metadata) return;
                         onEvent(type, apiObj);
                     }
                 },
                 (err) => {
+                    if (gen !== this.watchGenerations.get(watcherKey)) return;
                     if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
                         console.log(`[k8s] ${resourceType} watch aborted (expected)`);
                         return;
                     }
-                    if (err) console.error(`[k8s] ${resourceType} watch exited with error`, err);
+                    if (err) console.error(`[k8s] ${resourceType} watch exited with error:`, err);
+                    if (err?.statusCode === 410) {
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+                    if (this.activeWatchers.has(watcherKey)) {
+                        const delay = this.getWatchReconnectDelay(watcherKey);
+                        console.log(`[k8s] ${resourceType} watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        this.activeWatchers.delete(watcherKey);
+                        setTimeout(() => {
+                            if (gen !== this.watchGenerations.get(watcherKey)) return;
+                            this.startGenericWatch(contextName, resourceType, apiPath, onEvent);
+                        }, delay);
+                    }
                 }
             );
 
-            this.activeWatchers.set(`generic:${resourceType}`, req);
+            if (gen === this.watchGenerations.get(watcherKey)) {
+                this.activeWatchers.set(watcherKey, req);
+            } else {
+                req?.abort?.();
+            }
         } catch (err) {
             console.error(`[k8s] Failed to start ${resourceType} watch:`, err);
         }
@@ -1568,11 +1869,14 @@ export class K8sService {
 
     stopGenericWatch(resourceType: string) {
         const key = `generic:${resourceType}`;
+        this.watchGenerations.set(key, (this.watchGenerations.get(key) ?? 0) + 1);
         if (this.activeWatchers.has(key)) {
             console.log(`[k8s] Stopping generic watch for ${resourceType}`);
             const req = this.activeWatchers.get(key);
             if (req && req.abort) req.abort();
             this.activeWatchers.delete(key);
+            this.watchResourceVersions.delete(key);
+            this.watchReconnectAttempts.delete(key);
         }
     }
 

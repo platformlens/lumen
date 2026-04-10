@@ -18,6 +18,7 @@ export default defineConfig({
                 main: 'electron/main.ts',
                 'resource-transform-worker': 'electron/resource-transform-worker.ts',
                 'audit-log-worker': 'electron/audit-log-worker.ts',
+                'k8s-pod-worker': 'electron/k8s-pod-worker.ts',
               },
               external: ['bufferutil', 'utf-8-validate', 'node-pty'],
             },

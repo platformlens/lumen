@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess } from 'electron'
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import fixPath from 'fix-path';
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import os from 'node:os'
 import { K8sService } from './k8s'
 import { TerminalService } from './terminal'
@@ -20,6 +21,7 @@ import { Worker } from 'worker_threads'
 import { WatcherBatchBuffer } from './watcher-batch-buffer'
 import type { TransformRequest, TransformResponse } from './resource-transform-worker'
 import type { AuditLogWorkerRequest, AuditLogWorkerResponse } from './audit-log-worker'
+import type { LightweightPod, WorkerOutbound } from '../src/types/pod-worker'
 
 // Fix PATH for MacOS to find aws/kubectl etc
 fixPath();
@@ -178,6 +180,108 @@ function sendToAuditLogWorker(request: AuditLogWorkerRequest): Promise<AuditLogW
   });
 }
 
+// --- Pod Worker (utilityProcess) ---
+const podWorkerPath = path.join(__dirname, 'k8s-pod-worker.js');
+let podWorker: Electron.UtilityProcess | null = null;
+const pendingChunkRequests = new Map<string, (pods: LightweightPod[]) => void>();
+// Track UID → {name, namespace} so context engine deletes work (pod worker only sends UID for deletes)
+const podUidMap = new Map<string, { name: string; namespace: string }>();
+
+function spawnPodWorker(): Electron.UtilityProcess {
+  const worker = utilityProcess.fork(podWorkerPath);
+
+  worker.on('message', (msg: WorkerOutbound) => {
+    switch (msg.type) {
+      case 'pod-delta-batch':
+        win?.webContents.send('k8s-pod-delta-batch', msg.deltas);
+        // Forward deltas to context engine so AI summaries stay in sync
+        for (const delta of msg.deltas) {
+          try {
+            if (delta.action === 'delete' && delta.uid) {
+              const info = podUidMap.get(delta.uid);
+              if (info) {
+                contextEngine.handleResourceEvent('Pod', 'DELETED', {
+                  metadata: { uid: delta.uid, name: info.name, namespace: info.namespace },
+                });
+                podUidMap.delete(delta.uid);
+              }
+            } else if (delta.pod) {
+              const p = delta.pod;
+              podUidMap.set(p.uid, { name: p.name, namespace: p.namespace });
+              // Build a minimal raw-pod-shaped object for the context engine extractor
+              const pseudoRaw = {
+                metadata: { uid: p.uid, name: p.name, namespace: p.namespace, creationTimestamp: p.age },
+                status: {
+                  phase: p.status === 'Terminating' ? 'Running' : p.status,
+                  containerStatuses: p.containers.filter(c => c.name !== '').map(c => ({
+                    name: c.name,
+                    ready: c.ready,
+                    restartCount: c.restartCount,
+                    state: c.state === 'running' ? { running: {} }
+                      : c.state === 'waiting' ? { waiting: { reason: 'Waiting' } }
+                      : { terminated: { reason: 'Terminated' } },
+                  })),
+                  conditions: [],
+                },
+                spec: { containers: [] },
+              };
+              const eventType = delta.action === 'add' ? 'ADDED' : 'MODIFIED';
+              contextEngine.handleResourceEvent('Pod', eventType, pseudoRaw);
+            }
+          } catch (err) {
+            console.error('[ContextEngine] Error processing pod worker delta:', err);
+          }
+        }
+        break;
+      case 'informer-synced':
+        win?.webContents.send('k8s-pod-informer-synced', { count: msg.count });
+        break;
+      case 'informer-error':
+        win?.webContents.send('k8s-pod-informer-error', {
+          error: msg.error,
+          recoverable: msg.recoverable,
+        });
+        break;
+      case 'pods-chunk-reply': {
+        const resolve = pendingChunkRequests.get(msg.requestId);
+        if (resolve) {
+          pendingChunkRequests.delete(msg.requestId);
+          resolve(msg.payload);
+        }
+        break;
+      }
+      case 'informer-stopped':
+        contextEngine.clearKind('Pod');
+        podUidMap.clear();
+        break;
+    }
+  });
+
+  worker.on('exit', (code) => {
+    console.error(`[pod-worker] exited with code ${code}`);
+    podWorker = null;
+    if (code !== 0) {
+      setTimeout(() => { podWorker = spawnPodWorker(); }, 2000);
+    }
+  });
+
+  return worker;
+}
+
+function ensurePodWorker(): Electron.UtilityProcess {
+  if (!podWorker) podWorker = spawnPodWorker();
+  return podWorker;
+}
+
+app.on('before-quit', () => {
+  if (podWorker) {
+    podWorker.kill();
+    podWorker = null;
+  }
+  pendingChunkRequests.clear();
+});
+
+
 function registerIpcHandlers() {
   // --- AWS Handlers ---
   ipcMain.handle('aws:getEksCluster', async (_, region, clusterName) => {
@@ -319,6 +423,16 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getPods', (_, contextName, namespaces) => {
     console.log('IPC: k8s:getPods called with', contextName, namespaces);
     return k8sService.getPods(contextName, namespaces);
+  })
+
+  ipcMain.handle('k8s:getPodsLite', async (_, contextName, namespaces) => {
+    console.log('IPC: k8s:getPodsLite called with', contextName, namespaces);
+    const result = await k8sService.getPodsLite(contextName, namespaces);
+    // Seed the pod watcher's resourceVersion so it starts from the LIST point
+    if (result.resourceVersion) {
+      k8sService.seedWatchResourceVersion('pods', result.resourceVersion);
+    }
+    return result;
   })
 
   ipcMain.handle('k8s:getPodMetrics', async (_, contextName, namespaces) => {
@@ -977,7 +1091,7 @@ function registerIpcHandlers() {
     const gen = ++podWatchGeneration;
 
     podBatchBuffer = new WatcherBatchBuffer({
-      flushIntervalMs: 150,
+      flushIntervalMs: 500,
       onFlush: async (events) => {
         if (gen !== podWatchGeneration) return;
         try {
@@ -1276,6 +1390,31 @@ function registerIpcHandlers() {
     return k8sService.updateDeploymentYaml(contextName, namespace, name, yaml);
   })
 
+  // --- Pod Worker IPC ---
+  ipcMain.handle('start-pod-informer', async (_event, context: string, namespaces: string[]) => {
+    const worker = ensurePodWorker();
+    worker.postMessage({ type: 'start-informer', context, namespaces });
+  });
+
+  ipcMain.handle('stop-pod-informer', async () => {
+    podWorker?.postMessage({ type: 'stop-informer' });
+  });
+
+  ipcMain.handle('get-pods-chunk', async (_event, { offset, limit }: { offset: number; limit: number }) => {
+    const worker = ensurePodWorker();
+    const requestId = crypto.randomUUID();
+    return new Promise<LightweightPod[]>((resolve) => {
+      pendingChunkRequests.set(requestId, resolve);
+      worker.postMessage({ type: 'get-pods-chunk', requestId, offset, limit });
+      setTimeout(() => {
+        if (pendingChunkRequests.has(requestId)) {
+          pendingChunkRequests.delete(requestId);
+          resolve([]);
+        }
+      }, 10_000);
+    });
+  });
+
   // --- Terminal ---
   ipcMain.on('terminal:create', (event, id, cols, rows) => {
     terminalService.createTerminal(event.sender, id, cols, rows);
@@ -1383,6 +1522,8 @@ function registerIpcHandlers() {
     contextEngine.onClusterSwitch();
     lastPodWatchScope = '';
     lastDeploymentWatchScope = '';
+    // Clear cached resourceVersions so watchers start fresh on the new cluster
+    k8sService.clearWatchResourceVersions();
     return true;
   });
 
@@ -1928,6 +2069,13 @@ function createWindow() {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
+
+  // Notify renderer when the window regains focus so it can check watcher health.
+  // macOS throttles background processes, which can silently kill watch connections.
+  win.on('focus', () => {
+    console.log('[main] Window focused — notifying renderer');
+    win?.webContents.send('app:windowFocused');
+  });
 }
 
 // Quit when all windows are closed, except on macOS. There, it's common
