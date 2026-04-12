@@ -41,7 +41,7 @@ import {
 import { clsx } from 'clsx';
 
 interface SecondarySidebarProps {
-    mode: 'clusters' | 'resources' | 'settings' | 'editor';
+    mode: 'clusters' | 'resources' | 'settings' | 'editor' | 'user';
     onSelectView: (view: string) => void;
     activeView: string;
     // For cluster mode
@@ -619,6 +619,22 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         label="About"
                                         active={activeView === 'settings-about'}
                                         onClick={() => onSelectView('settings-about')}
+                                    />
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'user' && (
+                        <div className="px-3">
+                            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 px-2">Account</h3>
+                            <div className="space-y-0.5">
+                                {(!searchQuery || filterMatches('General')) && (
+                                    <NavItem
+                                        icon={<LayoutGrid size={18} />}
+                                        label="General"
+                                        active={activeView === 'user-general'}
+                                        onClick={() => onSelectView('user-general')}
                                     />
                                 )}
                             </div>

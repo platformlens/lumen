@@ -1,11 +1,11 @@
 import React from 'react';
-import { LayoutGrid, Server, Settings, PenTool } from 'lucide-react';
+import { LayoutGrid, Server, Settings, PenTool, User } from 'lucide-react';
 import { clsx } from 'clsx';
 import logoUrl from '../../../assets/logo.png';
 
 interface SidebarProps {
-  activeView: 'clusters' | 'dashboard' | 'settings' | 'editor';
-  onChangeView: (view: 'clusters' | 'dashboard' | 'settings' | 'editor') => void;
+  activeView: 'clusters' | 'dashboard' | 'settings' | 'editor' | 'user';
+  onChangeView: (view: 'clusters' | 'dashboard' | 'settings' | 'editor' | 'user') => void;
   editorTabCount?: number;
 }
 
@@ -44,7 +44,13 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeView, onChang
         />
       </div>
 
-      <div className="mt-auto mb-4">
+      <div className="mt-auto mb-4 flex flex-col gap-4">
+        <NavButton
+          icon={<User size={24} />}
+          active={activeView === 'user'}
+          onClick={() => onChangeView('user')}
+          label="Account"
+        />
         <NavButton
           icon={<Settings size={24} />}
           active={activeView === 'settings'}

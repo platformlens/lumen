@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { Eye, Trash2 } from 'lucide-react';
 import { GenericResourceView } from './GenericResourceView';
 import { GlassButton } from '../../shared/GlassButton';
@@ -50,6 +50,10 @@ export const HelmReleasesView: React.FC<HelmReleasesViewProps> = ({
     helmReleases,
 }) => {
     const [deleteTarget, setDeleteTarget] = useState<HelmRelease | null>(null);
+    // Use a ref for helmReleases so the columns memo doesn't depend on it.
+    // The delete button's onClick reads from the ref at click time, not render time.
+    const helmReleasesRef = useRef(helmReleases);
+    helmReleasesRef.current = helmReleases;
 
     const handleUninstall = useCallback(async () => {
         if (!deleteTarget) return;
@@ -158,7 +162,7 @@ export const HelmReleasesView: React.FC<HelmReleasesViewProps> = ({
                         className="!px-2 !py-1 !rounded-lg"
                         icon={<Trash2 size={14} />}
                         onClick={() => {
-                            const release = helmReleases.find(
+                            const release = helmReleasesRef.current.find(
                                 r => r.name === rowData.name && r.namespace === rowData.namespace
                             );
                             if (release) setDeleteTarget(release);
@@ -167,7 +171,7 @@ export const HelmReleasesView: React.FC<HelmReleasesViewProps> = ({
                 </div>
             ),
         },
-    ], [onNavigateToDetail, helmReleases]);
+    ], [onNavigateToDetail]);
 
     return (
         <>

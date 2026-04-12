@@ -20,13 +20,15 @@ const tableStyles = `
   .generic-table-container::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
   }
+  .generic-table-container thead {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
   .generic-table-container th {
     padding: 0.75rem 1.5rem;
     outline: none;
     position: relative;
     background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     color: #6b7280;
     text-transform: uppercase;

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool, Sparkles, ExternalLink } from 'lucide-react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool, Sparkles, ExternalLink, Search, Download, ArrowDown, ChevronUp, ChevronDown } from 'lucide-react';
 import { TerminalComponent } from '../terminal/TerminalComponent';
 import { YamlEditor } from '../yaml-editor/YamlEditor';
 
@@ -63,14 +63,165 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     onPopOutTab,
 }) => {
     const logsEndRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
     const activeTab = tabs.find(t => t.id === activeTabId);
 
-    // Auto-scroll logic for logs
+    // Track whether the user is pinned to the bottom (auto-follow mode)
+    const [isAtBottom, setIsAtBottom] = useState(true);
+
+    // Search state
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [matchIndex, setMatchIndex] = useState(0);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const matchRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+    // Detect scroll position to determine if user is at the bottom
+    const handleScroll = useCallback(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+        const threshold = 40; // px from bottom to consider "at bottom"
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+        setIsAtBottom(atBottom);
+    }, []);
+
+    // Auto-scroll only when pinned to bottom
     useEffect(() => {
-        if (activeTab?.type === 'log' && logsEndRef.current) {
+        if (activeTab?.type === 'log' && isAtBottom && logsEndRef.current) {
             logsEndRef.current.scrollIntoView({ behavior: 'auto' });
         }
-    }, [activeTab?.logs?.length, activeTab?.id]);
+    }, [activeTab?.logs?.length, activeTab?.id, isAtBottom]);
+
+    // Reset to bottom when switching tabs
+    useEffect(() => {
+        setIsAtBottom(true);
+        setSearchOpen(false);
+        setSearchQuery('');
+        setMatchIndex(0);
+    }, [activeTabId]);
+
+    const scrollToBottom = useCallback(() => {
+        setIsAtBottom(true);
+        logsEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }, []);
+
+    // Compute search matches
+    const searchMatches = useMemo(() => {
+        if (!searchQuery || !activeTab?.logs) return [];
+        const query = searchQuery.toLowerCase();
+        const matches: number[] = [];
+        activeTab.logs.forEach((line, idx) => {
+            if (line.toLowerCase().includes(query)) {
+                matches.push(idx);
+            }
+        });
+        return matches;
+    }, [searchQuery, activeTab?.logs]);
+
+    // Clamp matchIndex when matches change
+    useEffect(() => {
+        if (searchMatches.length === 0) {
+            setMatchIndex(0);
+        } else if (matchIndex >= searchMatches.length) {
+            setMatchIndex(searchMatches.length - 1);
+        }
+    }, [searchMatches.length, matchIndex]);
+
+    // Scroll to current match
+    useEffect(() => {
+        if (searchMatches.length > 0 && matchRefs.current.has(searchMatches[matchIndex])) {
+            const el = matchRefs.current.get(searchMatches[matchIndex]);
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setIsAtBottom(false);
+        }
+    }, [matchIndex, searchMatches]);
+
+    // Focus search input when opened
+    useEffect(() => {
+        if (searchOpen) {
+            searchInputRef.current?.focus();
+        }
+    }, [searchOpen]);
+
+    // Keyboard shortcut: Cmd/Ctrl+F to open search
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'f' && activeTab?.type === 'log') {
+                e.preventDefault();
+                setSearchOpen(true);
+            }
+            if (e.key === 'Escape' && searchOpen) {
+                setSearchOpen(false);
+                setSearchQuery('');
+                setMatchIndex(0);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [activeTab?.type, searchOpen]);
+
+    const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (searchMatches.length > 0) {
+                if (e.shiftKey) {
+                    setMatchIndex(prev => (prev - 1 + searchMatches.length) % searchMatches.length);
+                } else {
+                    setMatchIndex(prev => (prev + 1) % searchMatches.length);
+                }
+            }
+        }
+    };
+
+    const handleExportLogs = useCallback(() => {
+        if (!activeTab?.logs || activeTab.logs.length === 0) return;
+        const content = activeTab.logs.join('\n');
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const podName = activeTab.podName || 'logs';
+        const container = activeTab.containerName ? `-${activeTab.containerName}` : '';
+        a.download = `${podName}${container}-${timestamp}.log`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [activeTab?.logs, activeTab?.podName, activeTab?.containerName]);
+
+    // Build a set of matching line indices for O(1) lookup during render
+    const matchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
+    const currentMatchLine = searchMatches.length > 0 ? searchMatches[matchIndex] : -1;
+
+    // Highlight matching text within a line
+    const highlightLine = useCallback((line: string, isCurrentMatch: boolean) => {
+        if (!searchQuery) return line;
+        const query = searchQuery.toLowerCase();
+        const parts: React.ReactNode[] = [];
+        let remaining = line;
+        let key = 0;
+        while (remaining.length > 0) {
+            const idx = remaining.toLowerCase().indexOf(query);
+            if (idx === -1) {
+                parts.push(remaining);
+                break;
+            }
+            if (idx > 0) {
+                parts.push(remaining.slice(0, idx));
+            }
+            parts.push(
+                <mark
+                    key={key++}
+                    className={isCurrentMatch ? 'bg-yellow-400/80 text-black rounded-sm px-0.5' : 'bg-yellow-500/30 text-yellow-200 rounded-sm px-0.5'}
+                >
+                    {remaining.slice(idx, idx + query.length)}
+                </mark>
+            );
+            remaining = remaining.slice(idx + query.length);
+        }
+        return parts;
+    }, [searchQuery]);
 
     return (
         <div className="flex flex-col h-full w-full bg-[#0d0d0d]">
@@ -131,6 +282,37 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                         </div>
                     )}
 
+                    {/* Search toggle */}
+                    {!isMinimized && activeTab && activeTab.type === 'log' && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setSearchOpen(prev => {
+                                    if (prev) {
+                                        setSearchQuery('');
+                                        setMatchIndex(0);
+                                    }
+                                    return !prev;
+                                });
+                            }}
+                            className={`p-1.5 rounded transition-colors ${searchOpen ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/10 text-gray-400 hover:text-white'}`}
+                            title="Search Logs (⌘F)"
+                        >
+                            <Search size={16} />
+                        </button>
+                    )}
+
+                    {/* Export logs */}
+                    {!isMinimized && activeTab && activeTab.type === 'log' && activeTab.logs && activeTab.logs.length > 0 && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); handleExportLogs(); }}
+                            className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors"
+                            title="Export Logs"
+                        >
+                            <Download size={16} />
+                        </button>
+                    )}
+
                     {!isMinimized && activeTab && activeTab.type === 'log' && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onClearLogs(activeTab.id); }}
@@ -169,6 +351,52 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                 </div>
             </div>
 
+            {/* Search Bar */}
+            {searchOpen && activeTab?.type === 'log' && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border-b border-white/10 flex-none">
+                    <Search size={14} className="text-gray-500 flex-shrink-0" />
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => { setSearchQuery(e.target.value); setMatchIndex(0); }}
+                        onKeyDown={handleSearchKeyDown}
+                        placeholder="Search logs..."
+                        className="flex-1 bg-transparent border-none outline-none text-sm text-gray-200 placeholder-gray-500"
+                    />
+                    {searchQuery && (
+                        <span className="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+                            {searchMatches.length > 0 ? `${matchIndex + 1} of ${searchMatches.length}` : 'No results'}
+                        </span>
+                    )}
+                    {searchQuery && searchMatches.length > 0 && (
+                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                            <button
+                                onClick={() => setMatchIndex(prev => (prev - 1 + searchMatches.length) % searchMatches.length)}
+                                className="p-0.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors"
+                                title="Previous match (Shift+Enter)"
+                            >
+                                <ChevronUp size={14} />
+                            </button>
+                            <button
+                                onClick={() => setMatchIndex(prev => (prev + 1) % searchMatches.length)}
+                                className="p-0.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors"
+                                title="Next match (Enter)"
+                            >
+                                <ChevronDown size={14} />
+                            </button>
+                        </div>
+                    )}
+                    <button
+                        onClick={() => { setSearchOpen(false); setSearchQuery(''); setMatchIndex(0); }}
+                        className="p-0.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors flex-shrink-0"
+                        title="Close search (Esc)"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+
             {/* Content Body */}
             <div className="flex-1 overflow-hidden bg-[#0d0d0d] font-mono text-xs relative">
                 {/* 1. Always render ALL terminal tabs, hidden if inactive */}
@@ -185,19 +413,55 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                 {/* 2. Render Log Content */}
                 {activeTab && activeTab.type === 'log' && (
                     <>
-                        <div className="absolute inset-0 overflow-auto p-3 text-gray-300 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+                        <div
+                            ref={scrollContainerRef}
+                            onScroll={handleScroll}
+                            className="absolute inset-0 overflow-auto p-3 text-gray-300 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent"
+                        >
                             <div className="space-y-0.5">
                                 {(!activeTab.logs || activeTab.logs.length === 0) && (
                                     <div className="text-gray-600 italic p-4 text-center">Waiting for logs...</div>
                                 )}
-                                {activeTab.logs?.map((log, idx) => (
-                                    <div key={idx} className="whitespace-pre-wrap break-all px-2 py-0.5 leading-relaxed hover:bg-white/5 transition-colors border-l-2 border-transparent hover:border-blue-500/50">
-                                        {log}
-                                    </div>
-                                ))}
+                                {activeTab.logs?.map((log, idx) => {
+                                    const isMatch = matchSet.has(idx);
+                                    const isCurrent = idx === currentMatchLine;
+                                    return (
+                                        <div
+                                            key={idx}
+                                            ref={(el) => {
+                                                if (el && isMatch) {
+                                                    matchRefs.current.set(idx, el);
+                                                } else {
+                                                    matchRefs.current.delete(idx);
+                                                }
+                                            }}
+                                            className={`whitespace-pre-wrap break-all px-2 py-0.5 leading-relaxed transition-colors border-l-2 ${
+                                                isCurrent
+                                                    ? 'bg-yellow-500/15 border-yellow-500/70'
+                                                    : isMatch
+                                                        ? 'bg-yellow-500/5 border-yellow-500/30'
+                                                        : 'border-transparent hover:bg-white/5 hover:border-blue-500/50'
+                                            }`}
+                                        >
+                                            {isMatch ? highlightLine(log, isCurrent) : log}
+                                        </div>
+                                    );
+                                })}
                                 <div ref={logsEndRef} />
                             </div>
                         </div>
+
+                        {/* Scroll-to-bottom button — shown when user has scrolled up */}
+                        {!isAtBottom && (
+                            <button
+                                onClick={scrollToBottom}
+                                className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/15 backdrop-blur-sm text-gray-300 hover:text-white rounded-full border border-white/10 shadow-lg transition-all text-xs z-40"
+                                title="Scroll to latest"
+                            >
+                                <ArrowDown size={14} />
+                                <span>Follow logs</span>
+                            </button>
+                        )}
 
                         {/* Floating AI Analyze Button - positioned relative to log viewer */}
                         {onAnalyzeWithAI && activeTab.logs && activeTab.logs.length > 0 && (

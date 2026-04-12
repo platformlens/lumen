@@ -448,6 +448,14 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.invoke('dialog:saveYamlFile', filePath, content),
   },
 
+  // --- Auth ---
+  auth: {
+    saveSession: (session: { access_token: string; refresh_token: string }) =>
+      ipcRenderer.invoke('auth:saveSession', session),
+    getSession: () => ipcRenderer.invoke('auth:getSession'),
+    clearSession: () => ipcRenderer.invoke('auth:clearSession'),
+  },
+
   // --- AI Events ---
   onBedrockAccessDenied: (callback: (message: string) => void) => {
     const listener = (_: any, message: string) => callback(message);

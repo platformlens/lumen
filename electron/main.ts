@@ -193,7 +193,7 @@ function spawnPodWorker(): Electron.UtilityProcess {
   worker.on('message', (msg: WorkerOutbound) => {
     switch (msg.type) {
       case 'pod-delta-batch':
-        win?.webContents.send('k8s-pod-delta-batch', msg.deltas);
+        if (win && !win.isDestroyed()) win.webContents.send('k8s-pod-delta-batch', msg.deltas);
         // Forward deltas to context engine so AI summaries stay in sync
         for (const delta of msg.deltas) {
           try {
@@ -234,10 +234,10 @@ function spawnPodWorker(): Electron.UtilityProcess {
         }
         break;
       case 'informer-synced':
-        win?.webContents.send('k8s-pod-informer-synced', { count: msg.count });
+        if (win && !win.isDestroyed()) win.webContents.send('k8s-pod-informer-synced', { count: msg.count });
         break;
       case 'informer-error':
-        win?.webContents.send('k8s-pod-informer-error', {
+        if (win && !win.isDestroyed()) win.webContents.send('k8s-pod-informer-error', {
           error: msg.error,
           recoverable: msg.recoverable,
         });
@@ -274,6 +274,19 @@ function ensurePodWorker(): Electron.UtilityProcess {
 }
 
 app.on('before-quit', () => {
+  // Stop all K8s watchers to prevent reconnection loops during shutdown
+  k8sService.stopAllWatchers();
+
+  // Clean up batch buffers
+  if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
+  if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
+  if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
+  if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
+  for (const [, buffer] of genericBatchBuffers) {
+    buffer.destroy();
+  }
+  genericBatchBuffers.clear();
+
   if (podWorker) {
     podWorker.kill();
     podWorker = null;
@@ -1597,6 +1610,21 @@ function registerIpcHandlers() {
     return (store.get('awsCreds') as Record<string, string>) || {};
   });
 
+  // --- Auth Session Persistence ---
+  ipcMain.handle('auth:saveSession', async (_, session: { access_token: string; refresh_token: string }) => {
+    store.set('supabase_session', session);
+    return true;
+  });
+
+  ipcMain.handle('auth:getSession', async () => {
+    return (store.get('supabase_session') as { access_token: string; refresh_token: string }) ?? null;
+  });
+
+  ipcMain.handle('auth:clearSession', async () => {
+    store.delete('supabase_session');
+    return true;
+  });
+
   // --- AI History (using ChatSessionManager) ---
   let legacyMigrated = false;
 
@@ -2088,14 +2116,14 @@ awsService.on('credentialsChanged', (data: { identity: string; account: string; 
   if (data.profile) {
     store.set('awsProfile', data.profile);
   }
-  if (win) {
+  if (win && !win.isDestroyed()) {
     win.webContents.send('aws:credentialsChanged', data);
   }
 });
 
 // Forward anomaly events from ContextEngine to renderer
 contextEngine.on('anomaly', (anomaly) => {
-  if (win) {
+  if (win && !win.isDestroyed()) {
     win.webContents.send('context:anomaly', anomaly);
   }
 });
@@ -2146,6 +2174,16 @@ function createWindow() {
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
   awsService.stopCredentialFileWatcher();
+  // Stop all watchers — no renderer to receive events
+  k8sService.stopAllWatchers();
+  if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
+  if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
+  if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
+  if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
+  for (const [, buffer] of genericBatchBuffers) {
+    buffer.destroy();
+  }
+  genericBatchBuffers.clear();
   if (process.platform !== 'darwin') {
     app.quit()
     win = null

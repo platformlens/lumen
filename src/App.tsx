@@ -17,6 +17,8 @@ import { shouldShowWhatsNew, handleDismiss } from './utils/whats-new-utils'
 import { BedrockAccessModal } from './components/shared/BedrockAccessModal'
 import { AnimatePresence } from 'framer-motion'
 
+import { AuthView } from './components/features/auth/AuthView';
+import { useAuthStore } from './stores/authStore';
 import { ConnectionErrorCard } from './components/dashboard/ConnectionErrorCard';
 import { isEksCluster } from './utils/cluster-utils';
 import { RESOURCE_TYPE_MAP } from './utils/resource-utils';
@@ -25,9 +27,10 @@ import { ViewTabBar, ViewTab } from './components/dashboard/ViewTabBar';
 import { getViewLabel } from './utils/view-labels';
 
 function App() {
-    const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor'>('clusters')
+    const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor' | 'user'>('clusters')
     const [selectedCluster, setSelectedCluster] = useState<string | null>(null)
     const [isEks, setIsEks] = useState(false);
+    const [theme, setTheme] = useState<'blue' | 'charcoal' | 'red'>('blue');
     const [hasCertManager, setHasCertManager] = useState(false);
 
     // Connection State
@@ -86,6 +89,11 @@ function App() {
             }
         };
         checkOnboarding();
+    }, []);
+
+    // Restore auth session on app mount
+    useEffect(() => {
+        useAuthStore.getState().restoreSession();
     }, []);
 
     const handleOnboardingComplete = async () => {
@@ -190,6 +198,19 @@ function App() {
         window.k8s.settings.get('headingSize').then((saved: number | null) => {
             if (saved) document.documentElement.style.setProperty('--lumen-heading-size', `${saved}px`);
         }).catch(() => { });
+        window.k8s.settings.get('theme').then((saved: string | null) => {
+            if (saved === 'blue' || saved === 'charcoal' || saved === 'red') setTheme(saved);
+        }).catch(() => { });
+    }, []);
+
+    // Listen for theme changes from Settings
+    useEffect(() => {
+        const handleThemeChange = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            if (detail === 'blue' || detail === 'charcoal' || detail === 'red') setTheme(detail);
+        };
+        window.addEventListener('themeChanged', handleThemeChange);
+        return () => window.removeEventListener('themeChanged', handleThemeChange);
     }, []);
 
     const refreshUnreadCount = () => {
@@ -982,19 +1003,25 @@ function App() {
         }
     };
 
-    const handleMainMenuChange = (view: 'clusters' | 'dashboard' | 'settings' | 'editor') => {
+    const handleMainMenuChange = (view: 'clusters' | 'dashboard' | 'settings' | 'editor' | 'user') => {
         setActiveView(view);
         if (view === 'settings') {
             // Remember the current resource view before switching
-            if (!resourceView.startsWith('settings-')) {
+            if (!resourceView.startsWith('settings-') && !resourceView.startsWith('user-')) {
                 lastResourceViewRef.current = resourceView;
             }
             setResourceView('settings-general');
+        } else if (view === 'user') {
+            // Remember the current resource view before switching
+            if (!resourceView.startsWith('settings-') && !resourceView.startsWith('user-')) {
+                lastResourceViewRef.current = resourceView;
+            }
+            setResourceView('user-general');
         } else if (view === 'editor') {
             // Switch to editor view — active yaml tab is already tracked
         } else {
-            // Restore the last resource view when leaving settings
-            if (resourceView.startsWith('settings-')) {
+            // Restore the last resource view when leaving settings/user
+            if (resourceView.startsWith('settings-') || resourceView.startsWith('user-')) {
                 setResourceView(lastResourceViewRef.current);
             }
         }
@@ -1257,7 +1284,7 @@ function App() {
     };
 
     return (
-        <div className="flex h-screen bg-gradient-to-br from-slate-900 via-[#0a0a0a] to-black text-white font-sans overflow-hidden">
+        <div className={`flex h-screen text-white font-sans overflow-hidden ${theme === 'charcoal' ? 'bg-gradient-to-br from-zinc-950 via-[#0a0a0a] to-black' : theme === 'red' ? 'bg-gradient-to-br from-red-950/80 via-[#0a0a0a] to-black' : 'bg-gradient-to-br from-slate-900 via-[#0a0a0a] to-black'}`}>
             {/* Left Content Area (Title Bar + Main Content + Bottom Panel) */}
             <div className="flex-1 flex flex-col min-w-0 relative">
                 {/* Custom Title Bar */}
@@ -1361,7 +1388,7 @@ function App() {
                         style={{ paddingBottom: isBottomPanelOpen ? (bottomPanelHeight + 6) : 16 }} // Add extra buffer when panel is open
                     >
                         {/* Floating Glass Sidebar Container */}
-                        <div className="flex rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-white/5 backdrop-blur-xl h-full flex-shrink-0">
+                        <div className="flex rounded-lg overflow-hidden border border-white/10 shadow-2xl bg-white/5 backdrop-blur-xl h-full flex-shrink-0">
                             <Sidebar
                                 activeView={activeView}
                                 onChangeView={handleMainMenuChange}
@@ -1369,7 +1396,7 @@ function App() {
                             />
 
                             <SecondarySidebar
-                                mode={activeView === 'settings' ? 'settings' : activeView === 'clusters' ? 'clusters' : activeView === 'editor' ? 'editor' : 'resources'}
+                                mode={activeView === 'settings' ? 'settings' : activeView === 'user' ? 'user' : activeView === 'clusters' ? 'clusters' : activeView === 'editor' ? 'editor' : 'resources'}
                                 activeView={resourceView}
                                 onSelectView={handleViewChange}
                                 selectedCluster={selectedCluster}
@@ -1405,6 +1432,8 @@ function App() {
                             <div className="flex-1 min-h-0 w-full relative overflow-hidden">
                                 {activeView === 'settings' ? (
                                     <Settings activeSection={resourceView} />
+                                ) : activeView === 'user' ? (
+                                    <AuthView activeSection={resourceView} />
                                 ) : activeView === 'editor' ? (
                                     (() => {
                                         // Read directly from the ref (not the memoized snapshot) so we always

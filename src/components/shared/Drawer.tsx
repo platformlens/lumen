@@ -57,7 +57,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
       {/* Backdrop - rendered outside AnimatePresence for reliable cleanup */}
       {/* Uses CSS transition instead of framer-motion to avoid ghost element issues */}
       <div
-        className={`absolute inset-0 z-40 rounded-2xl transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        className={`absolute inset-0 z-40 rounded-lg transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
           } ${showBackdrop ? 'bg-black/50' : ''}`}
         onClick={isOpen ? onClose : undefined}
         style={{ display: showBackdrop ? 'block' : 'none' }}
@@ -73,7 +73,7 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute top-2 right-2 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-2xl overflow-hidden bottom-4"
+            className="absolute top-2 right-2 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-lg overflow-hidden bottom-4"
           >
             {/* Header */}
             <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5">

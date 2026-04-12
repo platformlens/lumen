@@ -230,17 +230,14 @@ export class AwsService extends EventEmitter {
                 let result;
 
                 if (detectedProfile) {
-                    // Use fromNodeProviderChain with the detected profile.
-                    // This invokes credential_process for that profile, returning fresh creds.
-                    console.log(`[AwsService] Resolving identity via credential_process for profile: ${detectedProfile}`);
-                    const credentials = fromNodeProviderChain({
-                        profile: detectedProfile,
-                        clientConfig: { region: 'us-east-1' }
-                    });
-                    const client = new STSClient({ region: 'us-east-1', credentials });
-                    const response = await client.send(new GetCallerIdentityCommand({}));
-                    result = { isAuthenticated: true, identity: response.Arn, account: response.Account };
-                    console.log(`[AwsService] credential_process identity resolved to: ${response.Arn}`);
+                    // Granted supports two credential modes:
+                    // 1. ExportCredsToAWS=true: writes fresh creds to [default] in ~/.aws/credentials
+                    // 2. credential_process: each profile in ~/.aws/config has a credential_process entry
+                    //
+                    // Try file-based credentials first (both [detectedProfile] and [default] sections),
+                    // since ExportCredsToAWS writes directly to the file and is always fresh.
+                    // Only fall back to credential_process via fromNodeProviderChain if no file creds work.
+                    result = await this.resolveCredentialsWithRetry(detectedProfile);
                 } else {
                     // No frecency data — try reading [default] from credentials file
                     const fileCreds = await this.readCredentialsFile('default');
@@ -289,6 +286,111 @@ export class AwsService extends EventEmitter {
                 console.error('[AwsService] Error checking identity after file change:', err);
             }
         }, 2500); // 2.5s debounce — Granted writes frecency first, then credentials file
+    }
+
+    /**
+     * Try multiple credential sources to resolve identity for a detected profile.
+     * Handles the race condition where Granted writes frecency before credentials file,
+     * and supports both ExportCredsToAWS (file-based) and credential_process modes.
+     *
+     * Resolution order:
+     * 1. File-based creds for [detectedProfile] in ~/.aws/credentials
+     * 2. File-based creds for [default] in ~/.aws/credentials (ExportCredsToAWS target)
+     * 3. credential_process via fromNodeProviderChain for the detected profile
+     * 4. Retry after a short delay (Granted may still be writing the credentials file)
+     */
+    private async resolveCredentialsWithRetry(
+        detectedProfile: string,
+        attempt: number = 1
+    ): Promise<{ isAuthenticated: boolean; identity?: string; account?: string; error?: string }> {
+        const MAX_RETRIES = 2;
+        const RETRY_DELAY_MS = 2000;
+
+        // Collect all credential sources to try in order
+        const sources: Array<{ label: string; resolve: () => Promise<{ isAuthenticated: boolean; identity?: string; account?: string }> }> = [];
+
+        // 1. File-based creds for the detected profile
+        const profileCreds = await this.readCredentialsFile(detectedProfile);
+        if (profileCreds) {
+            sources.push({
+                label: `file-based [${detectedProfile}]`,
+                resolve: async () => {
+                    const client = new STSClient({
+                        region: profileCreds.region || 'us-east-1',
+                        credentials: {
+                            accessKeyId: profileCreds.accessKeyId!,
+                            secretAccessKey: profileCreds.secretAccessKey!,
+                            sessionToken: profileCreds.sessionToken,
+                        },
+                    });
+                    const response = await client.send(new GetCallerIdentityCommand({}));
+                    return { isAuthenticated: true, identity: response.Arn, account: response.Account };
+                },
+            });
+        }
+
+        // 2. File-based creds for [default] (ExportCredsToAWS writes here)
+        if (detectedProfile !== 'default') {
+            const defaultCreds = await this.readCredentialsFile('default');
+            if (defaultCreds) {
+                sources.push({
+                    label: 'file-based [default] (ExportCredsToAWS)',
+                    resolve: async () => {
+                        const client = new STSClient({
+                            region: defaultCreds.region || 'us-east-1',
+                            credentials: {
+                                accessKeyId: defaultCreds.accessKeyId!,
+                                secretAccessKey: defaultCreds.secretAccessKey!,
+                                sessionToken: defaultCreds.sessionToken,
+                            },
+                        });
+                        const response = await client.send(new GetCallerIdentityCommand({}));
+                        return { isAuthenticated: true, identity: response.Arn, account: response.Account };
+                    },
+                });
+            }
+        }
+
+        // 3. credential_process via provider chain
+        sources.push({
+            label: `credential_process for [${detectedProfile}]`,
+            resolve: async () => {
+                const credentials = fromNodeProviderChain({
+                    profile: detectedProfile,
+                    clientConfig: { region: 'us-east-1' }
+                });
+                const client = new STSClient({ region: 'us-east-1', credentials });
+                const response = await client.send(new GetCallerIdentityCommand({}));
+                return { isAuthenticated: true, identity: response.Arn, account: response.Account };
+            },
+        });
+
+        // Try each source in order
+        let lastError: any;
+        for (const source of sources) {
+            try {
+                console.log(`[AwsService] Trying ${source.label} (attempt ${attempt}/${MAX_RETRIES})`);
+                const result = await source.resolve();
+                console.log(`[AwsService] ${source.label} resolved to: ${result.identity}`);
+                return result;
+            } catch (err: any) {
+                const isExpired = err?.Code === 'ExpiredToken' || err?.name === 'ExpiredTokenException' || err?.message?.includes('expired');
+                console.warn(`[AwsService] ${source.label} failed: ${err?.Code || err?.name || err?.message}${isExpired ? ' (expired)' : ''}`);
+                lastError = err;
+                // Continue to next source
+            }
+        }
+
+        // All sources failed — retry after a delay if we haven't exhausted retries.
+        // This handles the race where Granted wrote frecency but hasn't finished writing
+        // the credentials file yet.
+        if (attempt < MAX_RETRIES) {
+            console.log(`[AwsService] All credential sources failed on attempt ${attempt}, retrying in ${RETRY_DELAY_MS}ms...`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+            return this.resolveCredentialsWithRetry(detectedProfile, attempt + 1);
+        }
+
+        throw lastError;
     }
 
     /**

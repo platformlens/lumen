@@ -82,6 +82,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   // Date Format State
   const [dateFormat, setDateFormat] = useState<string>('uk');
 
+  // Theme State
+  const [appTheme, setAppTheme] = useState<'blue' | 'charcoal' | 'red'>('blue');
+
   // Context Engine State
   const [tokenBudget, setTokenBudget] = useState(2000);
   const [summariesEnabled, setSummariesEnabled] = useState(true);
@@ -111,6 +114,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         try { localStorage.setItem('lumen_dateFormat', s.dateFormat); } catch { /* ignore */ }
       }
     });
+    window.k8s.settings.get('theme').then((saved: string | null) => {
+      if (saved === 'blue' || saved === 'charcoal' || saved === 'red') setAppTheme(saved);
+    }).catch(() => { });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
     // Context Engine config
@@ -704,6 +710,31 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   const renderEditorSection = () => (
     <div className="space-y-8">
+      <Section title="Theme" accent="bg-orange-500">
+        <SettingRow label="Background Theme" description="Choose the overall background style for the app">
+          <div className="flex gap-3">
+            {[
+              { value: 'blue' as const, label: 'Blue', gradient: 'from-slate-900 via-[#0a0a0a] to-black' },
+              { value: 'charcoal' as const, label: 'Charcoal', gradient: 'from-zinc-950 via-[#0a0a0a] to-black' },
+              { value: 'red' as const, label: 'Dark Red', gradient: 'from-red-950/80 via-[#0a0a0a] to-black' },
+            ].map(t => (
+              <button
+                key={t.value}
+                onClick={async () => {
+                  setAppTheme(t.value);
+                  await window.k8s.settings.set('theme', t.value);
+                  window.dispatchEvent(new CustomEvent('themeChanged', { detail: t.value }));
+                }}
+                className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${appTheme === t.value ? 'border-blue-500/50 bg-blue-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+              >
+                <div className={`w-16 h-10 rounded-lg bg-gradient-to-br ${t.gradient} border border-white/10`} />
+                <span className={`text-xs ${appTheme === t.value ? 'text-blue-400' : 'text-gray-400'}`}>{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </SettingRow>
+      </Section>
+
       <Section title="Appearance" accent="bg-orange-500">
         <SettingRow label="UI Font Family" description="Font used across the entire application interface">
           <select

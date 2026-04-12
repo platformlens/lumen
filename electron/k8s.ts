@@ -1140,6 +1140,28 @@ export class K8sService {
         }
     }
 
+    /**
+     * Stop all active watchers. Called on app quit to prevent reconnection loops.
+     */
+    stopAllWatchers() {
+        console.log(`[k8s] Stopping all watchers (${this.activeWatchers.size} active)`);
+        // Bump all generations first to prevent any in-flight reconnect timeouts from firing
+        for (const key of this.activeWatchers.keys()) {
+            this.watchGenerations.set(key, (this.watchGenerations.get(key) ?? 0) + 1);
+        }
+        // Then abort all active requests
+        for (const [key, req] of this.activeWatchers) {
+            try {
+                if (req && req.abort) req.abort();
+            } catch (err) {
+                // Ignore errors during cleanup
+            }
+            this.watchResourceVersions.delete(key);
+            this.watchReconnectAttempts.delete(key);
+        }
+        this.activeWatchers.clear();
+    }
+
     async getReplicaSets(contextName: string, namespaces: string[] = []) {
         this.kc.setCurrentContext(contextName);
         const k8sApi = this.kc.makeApiClient(AppsV1Api);
