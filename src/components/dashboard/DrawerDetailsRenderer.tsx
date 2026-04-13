@@ -27,6 +27,9 @@ import { WebhookConfigurationDetails } from '../resources/details/WebhookConfigu
 import { ConfigMapDetails } from '../resources/details/ConfigMapDetails';
 import { PersistentVolumeClaimDetails } from '../resources/details/PersistentVolumeClaimDetails';
 import { ScaledObjectDetails } from '../resources/details/ScaledObjectDetails';
+import { CertificateDetails } from '../resources/details/CertificateDetails';
+import { ExternalSecretDetails } from '../resources/details/ExternalSecretDetails';
+import { ClusterSecretStoreDetails } from '../resources/details/ClusterSecretStoreDetails';
 
 interface DrawerDetailsRendererProps {
     selectedResource: any;
@@ -215,6 +218,36 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                 return (
                     <ScaledObjectDetails
                         scaledObject={detailedResource}
+                        onExplain={handleExplain}
+                        onOpenYaml={handleOpenYaml}
+                        onNavigate={onNavigate}
+                    />
+                );
+            }
+            if (detailedResource.kind === 'Certificate' && detailedResource.apiVersion?.includes('cert-manager.io')) {
+                return (
+                    <CertificateDetails
+                        certificate={detailedResource}
+                        onExplain={handleExplain}
+                        onOpenYaml={handleOpenYaml}
+                        onNavigate={onNavigate}
+                    />
+                );
+            }
+            if (detailedResource.kind === 'ExternalSecret' && detailedResource.apiVersion?.includes('external-secrets.io')) {
+                return (
+                    <ExternalSecretDetails
+                        externalSecret={detailedResource}
+                        onExplain={handleExplain}
+                        onOpenYaml={handleOpenYaml}
+                        onNavigate={onNavigate}
+                    />
+                );
+            }
+            if ((detailedResource.kind === 'ClusterSecretStore' || detailedResource.kind === 'SecretStore') && detailedResource.apiVersion?.includes('external-secrets.io')) {
+                return (
+                    <ClusterSecretStoreDetails
+                        store={detailedResource}
                         onExplain={handleExplain}
                         onOpenYaml={handleOpenYaml}
                         onNavigate={onNavigate}
