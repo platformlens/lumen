@@ -909,6 +909,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
         return (
             <HelmReleasesView
                 clusterName={clusterName}
+                selectedNamespaces={selectedNamespaces}
                 searchQuery={searchQuery}
                 onNavigateToDetail={(namespace, name) => onNavigate?.(`helm-release-detail/${namespace}/${name}`)}
                 showToast={showToast || (() => { })}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Settings as SettingsIcon, Check, Shield, ChevronDown, ChevronUp,
+  Check, Shield, ChevronDown, ChevronUp,
   FolderOpen, Info, Activity
 } from 'lucide-react';
 import { GlassButton } from '../../shared/GlassButton';
@@ -83,7 +83,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const [dateFormat, setDateFormat] = useState<string>('uk');
 
   // Theme State
-  const [appTheme, setAppTheme] = useState<'blue' | 'charcoal' | 'red'>('blue');
+  const [appTheme, setAppTheme] = useState<'blue' | 'charcoal' | 'red'>('charcoal');
 
   // Context Engine State
   const [tokenBudget, setTokenBudget] = useState(2000);
@@ -344,7 +344,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         <div className={`w-1 h-6 ${accent} rounded-full`}></div>
         {title}
       </h3>
-      <div className="bg-white/5 rounded-2xl border border-white/10 p-6 space-y-5 shadow-xl shadow-black/20">
+      <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-5 shadow-xl shadow-black/20">
         {children}
       </div>
     </section>
@@ -493,7 +493,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         </div>
 
         {selectedProvider === 'google' ? (
-          <div className="bg-white/5 rounded-2xl border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+          <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
               Enter your Gemini API Key here. {savedKey ? "A key is currently saved." : "No key is currently saved."}
             </p>
@@ -535,7 +535,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
             </div>
           </div>
         ) : (
-          <div className="bg-white/5 rounded-2xl border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+          <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
               Configure AWS Credentials for Bedrock access.
               {awsAuthType === 'managed' && <span className="text-green-400 ml-2 font-semibold">✓ Authenticated via Environment/SSO</span>}
@@ -987,27 +987,25 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   return (
     <div className="flex flex-col h-full relative">
       {/* Top Bar */}
-      <div className="flex-none p-6 border border-white/10 bg-white/5 backdrop-blur-md sticky top-0 z-10 flex items-center justify-between rounded-2xl mx-6 mt-6 mb-6">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center shadow-lg shadow-black/20">
-            <SettingsIcon className="text-white" size={20} />
-          </div>
-          <div>
-            <h1 className="font-bold text-white tracking-tight" style={{ fontSize: 'var(--lumen-heading-size)' }}>{sectionTitles[activeSection] || 'Settings'}</h1>
-            <div className="text-sm text-gray-400">
-              {activeSection === 'settings-general' && 'Kubeconfig, cluster defaults, and app behavior'}
-              {activeSection === 'settings-ai' && 'Configure AI providers and model selection'}
-              {activeSection === 'settings-context' && 'Token budget, view summaries, and anomaly detection'}
-              {activeSection === 'settings-editor' && 'Font, size, YAML editor, and terminal preferences'}
-              {activeSection === 'settings-about' && 'Version info and keyboard shortcuts'}
-            </div>
-          </div>
+      <div className="flex-none px-6 pt-6 pb-4 sticky top-0 z-10 backdrop-blur-md">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+            <div className="w-1 h-8 bg-orange-500 rounded-full"></div>
+            {sectionTitles[activeSection] || 'Settings'}
+          </h2>
         </div>
+        <p className="text-sm text-gray-400 mt-1 ml-5">
+          {activeSection === 'settings-general' && 'Kubeconfig, cluster defaults, and app behavior'}
+          {activeSection === 'settings-ai' && 'Configure AI providers and model selection'}
+          {activeSection === 'settings-context' && 'Token budget, view summaries, and anomaly detection'}
+          {activeSection === 'settings-editor' && 'Font, size, YAML editor, and terminal preferences'}
+          {activeSection === 'settings-about' && 'Version info and keyboard shortcuts'}
+        </p>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-6 pb-6">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-4xl">
           {renderContent()}
         </div>
       </div>

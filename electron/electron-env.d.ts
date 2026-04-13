@@ -40,6 +40,7 @@ interface Window {
     getDeploymentYaml: (contextName: string, namespace: string, name: string) => Promise<string>
     updateDeploymentYaml: (contextName: string, namespace: string, name: string, yamlString: string) => Promise<any>
     getPods: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; status: string; restarts: number; age: string }>>
+    getPodsForNode: (contextName: string, nodeName: string) => Promise<any[]>
     getPodMetrics: (contextName: string, namespaces?: string[]) => Promise<Record<string, { cpu: string; memory: string }>>
     getPod: (contextName: string, namespace: string, name: string) => Promise<any>
     getReplicaSets: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; desired: number; current: number; ready: number }>>
@@ -166,7 +167,7 @@ interface Window {
     // AI Streaming & AWS Creds
     streamExplainResource: (
       resource: any,
-      options: { model: string; provider: string },
+      options: { model: string; provider: string; clusterName?: string | null },
       onChunk: (chunk: string) => void,
       onDone: () => void,
       onError: (error: any) => void

@@ -74,7 +74,7 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deplo
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             {/* Pod Status Chart */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 relative overflow-hidden group hover:border-white/20 transition-colors">
+            <div className="bg-white/5 border border-white/10 rounded-lg p-6 relative overflow-hidden group hover:border-white/20 transition-colors">
                 <div className="flex items-center justify-between mb-6">
                     <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                         <Box size={20} className="text-green-400" /> Pod Status
@@ -131,7 +131,7 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deplo
             </div>
 
             {/* Deployment Health Chart */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 relative overflow-hidden group hover:border-white/20 transition-colors">
+            <div className="bg-white/5 border border-white/10 rounded-lg p-6 relative overflow-hidden group hover:border-white/20 transition-colors">
                 <h3 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
                     <Layers size={20} className="text-blue-400" /> Deployment Health
                 </h3>

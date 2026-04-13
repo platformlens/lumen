@@ -6,7 +6,7 @@ import { ProfilePage } from './ProfilePage';
 
 type AuthMode = 'login' | 'register';
 
-export const AuthView: React.FC<{ activeSection?: string }> = ({ activeSection }) => {
+export const AuthView: React.FC<{ activeSection?: string }> = ({ activeSection: _activeSection }) => {
   const [mode, setMode] = useState<AuthMode>('login');
   const { user, error, clearError } = useAuthStore();
 

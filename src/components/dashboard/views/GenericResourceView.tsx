@@ -366,7 +366,7 @@ const GenericResourceViewInner: React.FC<GenericResourceViewProps> = ({
                 ) : (
                     <div
                         ref={containerRef}
-                        className="relative flex-1 h-full w-full min-h-[400px] generic-table-container rounded-t-xl"
+                        className="relative flex-1 h-full w-full min-h-[400px] generic-table-container rounded-t-lg"
                         style={{ overflowClipMargin: 0, overflow: 'clip' }}
                     >
                         <style>{tableStyles}</style>

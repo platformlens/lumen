@@ -248,7 +248,7 @@ const CertTable: React.FC<CertTableProps> = React.memo(({ tableId, columns, data
     }, [data, columns, effectiveWidths, columnWidths]);
 
     return (
-        <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] cert-table-container rounded-t-xl" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
+        <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] cert-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
             <style>{tableStyles}</style>
             <TableVirtuoso
                 totalCount={data.length}

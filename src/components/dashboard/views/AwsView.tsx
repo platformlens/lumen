@@ -571,7 +571,7 @@ const PagedTable = ({ tableId, data, columns, onRowClick }: { tableId?: string, 
     return (
         <div className="space-y-4">
             <div className="h-[400px]">
-                <div ref={containerRef} className="relative h-full w-full aws-table-container rounded-t-xl" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
+                <div ref={containerRef} className="relative h-full w-full aws-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
                     <style>{tableStyles}</style>
                     <TableVirtuoso
                         totalCount={paginatedData.length}

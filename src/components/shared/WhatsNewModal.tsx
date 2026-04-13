@@ -27,7 +27,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ isOpen, onDismiss,
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.9, y: 20 }}
                         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                        className="bg-[#141414] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4"
+                        className="bg-[#141414] border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4 overflow-hidden"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Sticky Header */}

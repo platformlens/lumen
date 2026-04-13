@@ -370,7 +370,7 @@ const ResourcesTab: React.FC<{ resources: ManifestResource[] }> = React.memo(({ 
     }
 
     return (
-        <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] helm-detail-table-container rounded-t-xl" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
+        <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] helm-detail-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
             <style>{tableStyles}</style>
             <TableVirtuoso
                 totalCount={sortedData.length}
@@ -573,7 +573,7 @@ const RevisionsTab: React.FC<{
     }, [sortedData, columns, effectiveWidths, columnWidths]);
 
     return (
-        <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] helm-detail-table-container rounded-t-xl" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
+        <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] helm-detail-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
             <style>{tableStyles}</style>
             <TableVirtuoso
                 totalCount={sortedData.length}

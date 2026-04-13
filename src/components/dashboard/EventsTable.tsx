@@ -62,7 +62,7 @@ export const EventsTable: React.FC<EventsTableProps> = ({ events }) => {
     };
 
     return (
-        <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+        <div className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
             <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                     <AlertTriangle size={20} className="text-yellow-400" /> Cluster Events

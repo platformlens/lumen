@@ -22,7 +22,7 @@ interface WatcherConfig {
 export function useDashboardWatchers({
     clusterName,
     selectedNamespaces,
-    setPods,
+    setPods: _setPods,
     setDeployments,
     startTransition,
     watchEpoch,
@@ -42,7 +42,6 @@ export function useDashboardWatchers({
     // Pod Watcher Effect — DISABLED.
     // Pod watching is now handled by the usePodWorker hook (utilityProcess-based)
     // in DashboardContent.tsx. The old main-process watcher is no longer needed.
-    const podMapRef = useRef<Map<string, any>>(new Map());
     useEffect(() => {
         // No-op: pods are now managed by usePodWorker via the k8s-pod-worker utilityProcess.
         // This effect is kept as a placeholder so the hook's return shape doesn't change.

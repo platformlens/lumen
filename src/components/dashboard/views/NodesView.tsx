@@ -784,7 +784,7 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, sea
 
             {/* Table */}
             <div className="flex-1 min-h-0">
-                <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] nodes-table-container rounded-t-xl" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
+                <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] nodes-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
                     <style>{tableStyles}</style>
                     <TableVirtuoso
                         totalCount={sortedNodes.length}

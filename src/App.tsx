@@ -30,7 +30,7 @@ function App() {
     const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor' | 'user'>('clusters')
     const [selectedCluster, setSelectedCluster] = useState<string | null>(null)
     const [isEks, setIsEks] = useState(false);
-    const [theme, setTheme] = useState<'blue' | 'charcoal' | 'red'>('blue');
+    const [theme, setTheme] = useState<'blue' | 'charcoal' | 'red'>('charcoal');
     const [hasCertManager, setHasCertManager] = useState(false);
 
     // Connection State
