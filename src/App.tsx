@@ -32,6 +32,7 @@ function App() {
     const [isEks, setIsEks] = useState(false);
     const [theme, setTheme] = useState<'blue' | 'charcoal' | 'red'>('charcoal');
     const [hasCertManager, setHasCertManager] = useState(false);
+    const [hasKarpenter, setHasKarpenter] = useState(false);
 
     // Connection State
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
@@ -623,6 +624,14 @@ function App() {
             }).catch(e => {
                 console.warn("Failed to check Cert Manager status", e);
                 setHasCertManager(false);
+            });
+
+            // Check Karpenter status
+            window.k8s.getCRD(clusterName, 'nodepools.karpenter.sh').then(crd => {
+                setHasKarpenter(!!crd);
+            }).catch(e => {
+                console.warn("Failed to check Karpenter status", e);
+                setHasKarpenter(false);
             });
         } catch (err: any) {
             console.error("Connection failed", err);
@@ -1407,6 +1416,7 @@ function App() {
                                 onTogglePin={handleTogglePin}
                                 isEks={isEks}
                                 hasCertManager={hasCertManager}
+                                hasKarpenter={hasKarpenter}
                                 onBack={() => {
                                     setActiveView('clusters');
                                     setSelectedCluster(null);

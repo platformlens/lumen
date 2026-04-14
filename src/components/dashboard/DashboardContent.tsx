@@ -5,6 +5,7 @@ import { OverviewView } from './views/OverviewView';
 import { NodesView } from './views/NodesView';
 import { CertManagerView } from './views/CertManagerView';
 import { AwsView } from './views/AwsView';
+import { KarpenterView } from './views/KarpenterView';
 import { GenericResourceView } from './views/GenericResourceView';
 import { HelmReleasesView } from './views/HelmReleasesView';
 import { HelmReleaseDetail } from './views/HelmReleaseDetail';
@@ -203,6 +204,11 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     // AWS View
     if (activeView === 'aws') {
         return <AwsView clusterName={clusterName} onResourceClick={onResourceClick as (resource: any, type: string) => void} />;
+    }
+
+    // Karpenter View
+    if (activeView === 'karpenter') {
+        return <KarpenterView clusterName={clusterName} searchQuery={searchQuery} />;
     }
 
     // Backgrounds View (empty)

@@ -51,15 +51,12 @@ export function useDashboardWatchers({
     // Deployment Watcher Effect - Runs continuously, independent of active view.
     const depMapRef = useRef<Map<string, any>>(new Map());
     useEffect(() => {
+        // Clear the deployment map on every re-fire (cluster switch, namespace change, epoch bump)
+        // to prevent stale data from the previous cluster leaking into the new one.
+        depMapRef.current = new Map();
+
         console.log(`[DeploymentWatcher] Starting — cluster=${clusterName}, ns=${selectedNamespaces.join(',')}, epoch=${watchEpoch}`);
         const nsToWatch = selectedNamespaces;
-
-        if (!nsToWatch.includes('all')) {
-            for (const [key, dep] of depMapRef.current) {
-                if (!nsToWatch.includes(dep.namespace)) depMapRef.current.delete(key);
-            }
-            setDeployments(Array.from(depMapRef.current.values()));
-        }
 
         window.k8s.watchDeployments(clusterName, nsToWatch);
 

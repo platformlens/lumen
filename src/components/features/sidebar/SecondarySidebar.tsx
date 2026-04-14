@@ -36,7 +36,8 @@ import {
     Anchor,
     PenTool,
     FilePlus,
-    FolderOpen
+    FolderOpen,
+    Zap
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -53,6 +54,7 @@ interface SecondarySidebarProps {
     attemptedCluster?: string | null;
     isEks?: boolean;
     hasCertManager?: boolean;
+    hasKarpenter?: boolean;
     // Pinned Clusters
     pinnedClusters?: string[];
     onTogglePin?: (clusterName: string) => void;
@@ -126,6 +128,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     attemptedCluster,
     isEks,
     hasCertManager,
+    hasKarpenter,
     pinnedClusters = [],
     onTogglePin,
     yamlTabs = [],
@@ -466,6 +469,14 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         label="AWS"
                                         active={activeView === 'aws'}
                                         onClick={() => onSelectView('aws')}
+                                    />
+                                )}
+                                {hasKarpenter && (!searchQuery || filterMatches('Karpenter')) && (
+                                    <NavItem
+                                        icon={<Zap size={18} />}
+                                        label="Karpenter"
+                                        active={activeView === 'karpenter'}
+                                        onClick={() => onSelectView('karpenter')}
                                     />
                                 )}
                             </div>

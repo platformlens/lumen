@@ -467,6 +467,10 @@ function registerIpcHandlers() {
     return k8sService.getReplicaSets(contextName, namespaces);
   })
 
+  ipcMain.handle('k8s:getDeploymentRevisions', (_, contextName, namespace, deploymentName) => {
+    return k8sService.getDeploymentRevisions(contextName, namespace, deploymentName);
+  })
+
   ipcMain.handle('k8s:getReplicaSet', (_, contextName, namespace, name) => {
     return k8sService.getReplicaSet(contextName, namespace, name);
   })

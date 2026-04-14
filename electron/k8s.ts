@@ -3,6 +3,7 @@ import * as net from 'net';
 import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
 import * as zlib from 'zlib';
+import { execFile } from 'child_process';
 
 interface ActiveForward {
     id: string;
@@ -1021,13 +1022,32 @@ export class K8sService {
                         console.log('[k8s] Deployment watch aborted (expected)');
                         return;
                     }
-                    if (err) console.error('[k8s] Deployment watch exited with error:', err);
-                    if (err?.statusCode === 410) {
+
+                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
+                    const hasRv = this.watchResourceVersions.has(watcherKey);
+                    const isNormalClose = !err && hasRv;
+
+                    if (!isNormalClose) {
+                        console.error(`[k8s] Deployment watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
+                    }
+
+                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
+                    if (is410) {
+                        console.log('[k8s] Deployment watch rv expired (410 Gone), clearing for fresh re-list');
                         this.watchResourceVersions.delete(watcherKey);
                     }
+
+                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
+                    if (attempts >= 3 && hasRv) {
+                        console.log(`[k8s] Deployment watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+
                     if (this.activeWatchers.has(watcherKey)) {
-                        const delay = this.getWatchReconnectDelay(watcherKey);
-                        console.log(`[k8s] Deployment watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
+                        if (!isNormalClose) {
+                            console.log(`[k8s] Deployment watch reconnecting in ${delay}ms... [gen=${gen}]`);
+                        }
                         this.activeWatchers.delete(watcherKey);
                         setTimeout(() => {
                             if (gen !== this.watchGenerations.get(watcherKey)) return;
@@ -1101,13 +1121,32 @@ export class K8sService {
                         console.log('[k8s] Helm release watch aborted (expected)');
                         return;
                     }
-                    if (err) console.error('[k8s] Helm release watch exited with error:', err);
-                    if (err?.statusCode === 410) {
+
+                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
+                    const hasRv = this.watchResourceVersions.has(watcherKey);
+                    const isNormalClose = !err && hasRv;
+
+                    if (!isNormalClose) {
+                        console.error(`[k8s] Helm release watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
+                    }
+
+                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
+                    if (is410) {
+                        console.log('[k8s] Helm release watch rv expired (410 Gone), clearing for fresh re-list');
                         this.watchResourceVersions.delete(watcherKey);
                     }
+
+                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
+                    if (attempts >= 3 && hasRv) {
+                        console.log(`[k8s] Helm release watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+
                     if (this.activeWatchers.has(watcherKey)) {
-                        const delay = this.getWatchReconnectDelay(watcherKey);
-                        console.log(`[k8s] Helm release watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
+                        if (!isNormalClose) {
+                            console.log(`[k8s] Helm release watch reconnecting in ${delay}ms... [gen=${gen}]`);
+                        }
                         this.activeWatchers.delete(watcherKey);
                         setTimeout(() => {
                             if (gen !== this.watchGenerations.get(watcherKey)) return;
@@ -1187,6 +1226,47 @@ export class K8sService {
             metadata: rs.metadata,
             spec: rs.spec
         }));
+    }
+
+    async getDeploymentRevisions(contextName: string, namespace: string, deploymentName: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sApi = this.kc.makeApiClient(AppsV1Api);
+
+        try {
+            const res = await k8sApi.listNamespacedReplicaSet({ namespace });
+            const allItems = (res as any).body ? (res as any).body.items : (res as any).items;
+
+            // Filter ReplicaSets owned by this deployment
+            const owned = allItems.filter((rs: any) =>
+                rs.metadata?.ownerReferences?.some(
+                    (ref: any) => ref.kind === 'Deployment' && ref.name === deploymentName
+                )
+            );
+
+            // Sort by revision number (descending), fall back to creation timestamp
+            const sorted = owned.sort((a: any, b: any) => {
+                const revA = parseInt(a.metadata?.annotations?.['deployment.kubernetes.io/revision'] || '0', 10);
+                const revB = parseInt(b.metadata?.annotations?.['deployment.kubernetes.io/revision'] || '0', 10);
+                return revB - revA;
+            });
+
+            return sorted.map((rs: any) => ({
+                name: rs.metadata?.name,
+                namespace: rs.metadata?.namespace,
+                revision: rs.metadata?.annotations?.['deployment.kubernetes.io/revision'] || 'unknown',
+                creationTimestamp: rs.metadata?.creationTimestamp,
+                replicas: rs.spec?.replicas ?? 0,
+                readyReplicas: rs.status?.readyReplicas ?? 0,
+                currentReplicas: rs.status?.replicas ?? 0,
+                images: rs.spec?.template?.spec?.containers?.map((c: any) => c.image) || [],
+                spec: rs.spec,
+                metadata: rs.metadata,
+                status: rs.status,
+            }));
+        } catch (error) {
+            console.error('Error fetching deployment revisions:', error);
+            return [];
+        }
     }
 
     async restartDeployment(contextName: string, namespace: string, deploymentName: string) {
@@ -1714,7 +1794,9 @@ export class K8sService {
                 age: node.metadata.creationTimestamp,
                 cpu: node.status.capacity?.cpu,
                 memory: node.status.capacity?.memory,
-                metadata: node.metadata
+                metadata: node.metadata,
+                spec: node.spec,
+                statusObj: node.status,
             }));
         }).catch(error => {
             console.error('Error fetching Nodes:', error);
@@ -1807,13 +1889,32 @@ export class K8sService {
                         console.log('[k8s] Node watch aborted (expected)');
                         return;
                     }
-                    if (err) console.error('[k8s] Node watch exited with error:', err);
-                    if (err?.statusCode === 410) {
+
+                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
+                    const hasRv = this.watchResourceVersions.has(watcherKey);
+                    const isNormalClose = !err && hasRv;
+
+                    if (!isNormalClose) {
+                        console.error(`[k8s] Node watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
+                    }
+
+                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
+                    if (is410) {
+                        console.log('[k8s] Node watch rv expired (410 Gone), clearing for fresh re-list');
                         this.watchResourceVersions.delete(watcherKey);
                     }
+
+                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
+                    if (attempts >= 3 && hasRv) {
+                        console.log(`[k8s] Node watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+
                     if (this.activeWatchers.has(watcherKey)) {
-                        const delay = this.getWatchReconnectDelay(watcherKey);
-                        console.log(`[k8s] Node watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
+                        if (!isNormalClose) {
+                            console.log(`[k8s] Node watch reconnecting in ${delay}ms... [gen=${gen}]`);
+                        }
                         this.activeWatchers.delete(watcherKey);
                         setTimeout(() => {
                             if (gen !== this.watchGenerations.get(watcherKey)) return;
@@ -1891,13 +1992,32 @@ export class K8sService {
                         console.log(`[k8s] ${resourceType} watch aborted (expected)`);
                         return;
                     }
-                    if (err) console.error(`[k8s] ${resourceType} watch exited with error:`, err);
-                    if (err?.statusCode === 410) {
+
+                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
+                    const hasRv = this.watchResourceVersions.has(watcherKey);
+                    const isNormalClose = !err && hasRv;
+
+                    if (!isNormalClose) {
+                        console.error(`[k8s] ${resourceType} watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
+                    }
+
+                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
+                    if (is410) {
+                        console.log(`[k8s] ${resourceType} watch rv expired (410 Gone), clearing for fresh re-list`);
                         this.watchResourceVersions.delete(watcherKey);
                     }
+
+                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
+                    if (attempts >= 3 && hasRv) {
+                        console.log(`[k8s] ${resourceType} watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
+                        this.watchResourceVersions.delete(watcherKey);
+                    }
+
                     if (this.activeWatchers.has(watcherKey)) {
-                        const delay = this.getWatchReconnectDelay(watcherKey);
-                        console.log(`[k8s] ${resourceType} watch ended unexpectedly, reconnecting in ${delay}ms...`);
+                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
+                        if (!isNormalClose) {
+                            console.log(`[k8s] ${resourceType} watch reconnecting in ${delay}ms... [gen=${gen}]`);
+                        }
                         this.activeWatchers.delete(watcherKey);
                         setTimeout(() => {
                             if (gen !== this.watchGenerations.get(watcherKey)) return;
@@ -3480,31 +3600,20 @@ export class K8sService {
     public async uninstallHelmRelease(contextName: string, namespace: string, name: string): Promise<{ name: string; namespace: string }> {
         await this.setContextWithSmartReload(contextName);
 
-        return this.withAuthRetry(contextName, async () => {
-            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+        return new Promise((resolve, reject) => {
+            const args = ['uninstall', name, '--namespace', namespace, '--kube-context', contextName];
+            console.log(`[k8s] Running: helm ${args.join(' ')}`);
 
-            try {
-                // List all secrets for this release
-                const res = await k8sApi.listNamespacedSecret({
-                    namespace,
-                    fieldSelector: 'type=helm.sh/release.v1',
-                    labelSelector: `name=${name}`,
-                });
-                const secrets: any[] = (res as any).body?.items ?? (res as any).items ?? [];
-
-                // Delete each secret
-                await Promise.all(
-                    secrets.map(s => k8sApi.deleteNamespacedSecret({
-                        name: s.metadata.name,
-                        namespace,
-                    }))
-                );
-
-                return { name, namespace };
-            } catch (err: unknown) {
-                const errMessage = err instanceof Error ? err.message : String(err);
-                throw new Error(`Failed to uninstall Helm release "${name}": ${errMessage}`);
-            }
+            execFile('helm', args, { timeout: 120_000 }, (err, stdout, stderr) => {
+                if (err) {
+                    const msg = stderr?.trim() || err.message;
+                    console.error(`[k8s] helm uninstall failed:`, msg);
+                    reject(new Error(`Failed to uninstall Helm release "${name}": ${msg}`));
+                    return;
+                }
+                console.log(`[k8s] helm uninstall succeeded:`, stdout.trim());
+                resolve({ name, namespace });
+            });
         });
     }
 
@@ -3516,106 +3625,20 @@ export class K8sService {
     public async rollbackHelmRelease(contextName: string, namespace: string, name: string, revision: number): Promise<{ name: string; namespace: string; revision: number }> {
         await this.setContextWithSmartReload(contextName);
 
-        return this.withAuthRetry(contextName, async () => {
-            const k8sApi = this.kc.makeApiClient(CoreV1Api);
+        return new Promise((resolve, reject) => {
+            const args = ['rollback', name, String(revision), '--namespace', namespace, '--kube-context', contextName];
+            console.log(`[k8s] Running: helm ${args.join(' ')}`);
 
-            try {
-                // Get all secrets for this release to find target revision and current max
-                const res = await k8sApi.listNamespacedSecret({
-                    namespace,
-                    fieldSelector: 'type=helm.sh/release.v1',
-                    labelSelector: `name=${name}`,
-                });
-                const secrets: any[] = (res as any).body?.items ?? (res as any).items ?? [];
-
-                // Find the target revision secret
-                const targetSecret = secrets.find(s => {
-                    const ver = parseInt(s.metadata?.labels?.version ?? '0', 10);
-                    return ver === revision;
-                });
-                if (!targetSecret) {
-                    throw new Error(`Revision ${revision} not found for release "${name}"`);
+            execFile('helm', args, { timeout: 120_000 }, (err, stdout, stderr) => {
+                if (err) {
+                    const msg = stderr?.trim() || err.message;
+                    console.error(`[k8s] helm rollback failed:`, msg);
+                    reject(new Error(`Failed to rollback Helm release "${name}" to revision ${revision}: ${msg}`));
+                    return;
                 }
-
-                // Determine the new revision number (max + 1)
-                const maxRevision = secrets.reduce((max, s) => {
-                    const ver = parseInt(s.metadata?.labels?.version ?? '0', 10);
-                    return ver > max ? ver : max;
-                }, 0);
-                const newRevision = maxRevision + 1;
-
-                // Decode the target revision's release payload
-                let buffer = Buffer.from(targetSecret.data.release, 'base64');
-                if (buffer[0] !== 0x1f || buffer[1] !== 0x8b) {
-                    buffer = Buffer.from(buffer.toString('utf-8'), 'base64');
-                }
-                const decompressed = zlib.gunzipSync(buffer);
-                const releaseData = JSON.parse(decompressed.toString('utf-8'));
-
-                // Update the release payload for the rollback
-                releaseData.version = newRevision;
-                releaseData.info = {
-                    ...releaseData.info,
-                    status: 'deployed',
-                    description: `Rollback to ${revision}`,
-                    last_deployed: new Date().toISOString(),
-                };
-
-                // Re-encode: JSON → gzip → base64 (Helm layer) → base64 (K8s layer)
-                const jsonBuf = Buffer.from(JSON.stringify(releaseData), 'utf-8');
-                const compressed = zlib.gzipSync(jsonBuf);
-                const helmB64 = compressed.toString('base64');
-                const k8sB64 = Buffer.from(helmB64, 'utf-8').toString('base64');
-
-                // Create the new secret
-                await k8sApi.createNamespacedSecret({
-                    namespace,
-                    body: {
-                        apiVersion: 'v1',
-                        kind: 'Secret',
-                        metadata: {
-                            name: `sh.helm.release.v1.${name}.v${newRevision}`,
-                            namespace,
-                            labels: {
-                                name,
-                                owner: 'helm',
-                                status: 'deployed',
-                                version: String(newRevision),
-                            },
-                        },
-                        type: 'helm.sh/release.v1',
-                        data: {
-                            release: k8sB64,
-                        },
-                    },
-                });
-
-                // Mark the previous current revision as superseded
-                for (const s of secrets) {
-                    const sStatus = s.metadata?.labels?.status;
-                    const sVer = parseInt(s.metadata?.labels?.version ?? '0', 10);
-                    if (sStatus === 'deployed' && sVer !== newRevision) {
-                        try {
-                            await k8sApi.patchNamespacedSecret({
-                                name: s.metadata.name,
-                                namespace,
-                                body: {
-                                    metadata: {
-                                        labels: { ...s.metadata.labels, status: 'superseded' },
-                                    },
-                                },
-                            } as any);
-                        } catch {
-                            // Non-critical — the rollback secret was already created
-                        }
-                    }
-                }
-
-                return { name, namespace, revision: newRevision };
-            } catch (err: unknown) {
-                const errMessage = err instanceof Error ? err.message : String(err);
-                throw new Error(`Failed to rollback Helm release "${name}" to revision ${revision}: ${errMessage}`);
-            }
+                console.log(`[k8s] helm rollback succeeded:`, stdout.trim());
+                resolve({ name, namespace, revision });
+            });
         });
     }
 

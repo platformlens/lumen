@@ -17,6 +17,7 @@ import { DashboardHeader } from './dashboard/DashboardHeader';
 import { useResourceSorting } from '../hooks/useResourceSorting';
 import { useDashboardWatchers } from '../hooks/useDashboardWatchers';
 import { ConfirmModal } from './shared/ConfirmModal';
+import { ResourceEvents } from './shared/ResourceEvents';
 import { resolveResourceMeta, formatDeleteMessage } from '../utils/resource-utils';
 import { applyHelmReleaseEvents, HelmRelease } from '../utils/helm-release-utils';
 
@@ -258,7 +259,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
     // Load Namespaces & Wipe State on Cluster Change
     useEffect(() => {
-        // Explicitly wipe state on cluster change to prevent data leaks from previous cluster
+        // Explicitly wipe ALL state on cluster change to prevent data leaks from previous cluster
         setPods([]);
         setDeployments([]);
         setReplicaSets([]);
@@ -267,9 +268,38 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         setEndpointSlices([]);
         setEndpoints([]);
         setIngresses([]);
+        setIngressClasses([]);
+        setNetworkPolicies([]);
+        setNodes([]);
+        setDaemonSets([]);
+        setStatefulSets([]);
+        setJobs([]);
+        setCronJobs([]);
+        setConfigMaps([]);
+        setSecrets([]);
+        setHorizontalPodAutoscalers([]);
+        setPodDisruptionBudgets([]);
+        setMutatingWebhookConfigurations([]);
+        setValidatingWebhookConfigurations([]);
+        setPriorityClasses([]);
+        setRuntimeClasses([]);
+        setClusterRoles([]);
+        setClusterRoleBindings([]);
+        setRoles([]);
+        setRoleBindings([]);
+        setServiceAccounts([]);
+        setPvcs([]);
+        setPvs([]);
+        setStorageClasses([]);
+        setNamespacesList([]);
+        setCrdDefinitions([]);
+        setCustomObjects([]);
+        setPodMetrics({});
         setHelmReleases([]);
         setHelmReleasesLoaded(false);
         helmReleasesMapRef.current = new Map();
+        // Clear resource cache so stale data from the old cluster is never served
+        resourceCacheRef.current = new Map();
         console.log('[Dashboard] State wiped for new cluster:', clusterName);
 
         window.k8s.getNamespaces(clusterName).then(setNamespaces).catch(console.error);
@@ -292,25 +322,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     }, [clusterName, activeView]);
 
     // Node Watcher Effect - Runs continuously, independent of active view.
+    const nodeMapRef = useRef<Map<string, any>>(new Map());
     useEffect(() => {
+        // Clear node map on every re-fire to prevent stale data from previous cluster
+        nodeMapRef.current = new Map();
+
         console.log(`[NodeWatcher] Starting — cluster=${clusterName}, epoch=${watchEpoch}`);
         window.k8s.watchNodes(clusterName);
 
         const nodeBatchCleanup = window.k8s.onNodeBatchChange((events) => {
             startTransition(() => {
-                setNodes(prev => {
-                    const nodeMap = new Map(prev.map(n => [n.name, n]));
-
-                    for (const { type, node } of events) {
-                        if (type === 'ADDED' || type === 'MODIFIED') {
-                            nodeMap.set(node.name, node);
-                        } else if (type === 'DELETED') {
-                            nodeMap.delete(node.name);
-                        }
+                for (const { type, node } of events) {
+                    if (type === 'ADDED' || type === 'MODIFIED') {
+                        nodeMapRef.current.set(node.name, node);
+                    } else if (type === 'DELETED') {
+                        nodeMapRef.current.delete(node.name);
                     }
-
-                    return Array.from(nodeMap.values());
-                });
+                }
+                setNodes(Array.from(nodeMapRef.current.values()));
             });
         });
 
@@ -325,10 +354,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     // Helm Release Watcher Effect - Runs continuously, independent of active view.
     // Preserves cached data; only clears on namespace change.
     const prevHelmNsRef = useRef<string>(JSON.stringify(selectedNamespaces));
+    const prevHelmClusterRef = useRef<string>(clusterName);
     useEffect(() => {
-        // Only clear state when namespaces actually changed (not on view re-entry)
+        // Clear state when cluster or namespaces changed to prevent stale data
         const nsKey = JSON.stringify(selectedNamespaces);
-        if (prevHelmNsRef.current !== nsKey) {
+        if (prevHelmClusterRef.current !== clusterName || prevHelmNsRef.current !== nsKey) {
+            prevHelmClusterRef.current = clusterName;
             prevHelmNsRef.current = nsKey;
             setHelmReleases([]);
             setHelmReleasesLoaded(false);
@@ -574,6 +605,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
 
         if (!config) return;
+
+        // Clear the resource state for this view on every re-fire (cluster switch, namespace change)
+        // to prevent stale data from the previous cluster leaking through the Map merge in processBatch.
+        config.setter(() => []);
 
         const nsFilter = selectedNamespaces.length === 0 ? ['all'] : selectedNamespaces;
         const isAllNamespaces = nsFilter.includes('all');
@@ -1463,19 +1498,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
                                 {/* Details View */}
                                 {drawerTab === 'details' && (
-                                    <DrawerDetailsRenderer
-                                        selectedResource={selectedResource}
-                                        detailedResource={detailedResource}
-                                        clusterName={clusterName}
-                                        onExplain={handleExplain}
-                                        onNavigate={handleNavigate}
-                                        onOpenLogs={handleOpenLogs}
-                                        onShowTopology={() => setDrawerTab('topology')}
-                                        onOpenYaml={onOpenYaml}
-                                        onTriggerCronJob={handleTriggerCronJob}
-                                        onCordonDrain={onCordonDrain}
-                                        onDeleteNode={onDeleteNode}
-                                    />
+                                    <>
+                                        <DrawerDetailsRenderer
+                                            selectedResource={selectedResource}
+                                            detailedResource={detailedResource}
+                                            clusterName={clusterName}
+                                            onExplain={handleExplain}
+                                            onNavigate={handleNavigate}
+                                            onOpenLogs={handleOpenLogs}
+                                            onShowTopology={() => setDrawerTab('topology')}
+                                            onOpenYaml={onOpenYaml}
+                                            onTriggerCronJob={handleTriggerCronJob}
+                                            onCordonDrain={onCordonDrain}
+                                            onDeleteNode={onDeleteNode}
+                                        />
+                                        {/* Resource Events — shown for all types except pods (PodDetails has its own events section) */}
+                                        {selectedResource.type !== 'pod' && (
+                                            <ResourceEvents
+                                                clusterName={clusterName}
+                                                resource={detailedResource}
+                                            />
+                                        )}
+                                    </>
                                 )}
                             </>
                         )

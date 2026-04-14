@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('k8s', {
   getPodMetrics: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPodMetrics', contextName, namespaces),
   getPod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getPod', contextName, namespace, name),
   getReplicaSets: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getReplicaSets', contextName, namespaces),
+  getDeploymentRevisions: (contextName: string, namespace: string, deploymentName: string) => ipcRenderer.invoke('k8s:getDeploymentRevisions', contextName, namespace, deploymentName),
   restartDeployment: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:restartDeployment', contextName, namespace, name),
   getReplicaSet: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getReplicaSet', contextName, namespace, name),
   getServices: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getServices', contextName, namespaces),
