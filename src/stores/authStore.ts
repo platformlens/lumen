@@ -23,7 +23,7 @@ interface AuthActions {
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  restoreSession: () => Promise<void>;
+  initialize: () => void;
   fetchProfile: () => Promise<void>;
   clearError: () => void;
 }
@@ -99,17 +99,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         return;
       }
 
-      if (data.session) {
-        try {
-          await (window as any).k8s.auth.saveSession({
-            access_token: data.session.access_token,
-            refresh_token: data.session.refresh_token,
-          });
-        } catch (e) {
-          console.error('Failed to save session via IPC:', e);
-        }
-      }
-
       set({
         user: data.user,
         session: data.session,
@@ -166,17 +155,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         session: data.session,
       });
 
-      if (data.session) {
-        try {
-          await (window as any).k8s.auth.saveSession({
-            access_token: data.session.access_token,
-            refresh_token: data.session.refresh_token,
-          });
-        } catch (e) {
-          console.error('Failed to save session via IPC:', e);
-        }
-      }
-
       // Fetch profile after successful sign-in
       await get().fetchProfile();
 
@@ -209,13 +187,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       set({ error: 'Failed to sign out. Please try again.' });
     }
 
-    // Always clear local state and persisted session, even if signOut fails
-    try {
-      await (window as any).k8s.auth.clearSession();
-    } catch (e) {
-      console.error('Failed to clear session via IPC:', e);
-    }
-
     set({
       user: null,
       profile: null,
@@ -224,65 +195,26 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     });
   },
 
-  restoreSession: async () => {
-    if (!supabase) {
-      return;
-    }
+  initialize: () => {
+    if (!supabase) return;
 
-    set({ isLoading: true, error: null });
-
-    try {
-      const stored = await (window as any).k8s.auth.getSession();
-
-      if (!stored) {
-        set({ isLoading: false });
-        return;
-      }
-
-      const { data, error } = await supabase.auth.setSession({
-        access_token: stored.access_token,
-        refresh_token: stored.refresh_token,
-      });
-
-      if (error || !data.session) {
-        // Session expired or invalid — clear stored session
-        try {
-          await (window as any).k8s.auth.clearSession();
-        } catch (e) {
-          console.error('Failed to clear expired session via IPC:', e);
+    // Setup listener for all auth state changes (e.g. token refreshes)
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Supabase auth event:', event);
+      
+      if (session) {
+        set({ user: session.user, session: session, isLoading: false });
+        
+        // Fetch profile if missing and user exists
+        if (!get().profile) {
+          await get().fetchProfile();
         }
+      } else if (event === 'SIGNED_OUT') {
         set({ user: null, session: null, profile: null, isLoading: false });
-        return;
       }
+    });
 
-      // Session is valid — save potentially refreshed tokens
-      try {
-        await (window as any).k8s.auth.saveSession({
-          access_token: data.session.access_token,
-          refresh_token: data.session.refresh_token,
-        });
-      } catch (e) {
-        console.error('Failed to save refreshed session via IPC:', e);
-      }
-
-      set({
-        user: data.user,
-        session: data.session,
-      });
-
-      // Fetch profile for the restored user
-      await get().fetchProfile();
-
-      set({ isLoading: false });
-    } catch (err: any) {
-      // Treat IPC or network failures as no session
-      try {
-        await (window as any).k8s.auth.clearSession();
-      } catch (_) {
-        // ignore
-      }
-      set({ user: null, session: null, profile: null, isLoading: false });
-    }
+    // Supabase will automatically call the auth listener with INITIAL_SESSION when the storage adapter finishes loading
   },
 
   fetchProfile: async () => {

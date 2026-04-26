@@ -219,7 +219,7 @@ interface Window {
     addPinnedCluster: (clusterName: string) => Promise<string[]>
     removePinnedCluster: (clusterName: string) => Promise<string[]>
     getModelSync: () => string
-    getProviderSync: () => 'google' | 'bedrock'
+    getProviderSync: () => 'google' | 'bedrock' | 'local'
     saveModelSelection: (provider: string, model: string) => Promise<boolean>
 
     // --- General Settings ---

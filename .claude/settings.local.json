@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/bash \"/Users/rashidmatin/Development/kubernetes projects/lumen/.dual-graph/prime.sh\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/bash \"/Users/rashidmatin/Development/kubernetes projects/lumen/.dual-graph/prime.sh\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/bash \"/Users/rashidmatin/Development/kubernetes projects/lumen/.dual-graph/stop.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -55,6 +55,8 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   const [googleModels, setGoogleModels] = useState<Array<{ id: string; name: string }>>([]);
   const [bedrockModels, setBedrockModels] = useState<Array<{ id: string; name: string }>>([]);
+  const [localModels, setLocalModels] = useState<Array<{ id: string; name: string }>>([]);
+  const [localEndpoint, setLocalEndpoint] = useState('http://localhost:1234/v1');
 
   const [awsAuthType, setAwsAuthType] = useState<'none' | 'manual' | 'managed'>('none');
   const [forceManualAws, setForceManualAws] = useState(false);
@@ -116,6 +118,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     });
     window.k8s.settings.get('theme').then((saved: string | null) => {
       if (saved === 'blue' || saved === 'charcoal' || saved === 'red') setAppTheme(saved);
+    }).catch(() => { });
+    window.k8s.settings.get('localModelEndpoint').then((saved: string | null) => {
+      if (saved) setLocalEndpoint(saved);
     }).catch(() => { });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
@@ -247,6 +252,19 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
       });
     }
   }, [awsAuthType, awsAccessKey, awsSecretKey]);
+
+  // Fetch Local models when provider or endpoint changes
+  useEffect(() => {
+    if (selectedProvider === 'local') {
+      window.k8s.listModels('local').then(models => {
+        if (models && models.length > 0) {
+          setLocalModels(models);
+        } else {
+          setLocalModels([]);
+        }
+      });
+    }
+  }, [selectedProvider, localEndpoint]);
 
   // Handlers
   const handleSaveApiKey = async () => {
@@ -485,14 +503,15 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
           <ToggleGroup
             options={[
               { value: 'google', label: 'Google Gemini' },
-              { value: 'bedrock', label: 'AWS Bedrock' }
+              { value: 'bedrock', label: 'AWS Bedrock' },
+              { value: 'local', label: 'Local API' }
             ]}
             value={selectedProvider}
             onChange={(provider) => handleModelChange(selectedModel, provider)}
           />
         </div>
 
-        {selectedProvider === 'google' ? (
+        {selectedProvider === 'google' && (
           <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
               Enter your Gemini API Key here. {savedKey ? "A key is currently saved." : "No key is currently saved."}
@@ -534,7 +553,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
               </div>
             </div>
           </div>
-        ) : (
+        )}
+
+        {selectedProvider === 'bedrock' && (
           <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
               Configure AWS Credentials for Bedrock access.
@@ -693,6 +714,68 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
                   >
                     <span className={`text-sm ${selectedModel === model.id ? 'text-blue-200' : 'text-gray-400'}`}>{model.name}</span>
                     {selectedModel === model.id && <Check size={14} className="text-blue-400" />}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedProvider === 'local' && (
+          <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+            <p className="text-sm text-gray-400">
+              Configure your local model endpoint (OpenAI compatible API). Example: http://localhost:1234/v1
+            </p>
+            <div className="flex gap-3">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={localEndpoint}
+                  onChange={(e) => setLocalEndpoint(e.target.value)}
+                  placeholder="Enter your Local API Endpoint URL..."
+                  className={`w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/50 focus:bg-black/60 transition-all placeholder:text-gray-600`}
+                />
+              </div>
+              <GlassButton
+                onClick={async () => {
+                  await window.k8s.settings.set('localModelEndpoint', localEndpoint);
+                  showSavedFeedback();
+                  const models = await window.k8s.listModels('local');
+                  if (models && models.length > 0) setLocalModels(models);
+                  else setLocalModels([]);
+                }}
+                variant={isSaved ? 'secondary' : 'primary'}
+                className={isSaved ? 'bg-green-500/10 text-green-400 border-green-500/20' : ''}
+                icon={isSaved ? <Check size={16} /> : undefined}
+              >
+                {isSaved ? 'Saved' : 'Save'}
+              </GlassButton>
+            </div>
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                 <h4 className="text-sm font-medium text-gray-300">Available Models</h4>
+                 <GlassButton 
+                   onClick={async () => {
+                      const models = await window.k8s.listModels('local');
+                      if (models && models.length > 0) setLocalModels(models);
+                      else setLocalModels([]);
+                   }}
+                   variant="secondary"
+                   className="text-xs px-2 py-1 bg-black/20 hover:bg-black/40 border-white/10"
+                 >
+                   Refresh Models
+                 </GlassButton>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {localModels.length === 0 && <span className="text-xs text-gray-500 col-span-2">No models found. Check endpoint and ensure server is running.</span>}
+                {localModels.map(model => (
+                  <div
+                    key={model.id}
+                    onClick={() => handleModelChange(model.id, 'local')}
+                    className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-all border border-transparent ${selectedModel === model.id ? 'bg-blue-500/20 border-blue-500/50 shadow-inner' : 'bg-black/20 hover:bg-black/40 border-white/5'}`}
+                  >
+                    <span className={`text-sm ${selectedModel === model.id ? 'text-blue-200' : 'text-gray-400'} truncate mr-2`}>{model.name}</span>
+                    {selectedModel === model.id && <Check size={14} className="text-blue-400 flex-shrink-0" />}
                   </div>
                 ))}
               </div>

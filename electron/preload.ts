@@ -451,8 +451,7 @@ contextBridge.exposeInMainWorld('k8s', {
 
   // --- Auth ---
   auth: {
-    saveSession: (session: { access_token: string; refresh_token: string }) =>
-      ipcRenderer.invoke('auth:saveSession', session),
+    saveSession: (session: string | object) => ipcRenderer.invoke('auth:saveSession', session),
     getSession: () => ipcRenderer.invoke('auth:getSession'),
     clearSession: () => ipcRenderer.invoke('auth:clearSession'),
   },

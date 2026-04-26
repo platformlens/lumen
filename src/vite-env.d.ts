@@ -173,7 +173,7 @@ declare global {
             saveAwsCreds: (creds: any) => Promise<boolean>;
             getAwsCreds: () => Promise<any>;
             getModelSync: () => string;
-            getProviderSync: () => 'google' | 'bedrock';
+            getProviderSync: () => 'google' | 'bedrock' | 'local';
             saveModelSelection: (provider: string, model: string) => Promise<boolean>;
             decodeCertificate: (certData: string) => Promise<any>;
             onBedrockAccessDenied: (callback: (message: string) => void) => () => void;

@@ -16,6 +16,7 @@
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^4.0.6",
     "@ai-sdk/google": "^3.0.2",
+    "@ai-sdk/openai": "^3.0.53",
     "@aws-sdk/client-bedrock": "^3.962.0",
     "@aws-sdk/client-bedrock-runtime": "^3.962.0",
     "@aws-sdk/client-cloudtrail": "^3.990.0",

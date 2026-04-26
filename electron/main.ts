@@ -13,6 +13,7 @@ import { ContextEngineConfig } from './context-engine/types'
 import { ChatSessionManager } from './context-engine/chat-session'
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { createOpenAI } from '@ai-sdk/openai';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
 import { streamText } from 'ai';
 import dotenv from 'dotenv'
@@ -635,6 +636,10 @@ function registerIpcHandlers() {
         const bedrockConfig = getBedrockConfig();
         const bedrock = createAmazonBedrock(bedrockConfig);
         aiModel = bedrock(model);
+      } else if (provider === 'local') {
+        const localEndpoint = (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
+        const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
+        aiModel = localProvider(model);
       } else {
         event.sender.send('ai:explainResourceStream:error', `Unknown provider: ${provider}`);
         return;
@@ -800,6 +805,10 @@ function registerIpcHandlers() {
         const bedrockConfig = getBedrockConfig();
         const bedrock = createAmazonBedrock(bedrockConfig);
         aiModel = bedrock(model);
+      } else if (provider === 'local') {
+        const localEndpoint = (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
+        const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
+        aiModel = localProvider(model);
       } else {
         event.sender.send('ai:customPromptStream:error', `Unknown provider: ${provider}`);
         activeCustomPromptAbort = null;
@@ -1117,6 +1126,25 @@ function registerIpcHandlers() {
         return allModels;
       } catch (err) {
         console.error('Error listing Bedrock models:', err);
+        return [];
+      }
+    } else if (provider === 'local') {
+      try {
+        const localEndpoint = (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
+        // Note: LM Studio / llama.cpp typically host models at /v1/models or /models, 
+        // stripping /v1 from baseURL if we append it, but AI SDK typically needs the full /v1 URL.
+        // Let's assume the user enters standard openAI format base URL (e.g. http://localhost:1234/v1).
+        const url = localEndpoint.endsWith('/') ? `${localEndpoint}models` : `${localEndpoint}/models`;
+        const response = await fetch(url);
+        if (!response.ok) return [];
+        const data = await response.json();
+        return (data.data || []).map((m: any) => ({
+          id: m.id,
+          name: m.id,
+          provider: 'Local'
+        }));
+      } catch (err) {
+        console.error('Error listing local models:', err);
         return [];
       }
     }
@@ -1615,13 +1643,13 @@ function registerIpcHandlers() {
   });
 
   // --- Auth Session Persistence ---
-  ipcMain.handle('auth:saveSession', async (_, session: { access_token: string; refresh_token: string }) => {
+  ipcMain.handle('auth:saveSession', async (_, session: string | object) => {
     store.set('supabase_session', session);
     return true;
   });
 
   ipcMain.handle('auth:getSession', async () => {
-    return (store.get('supabase_session') as { access_token: string; refresh_token: string }) ?? null;
+    return store.get('supabase_session') ?? null;
   });
 
   ipcMain.handle('auth:clearSession', async () => {

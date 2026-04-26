@@ -48,7 +48,7 @@ function App() {
     // AI Model State
     // AI Model State
     // AI Model State
-    const [aiProvider, setAiProvider] = useState<'google' | 'bedrock'>(() => {
+    const [aiProvider, setAiProvider] = useState<'google' | 'bedrock' | 'local'>(() => {
         // Use sync IPC to get persisted value on cold start
         return window.k8s.getProviderSync();
     });
@@ -99,7 +99,7 @@ function App() {
 
     // Restore auth session on app mount
     useEffect(() => {
-        useAuthStore.getState().restoreSession();
+        useAuthStore.getState().initialize();
     }, []);
 
     const handleOnboardingComplete = async () => {
@@ -571,7 +571,7 @@ function App() {
 
         // Listen for AI model changes from Settings
         const handleAIModelChange = (e: Event) => {
-            const customEvent = e as CustomEvent<{ provider: "google" | "bedrock"; model: string }>;
+            const customEvent = e as CustomEvent<{ provider: "google" | "bedrock" | "local"; model: string }>;
             console.log("[AI Model] Event received:", customEvent.detail);
             setAiProvider(customEvent.detail.provider);
             setAiModel(customEvent.detail.model);

@@ -9,7 +9,7 @@ interface StatusBarProps {
     notificationCount?: number;
     onToggleNotifications?: () => void;
     isNotificationsPanelOpen?: boolean;
-    aiProvider?: 'google' | 'bedrock';
+    aiProvider?: 'google' | 'bedrock' | 'local';
     aiModel?: string;
 }
 
@@ -118,12 +118,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
                                 <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
                                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
                             </svg>
-                        ) : (
+                        ) : aiProvider === 'bedrock' ? (
                             <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor">
                                 <path d="M6.76 14.96l-2.7 1.56C2.52 15.27 1.5 13.74 1.5 12s1.02-3.27 2.56-4.52l2.7 1.56c-.6.58-.98 1.39-.98 2.28s.38 1.7.98 2.28z" fill="#FF9900" />
                                 <path d="M12 6.76V3.5c1.74 0 3.27 1.02 4.52 2.56l-1.56 2.7c-.58-.6-1.39-.98-2.28-.98s-1.7.38-2.28.98L8.84 6.06C10.09 4.52 11.62 3.5 12 3.5z" fill="#FF9900" />
                                 <path d="M17.24 9.04l2.7-1.56C21.48 8.73 22.5 10.26 22.5 12s-1.02 3.27-2.56 4.52l-2.7-1.56c.6-.58.98-1.39.98-2.28s-.38-1.7-.98-2.28z" fill="#FF9900" />
                                 <path d="M12 17.24v3.26c-1.74 0-3.27-1.02-4.52-2.56l1.56-2.7c.58.6 1.39.98 2.28.98s1.7-.38 2.28-.98l1.56 2.7c-1.25 1.54-2.78 2.56-4.16 2.56z" fill="#FF9900" />
+                            </svg>
+                        ) : (
+                            <svg viewBox="0 0 24 24" className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
                             </svg>
                         )}
                         <span className="truncate max-w-[120px]">{formatModelName(aiModel)}</span>
