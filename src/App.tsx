@@ -12,6 +12,7 @@ import { ToastNotification } from './components/shared/ToastNotification'
 import { NotificationsPanel } from './components/shared/NotificationsPanel'
 import { ConfirmModal } from './components/shared/ConfirmModal'
 import { OnboardingModal, DEFAULT_ONBOARDING_STEPS } from './components/shared/OnboardingModal'
+import { SplashScreen } from './components/shared/SplashScreen'
 import { WhatsNewModal } from './components/shared/WhatsNewModal'
 import { shouldShowWhatsNew, handleDismiss } from './utils/whats-new-utils'
 import { BedrockAccessModal } from './components/shared/BedrockAccessModal'
@@ -76,11 +77,15 @@ function App() {
     const [showOnboarding, setShowOnboarding] = useState(false);
     const [appVersion, setAppVersion] = useState('0.0.0');
 
+    // Splash screen state
+    const [showSplash, setShowSplash] = useState(true);
+
     useEffect(() => {
         const checkOnboarding = async () => {
             try {
                 const version = await window.k8s.app.getVersion();
                 setAppVersion(version);
+                window.__APP_VERSION__ = version;
                 const lastSeen = await window.k8s.onboarding.getLastSeenVersion();
                 if (!lastSeen || lastSeen !== version) {
                     setShowOnboarding(true);
@@ -1294,6 +1299,9 @@ function App() {
 
     return (
         <div className={`flex h-screen text-white font-sans overflow-hidden ${theme === 'charcoal' ? 'bg-gradient-to-br from-zinc-950 via-[#0a0a0a] to-black' : theme === 'red' ? 'bg-gradient-to-br from-red-950/80 via-[#0a0a0a] to-black' : 'bg-gradient-to-br from-slate-900 via-[#0a0a0a] to-black'}`}>
+            {/* Splash Screen */}
+            {showSplash && <SplashScreen onFinished={() => setShowSplash(false)} />}
+
             {/* Left Content Area (Title Bar + Main Content + Bottom Panel) */}
             <div className="flex-1 flex flex-col min-w-0 relative">
                 {/* Custom Title Bar */}

@@ -4,6 +4,7 @@ export { };
 
 declare global {
     interface Window {
+        __APP_VERSION__?: string;
         k8s: {
             // --- Credential Management ---
             forceCredentialRefresh: () => Promise<boolean>;

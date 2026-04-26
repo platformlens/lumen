@@ -27,3 +27,4 @@ release
 package-mac-signed.sh
 *.zip
 dist-electron
+.kirograph/*

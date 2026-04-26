@@ -18,7 +18,6 @@ interface KarpenterViewProps {
 
 function parseCpu(cpu: string | number | undefined): number {
     if (cpu === undefined || cpu === null) return 0;
-    if (typeof cpu === 'number') return cpu * 1000;
     const s = String(cpu);
     if (s.endsWith('m')) return parseInt(s, 10);
     return parseFloat(s) * 1000;
@@ -148,6 +147,21 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
 
     // --- Computed Stats ---
 
+    // Build a map of NodePool name → total allocatable CPU/memory from NodeClaims
+    const nodePoolCapacity = useMemo(() => {
+        const capMap = new Map<string, { cpuMillis: number; memoryGi: number }>();
+        nodeClaims.forEach(nc => {
+            const poolName = nc.metadata?.labels?.['karpenter.sh/nodepool'] || '';
+            if (!poolName) return;
+            const alloc = nc.status?.allocatable || {};
+            const entry = capMap.get(poolName) || { cpuMillis: 0, memoryGi: 0 };
+            entry.cpuMillis += parseCpu(alloc.cpu);
+            entry.memoryGi += parseMemoryGi(alloc.memory);
+            capMap.set(poolName, entry);
+        });
+        return capMap;
+    }, [nodeClaims]);
+
     const stats = useMemo(() => {
         let totalCpuMillis = 0;
         let totalMemoryGi = 0;
@@ -158,15 +172,17 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
 
         nodePools.forEach(np => {
             const res = np.status?.resources || {};
-            const limits = np.spec?.limits || {};
             const conditions = np.status?.conditions || [];
             const isReady = conditions.some((c: any) => c.type === 'Ready' && c.status === 'True');
             if (isReady) readyPools++;
 
             usedCpuMillis += parseCpu(res.cpu);
             usedMemoryGi += parseMemoryGi(res.memory);
-            totalCpuMillis += parseCpu(limits.cpu) || 0;
-            totalMemoryGi += parseMemoryGi(limits.memory) || 0;
+
+            const poolName = np.metadata?.name || '';
+            const cap = nodePoolCapacity.get(poolName);
+            totalCpuMillis += cap?.cpuMillis || 0;
+            totalMemoryGi += cap?.memoryGi || 0;
             totalNodes += parseInt(res.nodes || '0', 10);
         });
 
@@ -181,25 +197,26 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
             totalCpuMillis,
             totalMemoryGi,
         };
-    }, [nodePools, nodeClaims, ec2NodeClasses]);
+    }, [nodePools, nodeClaims, ec2NodeClasses, nodePoolCapacity]);
 
     const nodePoolRows = useMemo(() => {
         return nodePools.map(np => {
             const res = np.status?.resources || {};
-            const limits = np.spec?.limits || {};
             const disruption = np.spec?.disruption || {};
             const conditions = np.status?.conditions || [];
             const isReady = conditions.some((c: any) => c.type === 'Ready' && c.status === 'True');
             const weight = np.spec?.weight;
+            const poolName = np.metadata?.name || '';
+            const cap = nodePoolCapacity.get(poolName);
 
             return {
-                name: np.metadata?.name || '',
+                name: poolName,
                 ready: isReady,
                 nodes: parseInt(res.nodes || '0', 10),
                 cpuUsed: parseCpu(res.cpu),
-                cpuLimit: parseCpu(limits.cpu),
+                cpuCapacity: cap?.cpuMillis || 0,
                 memUsed: parseMemoryGi(res.memory),
-                memLimit: parseMemoryGi(limits.memory),
+                memCapacity: cap?.memoryGi || 0,
                 consolidationPolicy: disruption.consolidationPolicy || '-',
                 consolidateAfter: disruption.consolidateAfter || '-',
                 weight: weight ?? '-',
@@ -208,7 +225,7 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
                 raw: np,
             };
         }).filter(r => !searchQuery || r.name.toLowerCase().includes(searchQuery.toLowerCase()));
-    }, [nodePools, searchQuery]);
+    }, [nodePools, searchQuery, nodePoolCapacity]);
 
     const capacityChartData = useMemo(() => {
         return nodePoolRows.map(r => ({
@@ -329,7 +346,7 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
                         </div>
                         <div className="text-2xl font-bold text-white">{formatCpu(stats.usedCpuMillis)}</div>
                         {stats.totalCpuMillis > 0 && (
-                            <div className="text-xs text-gray-500 mt-1">of {formatCpu(stats.totalCpuMillis)} limit</div>
+                            <div className="text-xs text-gray-500 mt-1">of {formatCpu(stats.totalCpuMillis)} allocatable</div>
                         )}
                     </div>
                     <div className={cardStyles}>
@@ -339,7 +356,7 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
                         </div>
                         <div className="text-2xl font-bold text-white">{formatMemory(stats.usedMemoryGi)}</div>
                         {stats.totalMemoryGi > 0 && (
-                            <div className="text-xs text-gray-500 mt-1">of {formatMemory(stats.totalMemoryGi)} limit</div>
+                            <div className="text-xs text-gray-500 mt-1">of {formatMemory(stats.totalMemoryGi)} allocatable</div>
                         )}
                     </div>
                 </div>
@@ -354,7 +371,7 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="border-b border-white/10">
-                                    {['Name', 'Status', 'Nodes', 'CPU Used', 'Memory Used', 'Consolidation', 'Weight', 'NodeClass', 'Age'].map(h => (
+                                    {['Name', 'Status', 'Nodes', 'CPU', 'Memory', 'Consolidation', 'Weight', 'NodeClass', 'Age'].map(h => (
                                         <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">{h}</th>
                                     ))}
                                 </tr>
@@ -374,26 +391,26 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
                                         <td className="px-4 py-3 text-gray-300 font-mono">{row.nodes}</td>
                                         <td className="px-4 py-3">
                                             <div className="flex flex-col">
-                                                <span className="text-gray-200 font-mono text-xs">{formatCpu(row.cpuUsed)}</span>
-                                                {row.cpuLimit > 0 && (
+                                                <span className="text-gray-200 font-mono text-xs">{formatCpu(row.cpuUsed)}{row.cpuCapacity > 0 && ` / ${formatCpu(row.cpuCapacity)}`}</span>
+                                                {row.cpuCapacity > 0 && (
                                                     <div className="flex items-center gap-1.5 mt-1">
                                                         <div className="flex-1 h-1.5 bg-blue-500/20 rounded-full overflow-hidden max-w-[80px]">
-                                                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, (row.cpuUsed / row.cpuLimit) * 100)}%` }} />
+                                                            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, (row.cpuUsed / row.cpuCapacity) * 100)}%` }} />
                                                         </div>
-                                                        <span className="text-[10px] text-gray-500">{Math.round((row.cpuUsed / row.cpuLimit) * 100)}%</span>
+                                                        <span className="text-[10px] text-gray-500">{Math.round((row.cpuUsed / row.cpuCapacity) * 100)}%</span>
                                                     </div>
                                                 )}
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex flex-col">
-                                                <span className="text-gray-200 font-mono text-xs">{formatMemory(row.memUsed)}</span>
-                                                {row.memLimit > 0 && (
+                                                <span className="text-gray-200 font-mono text-xs">{formatMemory(row.memUsed)}{row.memCapacity > 0 && ` / ${formatMemory(row.memCapacity)}`}</span>
+                                                {row.memCapacity > 0 && (
                                                     <div className="flex items-center gap-1.5 mt-1">
                                                         <div className="flex-1 h-1.5 bg-purple-500/20 rounded-full overflow-hidden max-w-[80px]">
-                                                            <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, (row.memUsed / row.memLimit) * 100)}%` }} />
+                                                            <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(100, (row.memUsed / row.memCapacity) * 100)}%` }} />
                                                         </div>
-                                                        <span className="text-[10px] text-gray-500">{Math.round((row.memUsed / row.memLimit) * 100)}%</span>
+                                                        <span className="text-[10px] text-gray-500">{Math.round((row.memUsed / row.memCapacity) * 100)}%</span>
                                                     </div>
                                                 )}
                                             </div>

@@ -5,8 +5,40 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Lumen</title>
+    <style>
+      /* Instant dark background to prevent white flash before React mounts */
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #050508;
+        overflow: hidden;
+      }
+      #pre-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #050508;
+        transition: opacity 0.3s ease;
+      }
+      #pre-splash.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #pre-splash img {
+        width: 64px;
+        height: 64px;
+        opacity: 0.7;
+      }
+    </style>
   </head>
   <body>
+    <!-- Pre-React splash: shows instantly, hidden once React SplashScreen takes over -->
+    <div id="pre-splash">
+      <img src="/logo.png" alt="Lumen" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

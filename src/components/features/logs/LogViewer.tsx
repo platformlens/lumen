@@ -62,7 +62,6 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     onAnalyzeWithAI,
     onPopOutTab,
 }) => {
-    const logsEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const activeTab = tabs.find(t => t.id === activeTabId);
 
@@ -76,8 +75,14 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     const searchInputRef = useRef<HTMLInputElement>(null);
     const matchRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
+    // Track whether we should suppress the next scroll event from triggering
+    // an isAtBottom update (because we programmatically scrolled).
+    const isAutoScrolling = useRef(false);
+
     // Detect scroll position to determine if user is at the bottom
     const handleScroll = useCallback(() => {
+        // Skip state update when we caused the scroll programmatically
+        if (isAutoScrolling.current) return;
         const el = scrollContainerRef.current;
         if (!el) return;
         const threshold = 40; // px from bottom to consider "at bottom"
@@ -85,10 +90,17 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
         setIsAtBottom(atBottom);
     }, []);
 
-    // Auto-scroll only when pinned to bottom
+    // Auto-scroll only when pinned to bottom — use scrollTop instead of scrollIntoView
+    // to avoid layout thrashing and unexpected position jumps.
     useEffect(() => {
-        if (activeTab?.type === 'log' && isAtBottom && logsEndRef.current) {
-            logsEndRef.current.scrollIntoView({ behavior: 'auto' });
+        const el = scrollContainerRef.current;
+        if (activeTab?.type === 'log' && isAtBottom && el) {
+            isAutoScrolling.current = true;
+            el.scrollTop = el.scrollHeight;
+            // Clear the flag after the browser processes the scroll event
+            requestAnimationFrame(() => {
+                isAutoScrolling.current = false;
+            });
         }
     }, [activeTab?.logs?.length, activeTab?.id, isAtBottom]);
 
@@ -101,8 +113,15 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     }, [activeTabId]);
 
     const scrollToBottom = useCallback(() => {
+        const el = scrollContainerRef.current;
+        if (el) {
+            isAutoScrolling.current = true;
+            el.scrollTop = el.scrollHeight;
+            requestAnimationFrame(() => {
+                isAutoScrolling.current = false;
+            });
+        }
         setIsAtBottom(true);
-        logsEndRef.current?.scrollIntoView({ behavior: 'auto' });
     }, []);
 
     // Compute search matches
@@ -447,7 +466,6 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                                         </div>
                                     );
                                 })}
-                                <div ref={logsEndRef} />
                             </div>
                         </div>
 
