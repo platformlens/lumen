@@ -6,7 +6,6 @@ import {
 import { GlassButton } from '../../shared/GlassButton';
 import { ToggleGroup } from '../../shared/ToggleGroup';
 import packageJson from '../../../../package.json';
-import logoUrl from '../../../assets/logo.png';
 
 const FONT_OPTIONS = [
   { value: 'Monaco', label: 'Monaco', stack: "'Monaco', 'Menlo', 'Consolas', monospace" },
@@ -57,6 +56,8 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const [bedrockModels, setBedrockModels] = useState<Array<{ id: string; name: string }>>([]);
   const [localModels, setLocalModels] = useState<Array<{ id: string; name: string }>>([]);
   const [localEndpoint, setLocalEndpoint] = useState('http://localhost:1234/v1');
+  const [localUseLmStudioNative, setLocalUseLmStudioNative] = useState(false);
+  const [localLmStudioApiToken, setLocalLmStudioApiToken] = useState('');
 
   const [awsAuthType, setAwsAuthType] = useState<'none' | 'manual' | 'managed'>('none');
   const [forceManualAws, setForceManualAws] = useState(false);
@@ -121,6 +122,12 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     }).catch(() => { });
     window.k8s.settings.get('localModelEndpoint').then((saved: string | null) => {
       if (saved) setLocalEndpoint(saved);
+    }).catch(() => { });
+    window.k8s.settings.get('localUseLmStudioNative').then((saved: boolean | null) => {
+      if (typeof saved === 'boolean') setLocalUseLmStudioNative(saved);
+    }).catch(() => { });
+    window.k8s.settings.get('localLmStudioApiToken').then((saved: string | null) => {
+      if (typeof saved === 'string') setLocalLmStudioApiToken(saved);
     }).catch(() => { });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
@@ -264,7 +271,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         }
       });
     }
-  }, [selectedProvider, localEndpoint]);
+  }, [selectedProvider, localEndpoint, localUseLmStudioNative]);
 
   // Handlers
   const handleSaveApiKey = async () => {
@@ -724,8 +731,31 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         {selectedProvider === 'local' && (
           <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
-              Configure your local model endpoint (OpenAI compatible API). Example: http://localhost:1234/v1
+              Point Lumen at your local inference server. Use the OpenAI-compatible base URL (e.g. http://localhost:1234/v1),
+              or the same URL with <strong className="text-gray-300 font-medium">LM Studio native streaming</strong> enabled
+              to use <code className="text-xs text-blue-300/90">POST /api/v1/chat</code> — reasoning and message stream as separate SSE events for a clearer thought trail in the AI panel.
             </p>
+            <SettingRow
+              label="LM Studio native streaming"
+              description="Recommended for LM Studio 0.4+. Lists models from GET /api/v1/models and streams reasoning.delta + message.delta. Same host as your /v1 URL is used automatically."
+            >
+              <Toggle checked={localUseLmStudioNative} onChange={setLocalUseLmStudioNative} />
+            </SettingRow>
+            {localUseLmStudioNative && (
+              <SettingRow
+                label="API token (optional)"
+                description="Bearer token if you enabled authentication in LM Studio."
+              >
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={localLmStudioApiToken}
+                  onChange={(e) => setLocalLmStudioApiToken(e.target.value)}
+                  placeholder="LM_API_TOKEN"
+                  className="w-64 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/50"
+                />
+              </SettingRow>
+            )}
             <div className="flex gap-3">
               <div className="flex-1 relative">
                 <input
@@ -739,6 +769,8 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
               <GlassButton
                 onClick={async () => {
                   await window.k8s.settings.set('localModelEndpoint', localEndpoint);
+                  await window.k8s.settings.set('localUseLmStudioNative', localUseLmStudioNative);
+                  await window.k8s.settings.set('localLmStudioApiToken', localLmStudioApiToken);
                   showSavedFeedback();
                   const models = await window.k8s.listModels('local');
                   if (models && models.length > 0) setLocalModels(models);
@@ -1019,7 +1051,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
             <p className="text-gray-400 text-sm">Kubernetes Management Tool</p>
           </div>
           <div className="w-16 h-16 rounded-xl overflow-hidden">
-            <img src={logoUrl} alt="Lumen Logo" className="w-full h-full object-cover" />
+            <img src="/logo-new.png" alt="Lumen Logo" className="w-full h-full object-cover" />
           </div>
         </div>
         <div className="space-y-3 pt-4 border-t border-white/10">

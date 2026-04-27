@@ -66,10 +66,33 @@ export class ChatSessionManager {
         return this.readSessions();
     }
 
-    /** Load a specific session by ID. */
+    /** Load a specific session by ID (read-only; does not change the active session). */
     loadSession(id: string): ChatSession | null {
         const sessions = this.readSessions();
-        return sessions.find(s => s.id === id) ?? null;
+        const found = sessions.find(s => s.id === id);
+        if (!found) return null;
+        return this.cloneSession(found);
+    }
+
+    /**
+     * Make a session the active one so follow-up messages append and save updates the same history entry.
+     * Returns a deep copy of the stored session, or null if the id is missing.
+     */
+    resumeSession(id: string): ChatSession | null {
+        const stored = this.readSessions().find(s => s.id === id);
+        if (!stored) return null;
+        this.currentSession = this.cloneSession(stored);
+        return this.currentSession;
+    }
+
+    private cloneSession(session: ChatSession): ChatSession {
+        return {
+            ...session,
+            messages: session.messages.map(m => ({ ...m })),
+            resourceContext: session.resourceContext
+                ? { ...session.resourceContext }
+                : undefined,
+        };
     }
 
     /** Delete a session by ID. */

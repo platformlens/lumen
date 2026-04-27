@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Default border color for `border` width utilities (avoids currentColor = near-white text). */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: theme('colors.border');
+  }
+}
+
 :root {
   --lumen-font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
   --lumen-sidebar-font-size: 13px;

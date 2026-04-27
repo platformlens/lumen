@@ -70,6 +70,29 @@ describe('Property 10: Chat session save/load round-trip', () => {
     });
 });
 
+describe('resumeSession', () => {
+    it('activates a stored session so follow-up messages append to the same id', () => {
+        const store = createMockStore();
+        const manager = new ChatSessionManager(store);
+        manager.startSession(undefined, 'gemini', 'google');
+        manager.addMessage('user', 'hello');
+        manager.addMessage('assistant', 'hi');
+        const id = manager.getCurrentSession()!.id;
+        manager.saveCurrentSession();
+
+        manager.startSession(undefined, 'other', 'google');
+
+        const resumed = manager.resumeSession(id);
+        expect(resumed).not.toBeNull();
+        expect(resumed!.id).toBe(id);
+        expect(manager.getCurrentSession()!.messages.length).toBe(2);
+
+        manager.addMessage('user', 'follow-up');
+        expect(manager.getCurrentSession()!.messages.length).toBe(3);
+        expect(manager.getCurrentSession()!.messages[2].content).toBe('follow-up');
+    });
+});
+
 // Feature: ai-context-engine, Property 11: Follow-up messages include full conversation history
 // **Validates: Requirements 5.3**
 describe('Property 11: Follow-up messages include full conversation history', () => {

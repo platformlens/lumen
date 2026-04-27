@@ -1,30 +1,29 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Users, Plus } from 'lucide-react';
-import { useOrgStore, Organization, Team } from '../../../stores/orgStore';
+import React, { useState, useCallback } from 'react';
+import { Users, Plus, ChevronRight } from 'lucide-react';
+import { useOrgStore, Team } from '../../../stores/orgStore';
 import { GlassButton } from '../../shared/GlassButton';
-import { MemberList } from './MemberList';
-import { InviteCodeDisplay } from './InviteCodeDisplay';
 
 interface TeamSectionProps {
-  organization: Organization;
   userRole: 'super_admin' | 'admin' | 'member';
+  onOpenTeamView?: (teamId: string) => void;
 }
 
-export const TeamSection: React.FC<TeamSectionProps> = ({ organization, userRole }) => {
-  const { teams, teamMembers, isLoading, error, createTeam, fetchTeamMembers } = useOrgStore();
+export const TeamSection: React.FC<TeamSectionProps> = ({
+  userRole,
+  onOpenTeamView,
+}) => {
+  const { teams, isLoading, error, createTeam } = useOrgStore();
 
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [teamName, setTeamName] = useState('');
 
   const canManage = userRole === 'super_admin' || userRole === 'admin';
 
-  const handleSelectTeam = useCallback(
-    async (team: Team) => {
-      setSelectedTeam(team);
-      await fetchTeamMembers(team.id);
+  const handleOpenTeam = useCallback(
+    (team: Team) => {
+      onOpenTeamView?.(team.id);
     },
-    [fetchTeamMembers]
+    [onOpenTeamView]
   );
 
   const handleCreateTeam = useCallback(
@@ -33,20 +32,15 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ organization, userRole
       const trimmed = teamName.trim();
       if (!trimmed) return;
 
-      await createTeam(trimmed);
+      const created = await createTeam(trimmed);
       setTeamName('');
       setShowCreateForm(false);
+      if (created && onOpenTeamView) {
+        onOpenTeamView(created.id);
+      }
     },
-    [teamName, createTeam]
+    [teamName, createTeam, onOpenTeamView]
   );
-
-  // Clear selected team when the organization changes
-  useEffect(() => {
-    setSelectedTeam(null);
-  }, [organization.id]);
-
-  const selectedMembers = selectedTeam ? teamMembers[selectedTeam.id] ?? [] : [];
-  const isMembersLoading = selectedTeam ? !teamMembers[selectedTeam.id] && isLoading : false;
 
   return (
     <div className="space-y-4">
@@ -67,7 +61,6 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ organization, userRole
         )}
       </div>
 
-      {/* Create team form */}
       {showCreateForm && canManage && (
         <form onSubmit={handleCreateTeam} className="space-y-3">
           <input
@@ -103,14 +96,12 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ organization, userRole
         </form>
       )}
 
-      {/* Error display */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-red-400 text-sm">
           {error}
         </div>
       )}
 
-      {/* Team list */}
       {teams.length === 0 && !showCreateForm ? (
         <p className="text-sm text-gray-400 py-2">No teams yet.</p>
       ) : (
@@ -119,38 +110,20 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ organization, userRole
             <button
               key={team.id}
               type="button"
-              onClick={() => handleSelectTeam(team)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                selectedTeam?.id === team.id
-                  ? 'bg-white/10 text-white'
-                  : 'text-gray-300 hover:bg-white/5 hover:text-white'
-              }`}
+              onClick={() => handleOpenTeam(team)}
+              className="w-full text-left pl-3 pr-2 py-2.5 rounded-lg text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors flex items-center justify-between gap-2 group"
             >
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2 min-w-0">
                 <Users size={14} className="text-gray-400 shrink-0" />
-                {team.name}
+                <span className="truncate">{team.name}</span>
               </span>
+              <ChevronRight
+                size={16}
+                className="shrink-0 text-gray-500 group-hover:text-gray-300"
+                aria-hidden
+              />
             </button>
           ))}
-        </div>
-      )}
-
-      {/* Selected team detail */}
-      {selectedTeam && (
-        <div className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-4">
-          <h5 className="text-sm font-semibold text-white">{selectedTeam.name}</h5>
-
-          {canManage && (
-            <InviteCodeDisplay
-              code={selectedTeam.invite_code}
-              label="Team Invite Code"
-            />
-          )}
-
-          <div>
-            <p className="text-xs text-gray-400 mb-2">Members</p>
-            <MemberList members={selectedMembers} isLoading={isMembersLoading} />
-          </div>
         </div>
       )}
     </div>

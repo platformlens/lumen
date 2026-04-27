@@ -1,540 +1,894 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Send, MessageSquare, Trash2, ChevronRight, Copy, Check, AlertTriangle, Server, Plus } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Server, MessageSquare, Trash2, ChevronRight, Plus, Brain } from 'lucide-react';
+import { nanoid } from 'nanoid';
+
+
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from '@/components/ai-elements/conversation';
+import {
+  Message,
+  MessageBranch,
+  MessageBranchContent,
+  MessageContent,
+  MessageResponse,
+} from '@/components/ai-elements/message';
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from '@/components/ai-elements/prompt-input';
+import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
+
+import {
+  Attachment,
+  AttachmentPreview,
+  AttachmentInfo,
+  Attachments,
+} from "@/components/ai-elements/attachments";
+
+import {
+  ModelSelectorLogo,
+  ModelSelectorName,
+} from "@/components/ai-elements/model-selector";
+
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtHeader,
+  ChainOfThoughtMarkdown,
+  ChainOfThoughtStep,
+} from "@/components/ai-elements/chain-of-thought";
+
+import {
+  Context,
+  ContextCacheUsage,
+  ContextContent,
+  ContextContentBody,
+  ContextContentFooter,
+  ContextContentHeader,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextReasoningUsage,
+  ContextTrigger,
+} from "@/components/ai-elements/context";
+
+import { hasUnclosedThinkingBlock, parseAssistantThinking } from "@/utils/ai-thinking";
 
 interface ChatMessage {
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: number;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp?: number;
 }
 
 interface ChatSession {
-    id: string;
-    messages: ChatMessage[];
-    resourceContext?: { name: string; type: string; namespace?: string };
-    clusterContext?: string;
-    model: string;
-    provider: string;
-    createdAt: number;
-    updatedAt: number;
+  id: string;
+  messages: ChatMessage[];
+  resourceContext?: { name: string; type: string; namespace?: string };
+  clusterContext?: string;
+  model: string;
+  provider: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+type AppTheme = 'blue' | 'charcoal' | 'red';
+
+/** Per-theme surfaces and accents so the panel matches App.tsx theme, not a generic glass layer. */
+type AIPanelChrome = {
+  panelEdge: string;
+  header: string;
+  headerIcon: string;
+  headerIconGlyph: string;
+  headerButtonHover: string;
+  clusterStrip: string;
+  tabRow: string;
+  tabActive: string;
+  tabInactive: string;
+  sessionBanner: string;
+  convDivide: string;
+  prompt: string;
+  attachment: string;
+  contextPopover: string;
+  contextBody: string;
+  contextFooter: string;
+  modelBadge: string;
+  historyCard: string;
+  historyCardActive: string;
+  resizeHover: string;
+  accentText: string;
+  accentBg: string;
+  accentMuted: string;
+  accentPulseDot: string;
+  messageUser: string;
+  messageAssistant: string;
+};
+
+function getAIPanelChrome(t: AppTheme): AIPanelChrome {
+  switch (t) {
+    case 'blue':
+      return {
+        panelEdge: 'border-l border-slate-400/20',
+        header:
+          'border-b border-slate-500/20 bg-gradient-to-r from-slate-950/50 via-slate-950/35 to-transparent',
+        headerIcon:
+          'bg-blue-500/15 border border-blue-400/35 shadow-[0_0_16px_rgba(59,130,246,0.22)]',
+        headerIconGlyph: 'text-sky-300',
+        headerButtonHover: 'hover:bg-slate-500/15',
+        clusterStrip:
+          'bg-emerald-500/[0.06] border-b border-emerald-500/15 text-emerald-400',
+        tabRow: 'border-b border-slate-500/20 bg-slate-950/20',
+        tabActive: 'bg-sky-500/15 text-sky-100',
+        tabInactive: 'text-muted-foreground hover:text-slate-100',
+        sessionBanner: 'border border-slate-500/20 bg-slate-900/30',
+        convDivide: 'divide-slate-500/10',
+        prompt:
+          'bg-slate-950/40 border border-slate-500/25 rounded-xl transition-colors focus-within:border-sky-500/35 [&_div[data-slot=input-group]]:border-none [&_div[data-slot=input-group]]:bg-transparent [&_div[data-slot=input-group]]:!ring-0 [&_div[data-slot=input-group]]:!shadow-none [&_div[data-slot=input-group]]:flex-col [&_div[data-slot=input-group]]:items-start [&_div[data-slot=input-group]]:divide-y [&_div[data-slot=input-group]]:divide-slate-500/10 [&_textarea]:!ring-0 [&_textarea]:!ring-offset-0 [&_textarea]:!shadow-none [&_textarea]:!outline-none [&_textarea]:!border-none',
+        attachment: 'border border-slate-500/25 bg-slate-900/35 text-slate-200',
+        contextPopover: 'border border-slate-500/25 bg-[#0c1018] shadow-2xl z-[120] opacity-100',
+        contextBody: 'bg-[#0c1018]',
+        contextFooter: 'bg-slate-950/90 border-t border-slate-500/20',
+        modelBadge: 'border border-slate-500/20 bg-slate-900/35',
+        historyCard:
+          'border border-slate-500/20 bg-slate-900/25 hover:bg-slate-900/40 hover:border-slate-400/30',
+        historyCardActive:
+          'border border-sky-400/40 bg-sky-500/10 shadow-[0_0_24px_rgba(56,189,248,0.12)] ring-1 ring-sky-400/25',
+        resizeHover: 'hover:bg-sky-400/45',
+        accentText: 'text-sky-300',
+        accentBg: 'bg-sky-500/20',
+        accentMuted: 'text-sky-200/90',
+        accentPulseDot: 'bg-sky-400',
+        messageUser:
+          'group-[.is-user]:bg-slate-800/45 group-[.is-user]:border-slate-500/25 group-[.is-user]:text-slate-100',
+        messageAssistant:
+          'group-[.is-assistant]:bg-slate-900/40 group-[.is-assistant]:border-slate-500/22 group-[.is-assistant]:text-slate-100',
+      };
+    case 'red':
+      return {
+        panelEdge: 'border-l border-red-500/25',
+        header:
+          'border-b border-red-900/35 bg-gradient-to-r from-red-950/45 via-red-950/25 to-transparent',
+        headerIcon:
+          'bg-red-500/20 border border-red-400/35 shadow-[0_0_16px_rgba(248,113,113,0.2)]',
+        headerIconGlyph: 'text-red-200',
+        headerButtonHover: 'hover:bg-red-500/10',
+        clusterStrip:
+          'bg-emerald-500/[0.06] border-b border-emerald-500/15 text-emerald-400',
+        tabRow: 'border-b border-red-900/30 bg-red-950/20',
+        tabActive: 'bg-red-500/15 text-red-50',
+        tabInactive: 'text-muted-foreground hover:text-red-50/95',
+        sessionBanner: 'border border-red-900/30 bg-red-950/25',
+        convDivide: 'divide-red-950/40',
+        prompt:
+          'bg-red-950/30 border border-red-800/35 rounded-xl transition-colors focus-within:border-red-500/40 [&_div[data-slot=input-group]]:border-none [&_div[data-slot=input-group]]:bg-transparent [&_div[data-slot=input-group]]:!ring-0 [&_div[data-slot=input-group]]:!shadow-none [&_div[data-slot=input-group]]:flex-col [&_div[data-slot=input-group]]:items-start [&_div[data-slot=input-group]]:divide-y [&_div[data-slot=input-group]]:divide-red-950/35 [&_textarea]:!ring-0 [&_textarea]:!ring-offset-0 [&_textarea]:!shadow-none [&_textarea]:!outline-none [&_textarea]:!border-none',
+        attachment: 'border border-red-800/35 bg-red-950/35 text-red-100/90',
+        contextPopover: 'border border-red-900/35 bg-[#140a0a] shadow-2xl z-[120] opacity-100',
+        contextBody: 'bg-[#140a0a]',
+        contextFooter: 'bg-red-950/70 border-t border-red-900/30',
+        modelBadge: 'border border-red-900/30 bg-red-950/30',
+        historyCard:
+          'border border-red-900/30 bg-red-950/20 hover:bg-red-950/35 hover:border-red-500/25',
+        historyCardActive:
+          'border border-red-400/45 bg-red-500/12 shadow-[0_0_24px_rgba(248,113,113,0.14)] ring-1 ring-red-400/30',
+        resizeHover: 'hover:bg-red-400/45',
+        accentText: 'text-red-300',
+        accentBg: 'bg-red-500/20',
+        accentMuted: 'text-red-100/90',
+        accentPulseDot: 'bg-red-400',
+        messageUser:
+          'group-[.is-user]:bg-red-950/35 group-[.is-user]:border-red-800/35 group-[.is-user]:text-red-50/95',
+        messageAssistant:
+          'group-[.is-assistant]:bg-red-950/30 group-[.is-assistant]:border-red-900/30 group-[.is-assistant]:text-red-50/95',
+      };
+    case 'charcoal':
+    default:
+      return {
+        panelEdge: 'border-l border-white/10',
+        header:
+          'border-b border-white/10 bg-gradient-to-r from-zinc-950/55 via-zinc-950/35 to-transparent',
+        headerIcon:
+          'bg-primary/20 border border-primary/30 shadow-[0_0_15px_rgba(59,130,246,0.28)]',
+        headerIconGlyph: 'text-primary',
+        headerButtonHover: 'hover:bg-white/10',
+        clusterStrip:
+          'bg-emerald-500/5 border-b border-emerald-500/10 text-emerald-500',
+        tabRow: 'border-b border-white/10 bg-black/10',
+        tabActive: 'bg-primary/20 text-primary',
+        tabInactive: 'text-muted-foreground hover:text-foreground',
+        sessionBanner: 'border border-white/10 bg-white/[0.04]',
+        convDivide: 'divide-white/5',
+        prompt:
+          'bg-zinc-900/45 border border-white/10 rounded-xl transition-colors focus-within:border-white/18 [&_div[data-slot=input-group]]:border-none [&_div[data-slot=input-group]]:bg-transparent [&_div[data-slot=input-group]]:!ring-0 [&_div[data-slot=input-group]]:!shadow-none [&_div[data-slot=input-group]]:flex-col [&_div[data-slot=input-group]]:items-start [&_div[data-slot=input-group]]:divide-y [&_div[data-slot=input-group]]:divide-white/5 [&_textarea]:!ring-0 [&_textarea]:!ring-offset-0 [&_textarea]:!shadow-none [&_textarea]:!outline-none [&_textarea]:!border-none',
+        attachment: 'border border-white/10 bg-white/5 text-gray-300',
+        contextPopover: 'border border-white/10 bg-zinc-950 shadow-2xl z-[120] opacity-100',
+        contextBody: 'bg-zinc-950',
+        contextFooter: 'bg-black/45 border-t border-white/10',
+        modelBadge: 'border border-white/8 bg-white/[0.06]',
+        historyCard:
+          'border border-white/10 bg-white/[0.05] hover:bg-white/[0.09] hover:border-white/16',
+        historyCardActive:
+          'border border-primary/40 bg-primary/10 shadow-[0_0_24px_rgba(59,130,246,0.15)] ring-1 ring-primary/25',
+        resizeHover: 'hover:bg-primary/50',
+        accentText: 'text-primary',
+        accentBg: 'bg-primary/20',
+        accentMuted: 'text-primary',
+        accentPulseDot: 'bg-primary',
+        messageUser:
+          'group-[.is-user]:bg-zinc-900/40 group-[.is-user]:border-zinc-700/25 group-[.is-user]:text-zinc-100',
+        messageAssistant:
+          'group-[.is-assistant]:bg-zinc-900/45 group-[.is-assistant]:border-zinc-600/22 group-[.is-assistant]:text-zinc-100',
+      };
+  }
 }
 
 interface AIPanelProps {
-    isOpen: boolean;
-    onClose: () => void;
-    currentExplanation?: string;
-    isStreaming?: boolean;
-    resourceContext?: { name: string; type: string; namespace?: string };
-    clusterContext?: string;
-    onSendPrompt?: (prompt: string) => void;
-    onReloadConversation?: (conversation: Array<{ role: 'user' | 'assistant'; content: string }>, context: { name: string; type: string }) => void;
-    onNewChat?: () => void;
-    mode?: 'overlay' | 'sidebar';
+  isOpen: boolean;
+  onClose: () => void;
+  currentExplanation?: string;
+  isStreaming?: boolean;
+  resourceContext?: { name: string; type: string; namespace?: string };
+  clusterContext?: string;
+  onSendPrompt?: (prompt: string) => void;
+  onReloadConversation?: (
+    conversation: Array<{ role: 'user' | 'assistant'; content: string }>,
+    context: { name: string; type: string; namespace?: string },
+    meta?: { model?: string; provider?: string }
+  ) => void;
+  onNewChat?: () => void;
+  mode?: 'overlay' | 'sidebar';
+  aiModel?: string;
+  aiProvider?: string;
+  /** Matches App root gradient so the panel reads as part of the shell, not a separate glass layer. */
+  theme?: AppTheme;
 }
 
-const ThinkingDots = () => (
-    <div className="flex gap-1 items-center h-4 px-2">
-        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></div>
-    </div>
-);
-
-/** Detect if AI response contains a kubectl command block */
-function extractKubectlCommands(text: string): string[] {
-    const codeBlockRegex = /```(?:bash|sh|shell)?\s*\n([\s\S]*?)```/g;
-    const commands: string[] = [];
-    let match;
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-        const block = match[1].trim();
-        if (block.startsWith('kubectl')) {
-            commands.push(block);
-        }
-    }
-    return commands;
+interface MessageType {
+  key: string;
+  from: 'user' | 'assistant';
+  versions: {
+    id: string;
+    content: string;
+  }[];
 }
-
-/** Check if a kubectl command is destructive */
-function isDestructiveCommand(cmd: string): boolean {
-    const destructiveKeywords = ['delete', 'drain', 'cordon'];
-    const lower = cmd.toLowerCase();
-    return destructiveKeywords.some(k => lower.includes(k));
-}
-
-/** Copy button for code blocks */
-const CopyButton: React.FC<{ text: string }> = ({ text }) => {
-    const [copied, setCopied] = useState(false);
-    const handleCopy = async () => {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-    return (
-        <button
-            onClick={handleCopy}
-            className="absolute top-2 right-2 p-1 rounded bg-white/10 hover:bg-white/20 transition-colors text-gray-400 hover:text-white"
-            title="Copy to clipboard"
-        >
-            {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
-        </button>
-    );
-};
-
-/** Render a message with kubectl-aware formatting */
-const MessageContent: React.FC<{ content: string; role: 'user' | 'assistant' }> = ({ content, role }) => {
-    if (role === 'user') {
-        return <>{content}</>;
-    }
-
-    // Check for destructive kubectl commands in the response
-    const commands = extractKubectlCommands(content);
-    const hasDestructive = commands.some(isDestructiveCommand);
-
-    // Preprocess: strip trailing unmatched backtick from streaming chunks
-    // so the parser doesn't render it as literal text mid-stream
-    let processed = content;
-    // Count backticks outside of fenced code blocks (``` ... ```)
-    const withoutFenced = processed.replace(/```[\s\S]*?```/g, '');
-    const backtickCount = (withoutFenced.match(/`/g) || []).length;
-    if (backtickCount % 2 !== 0) {
-        // Odd number of backticks — remove the trailing one
-        const lastIdx = processed.lastIndexOf('`');
-        processed = processed.slice(0, lastIdx) + processed.slice(lastIdx + 1);
-    }
-
-    return (
-        <div className="markdown-body prose prose-invert prose-sm max-w-none">
-            {hasDestructive && (
-                <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
-                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>This response contains destructive commands. Review carefully before executing.</span>
-                </div>
-            )}
-            <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                    table({ children }) {
-                        return (
-                            <div className="overflow-x-auto my-2 rounded-lg border border-white/10">
-                                <table className="w-full text-sm">{children}</table>
-                            </div>
-                        );
-                    },
-                    thead({ children }) {
-                        return <thead className="bg-white/5 text-gray-400 text-xs font-medium">{children}</thead>;
-                    },
-                    th({ children }) {
-                        return <th className="px-3 py-2 text-left border-b border-white/10 font-medium">{children}</th>;
-                    },
-                    td({ children }) {
-                        return <td className="px-3 py-1.5 border-b border-white/5 text-gray-300">{children}</td>;
-                    },
-                    tr({ children }) {
-                        return <tr className="hover:bg-white/5 transition-colors">{children}</tr>;
-                    },
-                    code({ className, children, ...props }) {
-                        const match = /language-(\w+)/.exec(className || '');
-                        const codeStr = String(children).replace(/\n$/, '');
-                        if (match) {
-                            return (
-                                <div className="relative group">
-                                    <CopyButton text={codeStr} />
-                                    <pre className={className}><code {...props} className={className}>{children}</code></pre>
-                                    {codeStr.startsWith('kubectl') && isDestructiveCommand(codeStr) && (
-                                        <div className="flex items-center gap-1 mt-1 text-amber-400 text-[10px]">
-                                            <AlertTriangle className="w-3 h-3" />
-                                            <span>Destructive command</span>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        }
-                        return <code {...props} className="bg-white/10 text-blue-300 px-1.5 py-0.5 rounded text-xs font-mono">{String(children).replace(/^`|`$/g, '')}</code>;
-                    }
-                }}
-            >{processed}</ReactMarkdown>
-        </div>
-    );
-};
 
 export const AIPanel: React.FC<AIPanelProps> = ({
-    isOpen,
-    onClose,
-    currentExplanation,
-    isStreaming,
-    resourceContext,
-    clusterContext,
-    onSendPrompt,
-    onReloadConversation,
-    onNewChat,
-    ...props
+  isOpen,
+  onClose,
+  currentExplanation,
+  isStreaming,
+  resourceContext,
+  clusterContext,
+  onSendPrompt,
+  onReloadConversation,
+  onNewChat,
+  mode = 'sidebar',
+  aiModel = 'GPT-4',
+  aiProvider = 'openai',
+  theme = 'charcoal',
 }) => {
-    const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat');
-    const [history, setHistory] = useState<ChatSession[]>([]);
-    const [inputValue, setInputValue] = useState('');
-    const [displayMessages, setDisplayMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
-    const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-    // Track the last streaming content length to detect new chunks
-    const lastStreamContentRef = useRef<string>('');
+  const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat');
+  const [history, setHistory] = useState<ChatSession[]>([]);
+  const [text, setText] = useState<string>('');
+  const [messages, setMessages] = useState<MessageType[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
 
-    const messagesEndRef = useRef<HTMLDivElement>(null);
-    const prevResourceContextRef = useRef<{ name: string; type: string; namespace?: string } | undefined>(undefined);
+  const [panelWidth, setPanelWidth] = useState(450);
+  const [isResizing, setIsResizing] = useState(false);
+  const isDraggingRef = useRef(false);
 
-    const loadHistory = useCallback(async () => {
-        try {
-            const hist = await window.k8s.getHistory();
-            setHistory(hist);
-        } catch (err) {
-            console.error("Failed to load history", err);
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDraggingRef.current = true;
+    setIsResizing(true);
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const delta = startX - moveEvent.clientX; // dragging left increases width
+      const newWidth = Math.max(450, Math.min(window.innerWidth - 100, startWidth + delta));
+      setPanelWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      isDraggingRef.current = false;
+      setIsResizing(false);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [panelWidth]);
+
+  const lastStreamContentRef = useRef<string>('');
+  const prevResourceContextRef = useRef<{ name: string; type: string; namespace?: string } | undefined>(undefined);
+  /** When true, skip "new resource" reset — parent aiContext was synced from history, not a cluster navigation. */
+  const hydratingFromHistoryRef = useRef(false);
+  const isOverlay = mode !== 'sidebar';
+  const chrome = useMemo(() => getAIPanelChrome(theme), [theme]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      if (window.k8s && window.k8s.getHistory) {
+        const hist = await window.k8s.getHistory();
+        setHistory(hist || []);
+      }
+    } catch (err) {
+      console.error('Failed to load history', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadHistory();
+    }
+  }, [isOpen, loadHistory]);
+
+  useEffect(() => {
+    if (!historyNotice) return;
+    const t = window.setTimeout(() => setHistoryNotice(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [historyNotice]);
+
+  // Handle resource context changes — save previous session, start new one
+  useEffect(() => {
+    if (!resourceContext) return;
+    const prev = prevResourceContextRef.current;
+    const changed =
+      !prev ||
+      prev.name !== resourceContext.name ||
+      prev.type !== resourceContext.type ||
+      prev.namespace !== resourceContext.namespace;
+
+    if (changed) {
+      if (hydratingFromHistoryRef.current) {
+        prevResourceContextRef.current = resourceContext;
+        hydratingFromHistoryRef.current = false;
+        return;
+      }
+      if (prev && window.k8s && window.k8s.saveCurrentSession) {
+        window.k8s.saveCurrentSession().catch(() => {});
+      }
+      if (prev) {
+        setHistoryNotice(
+          'Kubernetes context changed — the previous chat was saved to history. Starting a fresh thread for this resource.'
+        );
+      }
+      if (window.k8s && window.k8s.startSession) {
+        window.k8s.startSession(resourceContext).catch(() => {});
+      }
+      setMessages([{
+        key: nanoid(),
+        from: 'user',
+        versions: [{ id: nanoid(), content: `Explain ${resourceContext.type} ${resourceContext.name}` }]
+      }]);
+      setActiveTab('chat');
+      setSelectedSessionId(null);
+      lastStreamContentRef.current = '';
+      prevResourceContextRef.current = resourceContext;
+    }
+  }, [resourceContext]);
+
+  // Reload history when streaming finishes and save current session
+  useEffect(() => {
+    if (!isStreaming && isOpen) {
+      loadHistory();
+      if (window.k8s && window.k8s.saveCurrentSession) {
+        window.k8s.saveCurrentSession().catch(() => {});
+      }
+    }
+  }, [isStreaming, isOpen, loadHistory]);
+
+  // Accumulate streaming content and update display messages
+  const prevExplanationRef = useRef<string>('');
+
+  useEffect(() => {
+    if (currentExplanation !== undefined) {
+      setMessages((prev) => {
+        // If currentExplanation is cleared, we don't need to add anything
+        if (currentExplanation === '') {
+           return prev;
         }
-    }, []);
+        
+        // If the explanation is completely new (e.g. shorter, or doesn't start with the previous one)
+        const isNewResponse = currentExplanation.length < prevExplanationRef.current.length || !currentExplanation.startsWith(prevExplanationRef.current);
 
-    useEffect(() => {
-        if (isOpen) {
-            loadHistory();
+        if (isNewResponse || prev.length === 0 || prev[prev.length - 1].from === 'user') {
+          // New response stream started — append a new assistant message
+          const newAssistantMsg: MessageType = {
+            key: nanoid(),
+            from: 'assistant',
+            versions: [{ id: nanoid(), content: currentExplanation }],
+          };
+          return [...prev, newAssistantMsg];
+        } else {
+          // Update last assistant message
+          const updated = [...prev];
+          const lastMsg = updated[updated.length - 1];
+          const lastVersion = lastMsg.versions[lastMsg.versions.length - 1];
+          lastMsg.versions[lastMsg.versions.length - 1] = { ...lastVersion, content: currentExplanation };
+          return updated;
         }
-    }, [isOpen, loadHistory]);
+      });
+      prevExplanationRef.current = currentExplanation;
+    }
+  }, [currentExplanation]);
 
-    // Handle resource context changes — save previous session, start new one
-    useEffect(() => {
-        if (!resourceContext) return;
-        const prev = prevResourceContextRef.current;
-        const changed = !prev || prev.name !== resourceContext.name || prev.type !== resourceContext.type || prev.namespace !== resourceContext.namespace;
+  const handleNewChat = useCallback(() => {
+    if (window.k8s && window.k8s.saveCurrentSession) {
+      window.k8s.saveCurrentSession().catch(() => {});
+    }
+    setMessages([]);
+    setSelectedSessionId(null);
+    setActiveTab('chat');
+    lastStreamContentRef.current = '';
+    if (onNewChat) onNewChat();
+  }, [onNewChat]);
 
-        if (changed) {
-            // Save previous session if it had messages
-            if (prev) {
-                window.k8s.saveCurrentSession().catch(() => { });
+  const handleSend = useCallback((messageContent: string) => {
+    if (!messageContent.trim()) return;
+
+    const newMsg: MessageType = {
+      key: nanoid(),
+      from: 'user',
+      versions: [{ id: nanoid(), content: messageContent }],
+    };
+
+    setMessages((prev) => [...prev, newMsg]);
+    if (onSendPrompt) {
+      onSendPrompt(messageContent);
+    }
+  }, [onSendPrompt]);
+
+  const handleSubmit = useCallback(
+    (message: PromptInputMessage) => {
+      if (!message.text?.trim()) return;
+      handleSend(message.text);
+      setText('');
+    },
+    [handleSend]
+  );
+
+  const handleSelectHistory = async (session: ChatSession) => {
+    if (!window.k8s || !window.k8s.loadSession) return;
+    if (window.k8s.saveCurrentSession) {
+      await window.k8s.saveCurrentSession().catch(() => {});
+    }
+    const loaded = await window.k8s.loadSession(session.id);
+    if (!loaded) {
+      setHistoryNotice(
+        'That chat could not be loaded. It may have been removed or cleared. You can start a new conversation.'
+      );
+      setSelectedSessionId(null);
+      await loadHistory();
+      return;
+    }
+
+    const msgs: MessageType[] = loaded.messages.map((m: ChatMessage) => ({
+      key: nanoid(),
+      from: m.role,
+      versions: [{ id: nanoid(), content: m.content }],
+    }));
+    setMessages(msgs);
+    setActiveTab('chat');
+    setSelectedSessionId(session.id);
+    lastStreamContentRef.current = '';
+    setHistoryNotice(null);
+
+    if (onReloadConversation) {
+      hydratingFromHistoryRef.current = true;
+      onReloadConversation(
+        loaded.messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })),
+        loaded.resourceContext
+          ? {
+              name: loaded.resourceContext.name,
+              type: loaded.resourceContext.type,
+              namespace: loaded.resourceContext.namespace,
             }
+          : { name: 'Chat', type: 'Conversation' },
+        { model: loaded.model, provider: loaded.provider }
+      );
+    }
+  };
 
-            // Start new session for the new context
-            window.k8s.startSession(resourceContext).catch(() => { });
+  const handleDeleteHistory = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (window.k8s && window.k8s.deleteHistoryItem) {
+      await window.k8s.deleteHistoryItem(id);
+      loadHistory();
+    }
+  };
 
-            // Clear display
-            setDisplayMessages([]);
-            setActiveTab('chat');
-            setSelectedSessionId(null);
-            lastStreamContentRef.current = '';
-            prevResourceContextRef.current = resourceContext;
-        }
-    }, [resourceContext?.name, resourceContext?.namespace, resourceContext?.type]);
-
-    // Reload history when streaming finishes
-    useEffect(() => {
-        if (!isStreaming && isOpen) {
-            loadHistory();
-            // Save session when streaming completes
-            window.k8s.saveCurrentSession().catch(() => { });
-        }
-    }, [isStreaming, isOpen, loadHistory]);
-
-    // Accumulate streaming content and update display messages
-    useEffect(() => {
-        if (resourceContext && isStreaming && displayMessages.length === 0 && !currentExplanation) {
-            setDisplayMessages([{ role: 'user', content: `Explain ${resourceContext.type} ${resourceContext.name}` }]);
-            lastStreamContentRef.current = '';
-        }
-
-        if (currentExplanation && currentExplanation.trim()) {
-            setDisplayMessages(prev => {
-                // If the streaming content was reset (new response started), it will be shorter than what we last saw
-                const isNewResponse = currentExplanation.length < lastStreamContentRef.current.length;
-
-                if (isNewResponse) {
-                    // New response stream started — append a new assistant message
-                    lastStreamContentRef.current = currentExplanation;
-                    return [...prev, { role: 'assistant', content: currentExplanation }];
-                }
-
-                lastStreamContentRef.current = currentExplanation;
-
-                if (prev.length > 0 && prev[prev.length - 1].role === 'assistant') {
-                    const updated = [...prev];
-                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: currentExplanation };
-                    return updated;
-                } else {
-                    return [...prev, { role: 'assistant', content: currentExplanation }];
-                }
-            });
-        }
-    }, [currentExplanation, isStreaming, resourceContext]);
-
-    // Auto-scroll
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [displayMessages, isStreaming]);
-
-    const handleNewChat = () => {
-        setDisplayMessages([]);
-        setSelectedSessionId(null);
-        setActiveTab('chat');
-        lastStreamContentRef.current = '';
-        if (onNewChat) onNewChat();
-    };
-
-    const handleSend = () => {
-        if (!inputValue.trim()) return;
-        const userMsg = inputValue;
-
-        // Check for /kubectl prefix
-        const isKubectl = userMsg.trimStart().startsWith('/kubectl');
-
-        setDisplayMessages(prev => [...prev, { role: 'user', content: userMsg }]);
-        setInputValue('');
-
-        if (onSendPrompt) {
-            onSendPrompt(isKubectl ? userMsg : userMsg);
-        }
-    };
-
-    const handleSelectHistory = async (session: ChatSession) => {
-        // Load the full session
-        const loaded = await window.k8s.loadSession(session.id);
-        if (!loaded) return;
-
-        const msgs = loaded.messages.map((m: ChatMessage) => ({
-            role: m.role,
-            content: m.content
-        }));
-        setDisplayMessages(msgs);
-        setActiveTab('chat');
-        setSelectedSessionId(session.id);
-
-        // Reload conversation in App.tsx for follow-up support
-        if (onReloadConversation && loaded.resourceContext) {
-            onReloadConversation(
-                loaded.messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })),
-                { name: loaded.resourceContext.name, type: loaded.resourceContext.type }
-            );
-        }
-    };
-
-    const handleDeleteHistory = async (e: React.MouseEvent, id: string) => {
-        e.stopPropagation();
-        await window.k8s.deleteHistoryItem(id);
+  const handleClearHistory = async () => {
+    if (window.confirm('Clear all AI history?')) {
+      if (window.k8s && window.k8s.clearHistory) {
+        await window.k8s.clearHistory();
         loadHistory();
+      }
+    }
+  };
+
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement)?.classList.contains('resize-handle')) {
+        return;
+      }
+      e.stopPropagation();
     };
-
-    const handleClearHistory = async () => {
-        if (confirm('Clear all AI history?')) {
-            await window.k8s.clearHistory();
-            loadHistory();
-        }
+    panel.addEventListener('mousedown', handleMouseDown);
+    return () => {
+      panel.removeEventListener('mousedown', handleMouseDown);
     };
+  }, []);
 
-    const isOverlay = props.mode !== 'sidebar';
-    const panelRef = useRef<HTMLDivElement>(null);
+  const getSessionLabel = (session: ChatSession) => {
+    if (session.resourceContext) return session.resourceContext.name;
+    const firstUser = session.messages.find((m) => m.role === 'user');
+    return firstUser ? firstUser.content.slice(0, 60) : 'Chat';
+  };
 
-    useEffect(() => {
-        const panel = panelRef.current;
-        if (!panel) return;
-        const handleMouseDown = (e: MouseEvent) => { e.stopPropagation(); };
-        panel.addEventListener('mousedown', handleMouseDown);
-        return () => { panel.removeEventListener('mousedown', handleMouseDown); };
-    }, []);
+  const getSessionType = (session: ChatSession) => {
+    return session.resourceContext?.type || 'Conversation';
+  };
 
-    /** Get a display label for a session */
-    const getSessionLabel = (session: ChatSession) => {
-        if (session.resourceContext) {
-            return session.resourceContext.name;
-        }
-        // Fallback: first user message truncated
-        const firstUser = session.messages.find(m => m.role === 'user');
-        return firstUser ? firstUser.content.slice(0, 60) : 'Chat';
-    };
+  const getSessionPreview = (session: ChatSession) => {
+    const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
+    return lastAssistant ? lastAssistant.content.slice(0, 100) : '';
+  };
 
-    const getSessionType = (session: ChatSession) => {
-        return session.resourceContext?.type || 'Conversation';
-    };
+  const status = useMemo(() => {
+    if (isStreaming) return 'streaming';
+    return 'ready';
+  }, [isStreaming]);
 
-    const getSessionPreview = (session: ChatSession) => {
-        const lastAssistant = [...session.messages].reverse().find(m => m.role === 'assistant');
-        return lastAssistant ? lastAssistant.content.slice(0, 100) : '';
-    };
+  const isSubmitDisabled = useMemo(() => !text.trim() || status === 'streaming', [text, status]);
 
-    return (
+  const contextAttachments = useMemo(() => {
+    const atts = [];
+    if (clusterContext) {
+      atts.push({
+        id: 'cluster',
+        type: 'source-document',
+        title: `Cluster: ${clusterContext}`,
+      });
+    }
+    if (resourceContext) {
+      atts.push({
+        id: 'resource',
+        type: 'source-document',
+        title: `${resourceContext.type}: ${resourceContext.name}`,
+        mediaType: resourceContext.namespace ? `NS: ${resourceContext.namespace}` : 'Global',
+      });
+    }
+    return atts;
+  }, [clusterContext, resourceContext]);
+
+  const estimatedTokens = useMemo(() => {
+    const textLength = messages.reduce((acc, msg) => {
+      const latestVersion = msg.versions[msg.versions.length - 1];
+      return acc + (latestVersion ? latestVersion.content.length : 0);
+    }, 0);
+    return Math.ceil(textLength / 4);
+  }, [messages]);
+
+  const getProviderLogo = (provider: string) => {
+    if (provider === 'bedrock') return 'amazon-bedrock';
+    if (provider === 'google') return 'google';
+    if (provider === 'local') return 'opencode';
+    return provider;
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
         <motion.div
-            ref={panelRef}
-            initial={isOverlay ? { x: 400, opacity: 0 } : { width: 0, opacity: 0 }}
-            animate={isOverlay ? { x: 0, opacity: 1 } : { width: 450, opacity: 1 }}
-            exit={isOverlay ? { x: 400, opacity: 0 } : { width: 0, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className={`${isOverlay ? 'fixed top-0 right-0 h-screen z-[60]' : 'h-full border-l border-white/10 z-10 flex-none'} w-[450px] bg-[#0F0F0F] shadow-2xl flex flex-col`}
+          ref={panelRef}
+          initial={isOverlay ? { x: panelWidth, opacity: 0 } : { width: 0, opacity: 0 }}
+          animate={isOverlay ? { x: 0, opacity: 1 } : { width: panelWidth, opacity: 1 }}
+          exit={isOverlay ? { x: panelWidth, opacity: 0 } : { width: 0, opacity: 0 }}
+          transition={isResizing ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 30 }}
+          style={isOverlay ? { width: panelWidth } : undefined}
+          className={`${
+            isOverlay ? `fixed top-0 right-0 h-screen z-[60] ${chrome.panelEdge}` : `h-full ${chrome.panelEdge} z-10 flex-none`
+          } bg-transparent flex flex-col relative`}
         >
-            {/* Header */}
-            <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5 backdrop-blur-xl">
-                <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
-                        <MessageSquare className="w-4 h-4 text-blue-400" />
-                    </div>
-                    <div>
-                        <h2 className="font-semibold text-sm text-white tracking-wide">AI Assistant</h2>
-                        <p className="text-[10px] text-blue-400/80 font-medium">Lumen Intelligence</p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-1">
-                    <button onClick={handleNewChat} className="p-2 hover:bg-white/10 rounded-full transition-all text-gray-400 hover:text-white" title="New Chat">
-                        <Plus className="w-5 h-5" />
-                    </button>
-                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-all text-gray-400 hover:text-white">
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
+          {/* Resize Handle */}
+          <div 
+            className={`resize-handle absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize ${chrome.resizeHover} transition-colors z-50`}
+            onMouseDown={startResizing}
+          />
+          
+          {/* Header */}
+          <div className={`h-16 flex items-center justify-between px-6 ${chrome.header}`}>
+            <div className="flex items-center gap-3">
+              <div className={`h-8 w-8 rounded-full flex items-center justify-center ${chrome.headerIcon}`}>
+                <MessageSquare className={`w-4 h-4 ${chrome.headerIconGlyph}`} />
+              </div>
+              <div>
+                <h2 className="font-semibold text-sm tracking-wide">AI Assistant</h2>
+                <p className="text-[10px] text-muted-foreground font-medium">Lumen Intelligence</p>
+              </div>
             </div>
-
-            {/* Cluster context indicator */}
-            {clusterContext && (
-                <div className="flex items-center gap-2 px-4 py-1.5 bg-emerald-500/5 border-b border-emerald-500/10 text-emerald-400 text-[11px]">
-                    <Server className="w-3 h-3" />
-                    <span>Context: {clusterContext}</span>
-                </div>
-            )}
-
-            {/* Tabs */}
-            <div className="flex p-2 gap-2 border-b border-white/5 bg-black/20">
-                <button
-                    onClick={() => setActiveTab('chat')}
-                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all ${activeTab === 'chat' ? 'bg-blue-600/20 text-blue-400' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                    Current Chat
-                </button>
-                <button
-                    onClick={() => setActiveTab('history')}
-                    className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all ${activeTab === 'history' ? 'bg-blue-600/20 text-blue-400' : 'text-gray-500 hover:text-gray-300'}`}
-                >
-                    History
-                </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleNewChat}
+                className={`p-2 ${chrome.headerButtonHover} rounded-full transition-all text-muted-foreground hover:text-foreground`}
+                title="New Chat"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+              <button
+                onClick={onClose}
+                className={`p-2 ${chrome.headerButtonHover} rounded-full transition-all text-muted-foreground hover:text-foreground`}
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
+          </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-hidden relative">
-                {activeTab === 'chat' ? (
-                    <div className="flex flex-col h-full">
-                        <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                            {displayMessages.length === 0 && (
-                                <div className="text-center py-10 opacity-50">
-                                    <MessageSquare className="w-8 h-8 mx-auto mb-2" />
-                                    {resourceContext ? (
-                                        <p className="text-sm">Start asking about <br /><span className="text-blue-400 font-mono">{resourceContext.name}</span></p>
-                                    ) : (
-                                        <p className="text-sm">Ask anything about your cluster<br /><span className="text-blue-400/60 text-xs">Prefix with /kubectl for command generation</span></p>
-                                    )}
-                                </div>
-                            )}
+          {/* Cluster context indicator */}
+          {clusterContext && (
+            <div className={`flex items-center gap-2 px-4 py-1.5 text-[11px] ${chrome.clusterStrip}`}>
+              <Server className="w-3 h-3" />
+              <span>Context: {clusterContext}</span>
+            </div>
+          )}
 
-                            {displayMessages.map((msg, idx) => (
-                                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[85%] rounded-2xl p-3 text-sm ${msg.role === 'user'
-                                        ? 'bg-blue-600 text-white rounded-br-sm'
-                                        : 'bg-white/5 text-gray-300 rounded-bl-sm border border-white/5'
-                                        }`}>
-                                        <MessageContent content={msg.content} role={msg.role} />
-                                    </div>
-                                </div>
-                            ))}
+          {/* Tabs */}
+          <div className={`flex p-2 gap-2 ${chrome.tabRow}`}>
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'chat' ? chrome.tabActive : chrome.tabInactive
+              }`}
+            >
+              Current Chat
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium transition-all ${
+                activeTab === 'history' ? chrome.tabActive : chrome.tabInactive
+              }`}
+            >
+              History
+            </button>
+          </div>
 
-                            {isStreaming && (!displayMessages.length || displayMessages[displayMessages.length - 1].role !== 'assistant') && (
-                                <div className="flex justify-start">
-                                    <div className="bg-white/5 text-gray-300 rounded-2xl rounded-bl-sm p-3 border border-white/5">
-                                        <ThinkingDots />
-                                    </div>
-                                </div>
-                            )}
-                            <div ref={messagesEndRef} />
-                        </div>
+          {historyNotice && (
+            <div className="mx-3 mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100/95 flex gap-2 items-start">
+              <span className="leading-relaxed flex-1">{historyNotice}</span>
+              <button
+                type="button"
+                onClick={() => setHistoryNotice(null)}
+                className="shrink-0 text-amber-200/80 hover:text-amber-50 text-xs font-medium"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
-                        {/* Input Area */}
-                        <div className="p-4 border-t border-white/10 bg-[#0F0F0F]/90 backdrop-blur-lg">
-                            <div className="relative group">
-                                <div className="absolute inset-0 bg-blue-500/5 rounded-xl blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity" />
-                                <textarea
-                                    value={inputValue}
-                                    onChange={(e) => setInputValue(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            handleSend();
-                                        }
-                                    }}
-                                    placeholder={resourceContext ? `Ask about ${resourceContext.name}...` : "Ask AI... (prefix /kubectl for commands)"}
-                                    className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl py-4 pl-4 pr-12 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 focus:bg-[#202020] resize-none h-[60px] transition-all shadow-inner relative z-10"
-                                />
-                                <button
-                                    onClick={handleSend}
-                                    disabled={!inputValue.trim()}
-                                    className="absolute right-3 top-3 p-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-900/20 z-20"
+          {selectedSessionId && activeTab === 'chat' && !historyNotice && (
+            <div className={`mx-3 mt-2 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground ${chrome.sessionBanner}`}>
+              Continuing a saved chat — new messages update this thread in history.
+            </div>
+          )}
+
+          {/* Content */}
+          <div className="flex-1 overflow-hidden relative">
+            {activeTab === 'chat' ? (
+              <div className={`relative flex size-full flex-col divide-y overflow-hidden ${chrome.convDivide}`}>
+                <Conversation>
+                  <ConversationContent>
+                    {messages.length === 0 && (
+                      <div className="flex items-center justify-center h-full text-muted-foreground flex-col gap-2 mt-20">
+                         <MessageSquare className="w-8 h-8 opacity-50" />
+                         <span className="text-sm">How can I help you today?</span>
+                      </div>
+                    )}
+                    {messages.map(({ versions, ...message }, mIndex) => (
+                      <MessageBranch defaultBranch={0} key={message.key}>
+                        <MessageBranchContent>
+                          {versions.map((version, vIndex) => {
+                            const parsed = message.from === 'assistant' ? parseAssistantThinking(version.content) : { thinking: null, response: version.content };
+                            const isCurrentStream = isStreaming && message.from === 'assistant' && mIndex === messages.length - 1 && vIndex === versions.length - 1;
+                            const thinkingText = parsed.thinking ?? '';
+                            // Show whenever we parsed a thinking envelope (including empty), so the trigger
+                            // can show "Thought for X seconds" after streaming; also cover unclosed tags mid-stream.
+                            const showReasoningBlock =
+                              parsed.thinking !== null ||
+                              (isCurrentStream && hasUnclosedThinkingBlock(version.content));
+                            return (
+                              <Message from={message.from} key={`${message.key}-${version.id}`}>
+                                <MessageContent
+                                  className={
+                                    message.from === 'user' ? chrome.messageUser : chrome.messageAssistant
+                                  }
                                 >
-                                    <Send className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="mt-3 flex items-center justify-center gap-2 opacity-40">
-                                <div className="h-px w-8 bg-gradient-to-r from-transparent to-gray-500" />
-                                <span className="text-[10px] text-gray-400 font-medium">AI can make mistakes</span>
-                                <div className="h-px w-8 bg-gradient-to-l from-transparent to-gray-500" />
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="h-full overflow-y-auto p-2">
-                        <div className="flex justify-between items-center px-2 mb-2">
-                            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Recent Chats</h3>
-                            {history.length > 0 && (
-                                <button onClick={handleClearHistory} className="text-[10px] text-red-400 hover:text-red-300">
-                                    Clear All
-                                </button>
-                            )}
-                        </div>
-                        <div className="space-y-2">
-                            {history.length === 0 ? (
-                                <div className="text-center py-8 text-gray-600 text-sm">No history yet</div>
-                            ) : (
-                                history.map((session) => {
-                                    const isCurrent = selectedSessionId === session.id;
-
-                                    return (
-                                        <div
-                                            key={session.id}
-                                            onClick={() => handleSelectHistory(session)}
-                                            className={`group p-3 rounded-xl transition-all cursor-pointer relative border ${isCurrent
-                                                ? 'bg-blue-500/10 border-blue-500/50'
-                                                : 'bg-white/5 hover:bg-white/10 border-transparent hover:border-white/10'
-                                                }`}
+                                  {showReasoningBlock && (
+                                    <ChainOfThought
+                                      isStreaming={isCurrentStream}
+                                      className="mb-2"
+                                      defaultOpen={false}
+                                    >
+                                      <ChainOfThoughtHeader />
+                                      <ChainOfThoughtContent>
+                                        <ChainOfThoughtStep
+                                          icon={Brain}
+                                          label="Reasoning trace"
+                                          status={isCurrentStream ? 'active' : 'complete'}
                                         >
-                                            <div className="flex justify-between items-start mb-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-xs font-medium text-blue-400">{getSessionType(session)}</span>
-                                                    {isCurrent && (
-                                                        <span className="flex items-center gap-1 bg-blue-500/20 text-blue-300 text-[9px] px-1.5 py-0.5 rounded-full font-medium">
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                                                            Current
-                                                        </span>
-                                                    )}
-                                                    <span className="text-[10px] text-gray-500">• {new Date(session.createdAt).toLocaleDateString()}</span>
-                                                </div>
-                                                <button
-                                                    onClick={(e) => handleDeleteHistory(e, session.id)}
-                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-red-400 transition-all"
-                                                >
-                                                    <Trash2 className="w-3 h-3" />
-                                                </button>
-                                            </div>
-                                            <div className="text-sm text-gray-300 line-clamp-2 font-medium mb-0.5">
-                                                {getSessionLabel(session)}
-                                            </div>
-                                            <div className="text-xs text-gray-500 line-clamp-1">
-                                                {getSessionPreview(session)}
-                                            </div>
-                                            <ChevronRight className="w-3 h-3 text-gray-600 absolute right-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                        </div>
-                                    );
-                                })
-                            )}
+                                          {thinkingText.trim() ? (
+                                            <ChainOfThoughtMarkdown>
+                                              {thinkingText}
+                                            </ChainOfThoughtMarkdown>
+                                          ) : (
+                                            <p className="text-xs italic text-muted-foreground">
+                                              {isCurrentStream
+                                                ? 'Waiting for reasoning text…'
+                                                : 'No reasoning text was captured for this reply.'}
+                                            </p>
+                                          )}
+                                        </ChainOfThoughtStep>
+                                      </ChainOfThoughtContent>
+                                    </ChainOfThought>
+                                  )}
+                                  {parsed.response ? (
+                                    <MessageResponse>{parsed.response}</MessageResponse>
+                                  ) : (
+                                    message.from === 'user' && <MessageResponse>{version.content}</MessageResponse>
+                                  )}
+                                </MessageContent>
+                              </Message>
+                            );
+                          })}
+                        </MessageBranchContent>
+                      </MessageBranch>
+                    ))}
+                    {isStreaming && messages.length > 0 && messages[messages.length - 1].from === 'user' && (
+                       <Message from="assistant">
+                         <MessageContent className={chrome.messageAssistant}>
+                           <MessageResponse>...</MessageResponse>
+                         </MessageContent>
+                       </Message>
+                    )}
+                  </ConversationContent>
+                  <ConversationScrollButton />
+                </Conversation>
+                
+                <div className="grid shrink-0 gap-4 pt-4 pb-4 px-4 bg-transparent z-20">
+                  <PromptInput 
+                    globalDrop={false} 
+                    multiple={false} 
+                    onSubmit={handleSubmit}
+                    className={chrome.prompt}
+                  >
+                    <PromptInputBody>
+                      {contextAttachments.length > 0 && (
+                        <Attachments variant="inline" className="px-3 pt-3 pb-0">
+                          {contextAttachments.map((data) => (
+                            <Attachment key={data.id} data={data as any} className={`cursor-default pointer-events-none ${chrome.attachment}`}>
+                              <AttachmentPreview />
+                              <AttachmentInfo showMediaType />
+                            </Attachment>
+                          ))}
+                        </Attachments>
+                      )}
+                      <PromptInputTextarea 
+                        onChange={(e) => setText(e.target.value)} 
+                        value={text} 
+                        placeholder="Message AI Assistant..." 
+                      />
+                    </PromptInputBody>
+                    <PromptInputFooter>
+                      <PromptInputTools>
+                        <div className="flex items-center gap-2">
+                          <Context
+                            maxTokens={128000}
+                            modelId={`${aiProvider}:${aiModel}`}
+                            usage={{
+                              cachedInputTokens: 0,
+                              inputTokens: estimatedTokens,
+                              outputTokens: 0,
+                              reasoningTokens: 0,
+                              totalTokens: estimatedTokens,
+                            }}
+                            usedTokens={estimatedTokens}
+                          >
+                            <ContextTrigger />
+                            <ContextContent className={chrome.contextPopover}>
+                              <ContextContentHeader />
+                              <ContextContentBody className={chrome.contextBody}>
+                                <ContextInputUsage />
+                                <ContextOutputUsage />
+                                <ContextReasoningUsage />
+                                <ContextCacheUsage />
+                              </ContextContentBody>
+                              <ContextContentFooter className={chrome.contextFooter} />
+                            </ContextContent>
+                          </Context>
+
+                          <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-medium text-muted-foreground select-none ${chrome.modelBadge}`}>
+                            <ModelSelectorLogo provider={getProviderLogo(aiProvider)} className="size-3" />
+                            <ModelSelectorName>{aiModel}</ModelSelectorName>
+                          </div>
                         </div>
-                    </div>
-                )}
-            </div>
+                      </PromptInputTools>
+                      <PromptInputSubmit disabled={isSubmitDisabled} status={status} />
+                    </PromptInputFooter>
+                  </PromptInput>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full overflow-y-auto p-3">
+                <div className="flex justify-between items-center px-1 mb-3">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Recent Chats</h3>
+                  {history.length > 0 && (
+                    <button onClick={handleClearHistory} className="text-[10px] text-destructive hover:text-destructive/80">
+                      Clear All
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-3">
+                  {history.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground text-sm">No history yet</div>
+                  ) : (
+                    history.map((session) => {
+                      const isCurrent = selectedSessionId === session.id;
+
+                      return (
+                        <div
+                          key={session.id}
+                          onClick={() => handleSelectHistory(session)}
+                          className={`group p-3.5 rounded-lg transition-all cursor-pointer relative border shadow-lg ${
+                            isCurrent ? chrome.historyCardActive : chrome.historyCard
+                          }`}
+                        >
+                          <div className="flex justify-between items-start mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-medium ${chrome.accentText}`}>{getSessionType(session)}</span>
+                              {isCurrent && (
+                                <span className={`flex items-center gap-1 ${chrome.accentBg} ${chrome.accentMuted} text-[9px] px-1.5 py-0.5 rounded-full font-medium`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${chrome.accentPulseDot}`} />
+                                  Current
+                                </span>
+                              )}
+                              <span className="text-[10px] text-muted-foreground">
+                                • {new Date(session.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <button
+                              onClick={(e) => handleDeleteHistory(e, session.id)}
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/20 rounded text-destructive transition-all"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                          <div className="text-sm line-clamp-2 font-medium mb-0.5">{getSessionLabel(session)}</div>
+                          <div className="text-xs text-muted-foreground line-clamp-1">{getSessionPreview(session)}</div>
+                          <ChevronRight className="w-3 h-3 text-muted-foreground absolute right-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </motion.div>
-    );
+      )}
+    </AnimatePresence>
+  );
 };

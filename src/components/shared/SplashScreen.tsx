@@ -173,7 +173,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinished, minDurat
                                 transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
                             />
                             <img
-                                src="logo.png"
+                                src="/logo-new.png"
                                 alt="Lumen"
                                 className="w-20 h-20 relative z-10 drop-shadow-[0_0_30px_rgba(59,130,246,0.3)]"
                             />

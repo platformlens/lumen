@@ -7,7 +7,9 @@ import { MemberList } from './MemberList';
 import { InviteCodeDisplay } from './InviteCodeDisplay';
 import { TeamSection } from './TeamSection';
 
-export const OrgSection: React.FC = () => {
+export const OrgSection: React.FC<{
+  onOpenTeamView?: (teamId: string) => void;
+}> = ({ onOpenTeamView }) => {
   const {
     organizations,
     activeOrganization,
@@ -208,10 +210,7 @@ export const OrgSection: React.FC = () => {
           </div>
 
           {/* Team section */}
-          <TeamSection
-            organization={activeOrganization}
-            userRole={activeUserRole}
-          />
+          <TeamSection userRole={activeUserRole} onOpenTeamView={onOpenTeamView} />
         </div>
       )}
     </div>

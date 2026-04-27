@@ -11,11 +11,19 @@ import { AwsService } from './aws'
 import { ContextEngine } from './context-engine/context-engine'
 import { ContextEngineConfig } from './context-engine/types'
 import { ChatSessionManager } from './context-engine/chat-session'
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createGoogleGenerativeAI, type GoogleGenerativeAIProviderOptions } from '@ai-sdk/google';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAI } from '@ai-sdk/openai';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
-import { streamText } from 'ai';
+import { streamText, type ModelMessage, type LanguageModelUsage } from 'ai';
+import { resolveLumenChatSystemBase } from './langfuse-lumen';
+import { withTimeout } from '../src/lib/with-timeout';
+import {
+  bedrockMessagesWithOptionalCache,
+  getOrCreateGeminiExplicitCachedContentName,
+  isAnthropicBedrockModel,
+} from './ai-prompt-cache';
+import { AI_THINK_CLOSE, AI_THINK_OPEN } from '../src/utils/ai-thinking';
 import dotenv from 'dotenv'
 import Store from 'electron-store'
 import { Worker } from 'worker_threads'
@@ -49,7 +57,7 @@ if (process.platform === 'darwin') {
   process.env.PATH = newPath;
 }
 
-dotenv.config()
+dotenv.config();
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -71,6 +79,9 @@ export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
+
+/** App/window/dock icon: `public/` in dev, Vite `dist/` in packaged builds. */
+const APP_LOGO_PNG = path.join(process.env.VITE_PUBLIC, 'logo-new.png')
 
 let win: BrowserWindow | null
 const store = new Store();
@@ -619,30 +630,110 @@ function registerIpcHandlers() {
     return k8sService.decodeCertificate(certData);
   })
 
+  /**
+   * Consume streamText fullStream so reasoning-delta parts reach the renderer.
+   * Wraps reasoning in the same markers parsed by parseAssistantThinking in the UI.
+   */
+  async function accumulateStreamWithReasoning(
+    result: { fullStream: AsyncIterable<{ type: string; text?: string; delta?: string }> },
+    sendChunk: (s: string) => void,
+    isAborted?: () => boolean
+  ): Promise<string> {
+    let full = '';
+    let reasoningOpen = false;
+
+    const partText = (part: { text?: string; delta?: string }): string => {
+      if (typeof part.text === 'string' && part.text.length > 0) return part.text;
+      if (typeof part.delta === 'string' && part.delta.length > 0) return part.delta;
+      return '';
+    };
+
+    for await (const part of result.fullStream) {
+      if (isAborted?.()) break;
+
+      switch (part.type) {
+        case 'reasoning-start':
+          if (!reasoningOpen) {
+            sendChunk(AI_THINK_OPEN);
+            full += AI_THINK_OPEN;
+            reasoningOpen = true;
+          }
+          break;
+        case 'reasoning-delta': {
+          const t = partText(part);
+          if (!t) break;
+          if (!reasoningOpen) {
+            sendChunk(AI_THINK_OPEN);
+            full += AI_THINK_OPEN;
+            reasoningOpen = true;
+          }
+          sendChunk(t);
+          full += t;
+          break;
+        }
+        case 'reasoning-end':
+          if (reasoningOpen) {
+            sendChunk(AI_THINK_CLOSE);
+            full += AI_THINK_CLOSE;
+            reasoningOpen = false;
+          }
+          break;
+        case 'text-delta': {
+          const t = partText(part);
+          if (!t) break;
+          if (reasoningOpen) {
+            sendChunk(AI_THINK_CLOSE);
+            full += AI_THINK_CLOSE;
+            reasoningOpen = false;
+          }
+          sendChunk(t);
+          full += t;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    if (reasoningOpen) {
+      sendChunk(AI_THINK_CLOSE);
+      full += AI_THINK_CLOSE;
+    }
+
+    return full;
+  }
+
   ipcMain.on('ai:explainResourceStream', async (event, resource, options) => {
     try {
       const { provider = 'google', model = 'gemini-1.5-flash', clusterName } = options || {};
-      let aiModel;
+      const localEndpoint =
+        (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
+      const useLmStudioNative =
+        provider === 'local' && store.get('settings_localUseLmStudioNative') === true;
 
-      if (provider === 'google') {
-        const apiKey = getApiKey();
-        if (!apiKey) {
-          event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let aiModel: any = null;
+
+      if (!useLmStudioNative) {
+        if (provider === 'google') {
+          const apiKey = getApiKey();
+          if (!apiKey) {
+            event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
+            return;
+          }
+          const google = createGoogleGenerativeAI({ apiKey });
+          aiModel = google(model);
+        } else if (provider === 'bedrock') {
+          const bedrockConfig = getBedrockConfig();
+          const bedrock = createAmazonBedrock(bedrockConfig);
+          aiModel = bedrock(model);
+        } else if (provider === 'local') {
+          const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
+          aiModel = localProvider(model);
+        } else {
+          event.sender.send('ai:explainResourceStream:error', `Unknown provider: ${provider}`);
           return;
         }
-        const google = createGoogleGenerativeAI({ apiKey });
-        aiModel = google(model);
-      } else if (provider === 'bedrock') {
-        const bedrockConfig = getBedrockConfig();
-        const bedrock = createAmazonBedrock(bedrockConfig);
-        aiModel = bedrock(model);
-      } else if (provider === 'local') {
-        const localEndpoint = (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
-        const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
-        aiModel = localProvider(model);
-      } else {
-        event.sender.send('ai:explainResourceStream:error', `Unknown provider: ${provider}`);
-        return;
       }
 
       const { getPromptForResource } = await import('./prompts');
@@ -702,25 +793,36 @@ function registerIpcHandlers() {
         ${JSON.stringify(stripResourceForAI(resource), null, 2)}
       `;
 
-      const result = streamText({
-        model: aiModel,
-        prompt: prompt,
-        maxOutputTokens: 1024,
-        onError: ({ error }: { error: unknown }) => {
-          console.error('[AI] streamText onError:', error);
-          const { message: errMsg, isAccessDenied } = extractAiErrorInfo(error);
-          event.sender.send('ai:explainResourceStream:error', errMsg);
-          if (isAccessDenied) {
-            event.sender.send('ai:bedrockAccessDenied', errMsg);
-          }
-        },
-      });
-
       let fullResponse = '';
       try {
-        for await (const textPart of result.textStream) {
-          fullResponse += textPart;
-          event.sender.send('ai:explainResourceStream:chunk', textPart);
+        if (useLmStudioNative) {
+          const token = (store.get('settings_localLmStudioApiToken') as string) || undefined;
+          const { streamLmStudioChat } = await import('./lm-studio-native');
+          fullResponse = await streamLmStudioChat({
+            openAiCompatBaseUrl: localEndpoint,
+            apiToken: token,
+            model,
+            input: prompt,
+            onChunk: (chunk) => event.sender.send('ai:explainResourceStream:chunk', chunk),
+          });
+        } else {
+          const result = streamText({
+            model: aiModel!,
+            prompt: prompt,
+            maxOutputTokens: 1024,
+            onError: ({ error }: { error: unknown }) => {
+              console.error('[AI] streamText onError:', error);
+              const { message: errMsg, isAccessDenied } = extractAiErrorInfo(error);
+              event.sender.send('ai:explainResourceStream:error', errMsg);
+              if (isAccessDenied) {
+                event.sender.send('ai:bedrockAccessDenied', errMsg);
+              }
+            },
+          });
+          fullResponse = await accumulateStreamWithReasoning(
+            result,
+            (chunk) => event.sender.send('ai:explainResourceStream:chunk', chunk)
+          );
         }
       } catch (streamError: unknown) {
         console.error('[AI] Stream iteration error:', streamError);
@@ -790,29 +892,38 @@ function registerIpcHandlers() {
 
     try {
       const { provider = 'google', model = 'gemini-1.5-flash', systemPrompt, messages, clusterName, namespace } = options || {};
-      let aiModel;
+      const localEndpoint =
+        (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
+      const useLmStudioNative =
+        provider === 'local' && store.get('settings_localUseLmStudioNative') === true;
 
-      if (provider === 'google') {
-        const apiKey = getApiKey();
-        if (!apiKey) {
-          event.sender.send('ai:customPromptStream:error', 'GEMINI_API_KEY not configured.');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let aiModel: any = null;
+      let geminiApiKey: string | undefined;
+
+      if (!useLmStudioNative) {
+        if (provider === 'google') {
+          const apiKey = getApiKey();
+          if (!apiKey) {
+            event.sender.send('ai:customPromptStream:error', 'GEMINI_API_KEY not configured.');
+            activeCustomPromptAbort = null;
+            return;
+          }
+          geminiApiKey = apiKey;
+          const google = createGoogleGenerativeAI({ apiKey });
+          aiModel = google(model);
+        } else if (provider === 'bedrock') {
+          const bedrockConfig = getBedrockConfig();
+          const bedrock = createAmazonBedrock(bedrockConfig);
+          aiModel = bedrock(model);
+        } else if (provider === 'local') {
+          const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
+          aiModel = localProvider(model);
+        } else {
+          event.sender.send('ai:customPromptStream:error', `Unknown provider: ${provider}`);
           activeCustomPromptAbort = null;
           return;
         }
-        const google = createGoogleGenerativeAI({ apiKey });
-        aiModel = google(model);
-      } else if (provider === 'bedrock') {
-        const bedrockConfig = getBedrockConfig();
-        const bedrock = createAmazonBedrock(bedrockConfig);
-        aiModel = bedrock(model);
-      } else if (provider === 'local') {
-        const localEndpoint = (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
-        const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
-        aiModel = localProvider(model);
-      } else {
-        event.sender.send('ai:customPromptStream:error', `Unknown provider: ${provider}`);
-        activeCustomPromptAbort = null;
-        return;
       }
 
       // --- Context injection ---
@@ -831,8 +942,16 @@ function registerIpcHandlers() {
         console.error('[AI] Error building cluster context:', ctxErr);
       }
 
-      // Build enhanced system prompt with context injection
-      let enhancedSystemPrompt = systemPrompt || '';
+      // Build enhanced system prompt (Langfuse text prompt `chat-system-prompt`, label production, when configured)
+      const { baseSystem } = await resolveLumenChatSystemBase(
+        {
+          resourceContext: options?.resourceContext,
+          resourceName: options?.resourceName,
+          resourceType: options?.resourceType,
+        },
+        systemPrompt || ''
+      );
+      let enhancedSystemPrompt = baseSystem;
 
       if (clusterContext) {
         enhancedSystemPrompt += `\n\n--- LIVE CLUSTER STATE ---\nThe following is a compressed snapshot of the user's current Kubernetes cluster state. Use this to answer cluster-specific questions.\n${clusterContext}\n--- END CLUSTER STATE ---`;
@@ -848,6 +967,24 @@ function registerIpcHandlers() {
         enhancedSystemPrompt += buildKubectlPrompt(activeCluster, activeNamespace);
       }
 
+      let geminiCachedContentName: string | null = null;
+      if (provider === 'google' && geminiApiKey) {
+        geminiCachedContentName = await getOrCreateGeminiExplicitCachedContentName(
+          geminiApiKey,
+          model,
+          enhancedSystemPrompt,
+          abortSignal
+        );
+      }
+      const googleCacheProviderOptions:
+        | { google: GoogleGenerativeAIProviderOptions }
+        | undefined =
+        geminiCachedContentName != null
+          ? {
+              google: { cachedContent: geminiCachedContentName } satisfies GoogleGenerativeAIProviderOptions,
+            }
+          : undefined;
+
       // Shared error handler for streamText onError callback
       const handleStreamError = ({ error }: { error: unknown }) => {
         if (abortSignal.aborted) return;
@@ -858,28 +995,6 @@ function registerIpcHandlers() {
           event.sender.send('ai:bedrockAccessDenied', errMsg);
         }
       };
-
-      // Use messages array if provided (for conversation history), otherwise use simple prompt
-      let result;
-      if (messages && messages.length > 0) {
-        // Multi-turn conversation with history
-        result = streamText({
-          model: aiModel,
-          messages: messages,
-          system: enhancedSystemPrompt,
-          abortSignal,
-          onError: handleStreamError,
-        });
-      } else {
-        // Single prompt (backward compatibility)
-        const finalPrompt = enhancedSystemPrompt ? `${enhancedSystemPrompt}\n\n${actualQuery}` : actualQuery;
-        result = streamText({
-          model: aiModel,
-          prompt: finalPrompt,
-          abortSignal,
-          onError: handleStreamError,
-        });
-      }
 
       // Track message in ChatSessionManager
       if (!chatSessionManager.getCurrentSession()) {
@@ -893,23 +1008,104 @@ function registerIpcHandlers() {
       }
       chatSessionManager.addMessage('user', userMessage);
 
-      let fullResponse = '';
-      try {
-        for await (const textPart of result.textStream) {
-          // Check if aborted
-          if (abortSignal.aborted) {
-            console.log('[AI] Stream aborted');
-            activeCustomPromptAbort = null;
-            return;
-          }
-          fullResponse += textPart;
-          event.sender.send('ai:customPromptStream:chunk', textPart);
+      const runModelStream = async (): Promise<{ fullResponse: string; usage?: LanguageModelUsage }> => {
+        if (useLmStudioNative) {
+          const token = (store.get('settings_localLmStudioApiToken') as string) || undefined;
+          const {
+            streamLmStudioChat,
+            buildLmStudioConversationInput,
+            buildLmStudioSingleTurnInput,
+          } = await import('./lm-studio-native');
+          const input =
+            messages && messages.length > 0
+              ? buildLmStudioConversationInput(
+                  enhancedSystemPrompt,
+                  messages as Array<{ role: string; content: string }>
+                )
+              : buildLmStudioSingleTurnInput(enhancedSystemPrompt, actualQuery);
+          const fullResponse = await streamLmStudioChat({
+            openAiCompatBaseUrl: localEndpoint,
+            apiToken: token,
+            model,
+            input,
+            signal: abortSignal,
+            onChunk: (chunk) => event.sender.send('ai:customPromptStream:chunk', chunk),
+          });
+          return { fullResponse };
         }
-      } catch (streamError: unknown) {
-        if (streamError instanceof Error && streamError.name === 'AbortError' || abortSignal.aborted) {
+        let result: ReturnType<typeof streamText>;
+        if (messages && messages.length > 0) {
+          if (provider === 'bedrock' && isAnthropicBedrockModel(model)) {
+            result = streamText({
+              model: aiModel,
+              messages: bedrockMessagesWithOptionalCache(enhancedSystemPrompt, messages as ModelMessage[]),
+              abortSignal,
+              onError: handleStreamError,
+            });
+          } else if (provider === 'google' && googleCacheProviderOptions) {
+            result = streamText({
+              model: aiModel,
+              messages: messages as ModelMessage[],
+              providerOptions: googleCacheProviderOptions,
+              abortSignal,
+              onError: handleStreamError,
+            });
+          } else {
+            result = streamText({
+              model: aiModel,
+              messages: messages,
+              system: enhancedSystemPrompt,
+              abortSignal,
+              onError: handleStreamError,
+            });
+          }
+        } else if (provider === 'bedrock' && isAnthropicBedrockModel(model)) {
+          result = streamText({
+            model: aiModel,
+            messages: bedrockMessagesWithOptionalCache(enhancedSystemPrompt, [{ role: 'user', content: actualQuery }]),
+            abortSignal,
+            onError: handleStreamError,
+          });
+        } else if (provider === 'google' && googleCacheProviderOptions) {
+          result = streamText({
+            model: aiModel,
+            prompt: actualQuery,
+            providerOptions: googleCacheProviderOptions,
+            abortSignal,
+            onError: handleStreamError,
+          });
+        } else {
+          const finalPrompt = enhancedSystemPrompt ? `${enhancedSystemPrompt}\n\n${actualQuery}` : actualQuery;
+          result = streamText({
+            model: aiModel,
+            prompt: finalPrompt,
+            abortSignal,
+            onError: handleStreamError,
+          });
+        }
+        const fullResponse = await accumulateStreamWithReasoning(
+          result,
+          (chunk) => event.sender.send('ai:customPromptStream:chunk', chunk),
+          () => abortSignal.aborted
+        );
+        let usage: LanguageModelUsage | undefined;
+        try {
+          usage = await withTimeout(
+            result.usage,
+            15_000,
+            'ai usage'
+          ) as LanguageModelUsage;
+        } catch {
+          usage = undefined;
+        }
+        return { fullResponse, usage };
+      };
+
+      const finishStreamError = (streamError: unknown): 'abort' | 'fail' => {
+        if ((streamError instanceof Error && streamError.name === 'AbortError') || abortSignal.aborted) {
           console.log('[AI] Stream was aborted');
           activeCustomPromptAbort = null;
-          return;
+          return 'abort';
         }
         console.error('[AI] Stream iteration error:', streamError);
         const { message: errMsg, isAccessDenied } = extractAiErrorInfo(streamError);
@@ -918,6 +1114,32 @@ function registerIpcHandlers() {
           event.sender.send('ai:bedrockAccessDenied', errMsg);
         }
         activeCustomPromptAbort = null;
+        return 'fail';
+      };
+
+      let fullResponse = '';
+      let customPromptStreamFailed = false;
+
+      try {
+        const { fullResponse: fr } = await runModelStream();
+        fullResponse = fr;
+        if (abortSignal.aborted) {
+          console.log('[AI] Stream aborted');
+          activeCustomPromptAbort = null;
+          return;
+        }
+      } catch (streamError: unknown) {
+        if (finishStreamError(streamError) === 'fail') {
+          customPromptStreamFailed = true;
+        }
+        return;
+      }
+
+      if (customPromptStreamFailed) {
+        return;
+      }
+
+      if (abortSignal.aborted) {
         return;
       }
 
@@ -1131,9 +1353,13 @@ function registerIpcHandlers() {
     } else if (provider === 'local') {
       try {
         const localEndpoint = (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
-        // Note: LM Studio / llama.cpp typically host models at /v1/models or /models, 
-        // stripping /v1 from baseURL if we append it, but AI SDK typically needs the full /v1 URL.
-        // Let's assume the user enters standard openAI format base URL (e.g. http://localhost:1234/v1).
+        const useNative = store.get('settings_localUseLmStudioNative') === true;
+        if (useNative) {
+          const token = (store.get('settings_localLmStudioApiToken') as string) || undefined;
+          const { listLmStudioModels } = await import('./lm-studio-native');
+          const models = await listLmStudioModels(localEndpoint, token);
+          return models.map((m) => ({ ...m, provider: 'Local' }));
+        }
         const url = localEndpoint.endsWith('/') ? `${localEndpoint}models` : `${localEndpoint}/models`;
         const response = await fetch(url);
         if (!response.ok) return [];
@@ -1701,7 +1927,8 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:loadSession', async (_, id) => {
-    return chatSessionManager.loadSession(id);
+    // Activate this session in the main process so IPC chat turns append here instead of starting a new session.
+    return chatSessionManager.resumeSession(id);
   });
 
   ipcMain.handle('ai:saveCurrentSession', async () => {
@@ -2166,7 +2393,7 @@ function createWindow() {
     height: 720,
     minWidth: 1024,
     minHeight: 576,
-    icon: path.join(process.env.APP_ROOT, 'resources', 'icon.png'),
+    icon: APP_LOGO_PNG,
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
@@ -2233,8 +2460,7 @@ app.on('activate', () => {
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {
     try {
-      const iconPath = path.join(process.env.APP_ROOT, 'resources', 'icon.png');
-      app.dock?.setIcon(iconPath);
+      app.dock?.setIcon(APP_LOGO_PNG);
     } catch (e) {
       console.error('Failed to set dock icon:', e);
     }

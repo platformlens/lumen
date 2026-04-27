@@ -26,6 +26,7 @@ import { RESOURCE_TYPE_MAP } from './utils/resource-utils';
 import { AIPanel } from './components/features/ai/AIPanel';
 import { ViewTabBar, ViewTab } from './components/dashboard/ViewTabBar';
 import { getViewLabel } from './utils/view-labels';
+import { assistantContentForModelHistory } from './utils/ai-thinking';
 
 function App() {
     const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor' | 'user'>('clusters')
@@ -261,7 +262,10 @@ function App() {
             },
             () => {
                 if (currentStreamIdRef.current === streamId) {
-                    conversationHistoryRef.current.push({ role: 'assistant', content: fullResponse });
+                    conversationHistoryRef.current.push({
+                        role: 'assistant',
+                        content: assistantContentForModelHistory(fullResponse),
+                    });
                     setIsAiStreaming(false);
                     aiCleanupRef.current = null;
                 }
@@ -387,6 +391,7 @@ function App() {
     const [isAiStreaming, setIsAiStreaming] = useState(false);
     const aiCleanupRef = useRef<(() => void) | null>(null);
     const currentStreamIdRef = useRef<string>('');
+    const explainStreamIdRef = useRef<string | null>(null);
     const conversationHistoryRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
 
     useEffect(() => {
@@ -1053,10 +1058,16 @@ function App() {
         setAiStreamingContent('');
         setIsAiStreaming(true);
 
+        conversationHistoryRef.current = [];
+
         // Cancel previous stream
         if (aiCleanupRef.current) {
             aiCleanupRef.current();
         }
+
+        const streamId = Math.random().toString(36).substring(7);
+        explainStreamIdRef.current = streamId;
+        let fullResponse = '';
 
         // Use state variables instead of localStorage
         const model = aiModel;
@@ -1069,9 +1080,18 @@ function App() {
                 context,
                 { model, provider, clusterName: selectedCluster },
                 (chunk) => {
-                    setAiStreamingContent(prev => prev + chunk);
+                    if (explainStreamIdRef.current !== streamId) return;
+                    fullResponse += chunk;
+                    setAiStreamingContent((prev) => prev + chunk);
                 },
                 () => {
+                    if (explainStreamIdRef.current !== streamId) return;
+                    const userLine = `Explain ${type} ${name}`;
+                    conversationHistoryRef.current.push({ role: 'user', content: userLine });
+                    conversationHistoryRef.current.push({
+                        role: 'assistant',
+                        content: assistantContentForModelHistory(fullResponse),
+                    });
                     setIsAiStreaming(false);
                     aiCleanupRef.current = null;
                 },
@@ -1148,7 +1168,10 @@ function App() {
                 () => {
                     if (currentStreamIdRef.current === streamId) {
                         // Add assistant response to conversation history
-                        conversationHistoryRef.current.push({ role: 'assistant', content: fullResponse });
+                        conversationHistoryRef.current.push({
+                            role: 'assistant',
+                            content: assistantContentForModelHistory(fullResponse),
+                        });
                         setIsAiStreaming(false);
                         aiCleanupRef.current = null;
                     }
@@ -1167,16 +1190,32 @@ function App() {
         }
     };
 
-    const handleReloadConversation = (conversation: Array<{ role: 'user' | 'assistant'; content: string }>, context: { name: string; type: string }) => {
+    const handleReloadConversation = (
+        conversation: Array<{ role: 'user' | 'assistant'; content: string }>,
+        context: { name: string; type: string; namespace?: string },
+        meta?: { model?: string; provider?: string }
+    ) => {
         console.log('[AI] Reloading conversation with', conversation.length, 'messages');
 
-        // Restore conversation history
-        conversationHistoryRef.current = conversation;
+        // Restore conversation history (omit thinking envelopes for model round-trips)
+        conversationHistoryRef.current = conversation.map((m) =>
+            m.role === 'assistant'
+                ? { ...m, content: assistantContentForModelHistory(m.content) }
+                : m
+        );
 
-        // Set context
-        setAiContext({ name: context.name, type: context.type });
+        setAiContext({
+            name: context.name,
+            type: context.type,
+            ...(context.namespace !== undefined ? { namespace: context.namespace } : {}),
+        });
 
-        // The AIPanel will display the conversation, no need to set streaming content
+        if (meta?.model?.trim()) {
+            setAiModel(meta.model.trim());
+        }
+        if (meta?.provider === 'google' || meta?.provider === 'bedrock' || meta?.provider === 'local') {
+            setAiProvider(meta.provider);
+        }
     };
 
     const handleNewChat = () => {
@@ -1213,7 +1252,8 @@ function App() {
         ];
 
         const lowerPrompt = userPrompt.toLowerCase();
-        const isK8sRelated = k8sKeywords.some(keyword => lowerPrompt.includes(keyword));
+        const isDev = import.meta.env && import.meta.env.DEV;
+        const isK8sRelated = isDev || k8sKeywords.some(keyword => lowerPrompt.includes(keyword));
 
         if (!isK8sRelated) {
             // Reject non-Kubernetes queries - append to existing content
@@ -1275,7 +1315,10 @@ function App() {
                 () => {
                     if (currentStreamIdRef.current === streamId) {
                         // Add assistant response to conversation history
-                        conversationHistoryRef.current.push({ role: 'assistant', content: fullResponse });
+                        conversationHistoryRef.current.push({
+                            role: 'assistant',
+                            content: assistantContentForModelHistory(fullResponse),
+                        });
                         console.log('[AI] Conversation history length:', conversationHistoryRef.current.length);
                         setIsAiStreaming(false);
                         aiCleanupRef.current = null;
@@ -1298,7 +1341,15 @@ function App() {
     };
 
     return (
-        <div className={`flex h-screen text-white font-sans overflow-hidden ${theme === 'charcoal' ? 'bg-gradient-to-br from-zinc-950 via-[#0a0a0a] to-black' : theme === 'red' ? 'bg-gradient-to-br from-red-950/80 via-[#0a0a0a] to-black' : 'bg-gradient-to-br from-slate-900 via-[#0a0a0a] to-black'}`}>
+        <div
+            className={`flex h-screen min-h-0 w-full text-white font-sans overflow-hidden bg-fixed ${
+                theme === 'charcoal'
+                    ? 'bg-gradient-to-br from-zinc-950 via-[#0a0a0a] to-black'
+                    : theme === 'red'
+                      ? 'bg-gradient-to-br from-red-950/80 via-[#0a0a0a] to-black'
+                      : 'bg-gradient-to-br from-slate-900 via-[#0a0a0a] to-black'
+            }`}
+        >
             {/* Splash Screen */}
             {showSplash && <SplashScreen onFinished={() => setShowSplash(false)} />}
 
@@ -1447,11 +1498,14 @@ function App() {
                                     onCloseTab={handleCloseViewTab}
                                 />
                             )}
-                            <div className="flex-1 min-h-0 w-full relative overflow-hidden">
+                            <div className="flex-1 min-h-0 w-full min-w-0 relative overflow-hidden flex flex-col">
                                 {activeView === 'settings' ? (
                                     <Settings activeSection={resourceView} />
                                 ) : activeView === 'user' ? (
-                                    <AuthView activeSection={resourceView} />
+                                    <AuthView
+                                        activeSection={resourceView}
+                                        onUserViewChange={setResourceView}
+                                    />
                                 ) : activeView === 'editor' ? (
                                     (() => {
                                         // Read directly from the ref (not the memoized snapshot) so we always
@@ -1638,6 +1692,9 @@ function App() {
                         onReloadConversation={handleReloadConversation}
                         onNewChat={handleNewChat}
                         mode="sidebar"
+                        aiModel={aiModel}
+                        aiProvider={aiProvider}
+                        theme={theme}
                     />
                 )}
             </AnimatePresence>

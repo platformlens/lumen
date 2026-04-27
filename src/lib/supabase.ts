@@ -36,12 +36,23 @@ if (!supabaseUrl || !supabaseAnonKey) {
     'Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.'
   );
 } else {
+  const isLumenRenderer =
+    typeof window !== 'undefined' && (window as { k8s?: unknown }).k8s != null;
+
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       storage: ipcStorage,
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // Electron: single window — skip Navigator/Web Locks. Combined with not awaiting
+      // supabase.data calls inside onAuthStateChange, avoids getSession/REST deadlocks
+      // where the network panel shows no request until a client-side timeout.
+      ...(isLumenRenderer
+        ? {
+            lock: <R,>(_name: string, _acquireTimeout: number, fn: () => Promise<R>) => fn(),
+          }
+        : {}),
     },
   });
 }

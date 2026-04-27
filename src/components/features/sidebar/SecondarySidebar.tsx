@@ -40,6 +40,7 @@ import {
     Zap
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useOrgStore } from '../../../stores/orgStore';
 
 interface SecondarySidebarProps {
     mode: 'clusters' | 'resources' | 'settings' | 'editor' | 'user';
@@ -139,6 +140,9 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     onOpenYamlFile,
 }) => {
     const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; cluster: string } | null>(null);
+    const teams = useOrgStore((s) => s.teams);
+    const userTeamRoute = activeView?.match(/^user-team:(.+)$/);
+    const userTeamPageTeam = userTeamRoute ? teams.find((t) => t.id === userTeamRoute[1]) : null;
 
     // Close context menu on click elsewhere
     useEffect(() => {
@@ -643,10 +647,20 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                 {(!searchQuery || filterMatches('General')) && (
                                     <NavItem
                                         icon={<LayoutGrid size={18} />}
-                                        label="General"
+                                        label="Profile"
                                         active={activeView === 'user-general'}
                                         onClick={() => onSelectView('user-general')}
                                     />
+                                )}
+                                {activeView?.startsWith('user-team:') && userTeamPageTeam && (
+                                    (!searchQuery || filterMatches(userTeamPageTeam.name)) && (
+                                        <NavItem
+                                            icon={<Users size={18} />}
+                                            label={userTeamPageTeam.name}
+                                            active={activeView.startsWith('user-team:')}
+                                            onClick={() => onSelectView(activeView)}
+                                        />
+                                    )
                                 )}
                             </div>
                         </div>
