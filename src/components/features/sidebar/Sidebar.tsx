@@ -1,6 +1,7 @@
 import React from 'react';
 import { LayoutGrid, Server, Settings, PenTool, User } from 'lucide-react';
 import { clsx } from 'clsx';
+import { lumenLogo } from '../../../assets/lumen-logo';
 interface SidebarProps {
   activeView: 'clusters' | 'dashboard' | 'settings' | 'editor' | 'user';
   onChangeView: (view: 'clusters' | 'dashboard' | 'settings' | 'editor' | 'user') => void;
@@ -13,7 +14,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeView, onChang
       <div className="mb-8">
         <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
           <img
-            src="/logo-new.png"
+            src={lumenLogo}
             alt="Lumen Logo"
             className="w-full h-full object-cover"
           />

@@ -1513,7 +1513,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                             onDeleteNode={onDeleteNode}
                                         />
                                         {/* Resource Events — shown for all types except pods (PodDetails has its own events section) */}
-                                        {selectedResource.type !== 'pod' && (
+                                        {selectedResource?.type !== 'pod' && (
                                             <ResourceEvents
                                                 clusterName={clusterName}
                                                 resource={detailedResource}

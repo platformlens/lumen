@@ -612,6 +612,14 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         onClick={() => onSelectView('settings-ai')}
                                     />
                                 )}
+                                {(!searchQuery || filterMatches('AWS')) && (
+                                    <NavItem
+                                        icon={<Shield size={18} />}
+                                        label="AWS"
+                                        active={activeView === 'settings-aws'}
+                                        onClick={() => onSelectView('settings-aws')}
+                                    />
+                                )}
                                 {(!searchQuery || filterMatches('AI Context Engine')) && (
                                     <NavItem
                                         icon={<Brain size={18} />}

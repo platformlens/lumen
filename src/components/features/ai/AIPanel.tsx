@@ -246,6 +246,10 @@ interface AIPanelProps {
   aiProvider?: string;
   /** Matches App root gradient so the panel reads as part of the shell, not a separate glass layer. */
   theme?: AppTheme;
+  /** Pending tool call awaiting user approval */
+  pendingToolApproval?: { toolCallId: string; command: string; isReadOnly: boolean } | null;
+  /** Callback to approve/reject a tool call. trust=true saves the command pattern for auto-approval. */
+  onToolApproval?: (approved: boolean, trust: boolean) => void;
 }
 
 interface MessageType {
@@ -271,6 +275,8 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   aiModel = 'GPT-4',
   aiProvider = 'openai',
   theme = 'charcoal',
+  pendingToolApproval,
+  onToolApproval,
 }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat');
   const [history, setHistory] = useState<ChatSession[]>([]);
@@ -769,6 +775,49 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                 </Conversation>
                 
                 <div className="grid shrink-0 gap-4 pt-4 pb-4 px-4 bg-transparent z-20">
+                  {/* Local AI tool calling note */}
+                  {aiProvider === 'local' && (
+                    <div className="flex items-center gap-2 text-[11px] text-gray-500 bg-white/5 border border-white/5 rounded-lg px-3 py-1.5">
+                      <svg viewBox="0 0 24 24" className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      <span>Tool calling (agentic mode) is not yet fully supported for local AI models. For best results, use a model with native tool support (e.g. Qwen, Llama 3.1+).</span>
+                    </div>
+                  )}
+                  {/* Tool Approval Banner */}
+                  {pendingToolApproval && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-yellow-300 font-medium">
+                        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                        </svg>
+                        AI wants to run a command
+                      </div>
+                      <code className="block text-xs text-white font-mono bg-black/30 rounded-lg px-3 py-2 break-all">
+                        {pendingToolApproval.command}
+                      </code>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => onToolApproval?.(true, false)}
+                          className="flex-1 px-3 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors"
+                        >
+                          Allow
+                        </button>
+                        <button
+                          onClick={() => onToolApproval?.(true, true)}
+                          className="flex-1 px-3 py-1.5 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-lg text-xs font-medium hover:bg-blue-500/30 transition-colors"
+                        >
+                          Allow &amp; Trust
+                        </button>
+                        <button
+                          onClick={() => onToolApproval?.(false, false)}
+                          className="flex-1 px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-medium hover:bg-red-500/30 transition-colors"
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <PromptInput 
                     globalDrop={false} 
                     multiple={false} 

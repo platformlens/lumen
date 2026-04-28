@@ -62,6 +62,13 @@ function App() {
     const [resourceView, setResourceView] = useState<string>('overview')
     const lastResourceViewRef = useRef<string>('overview');
 
+    // Cluster list for StatusBar quick-switcher
+    const [clustersList, setClustersList] = useState<Array<{ name: string }>>([]);
+
+    // AWS Profile state for StatusBar indicator
+    const [awsProfile, setAwsProfile] = useState<string>('default');
+    const [awsProfiles, setAwsProfiles] = useState<string[]>([]);
+
     // Per-cluster view tabs (in-memory only — resets on app restart)
     const viewTabsByClusterRef = useRef<Map<string, ViewTab[]>>(new Map());
     const [viewTabsVersion, setViewTabsVersion] = useState(0);
@@ -103,12 +110,58 @@ function App() {
         useAuthStore.getState().initialize();
     }, []);
 
+    // Fetch clusters list for StatusBar quick-switcher
+    useEffect(() => {
+        window.k8s.getClusters().then(setClustersList).catch(console.error);
+    }, []);
+
+    // Fetch AWS profiles for StatusBar indicator
+    useEffect(() => {
+        window.k8s.aws.listProfiles().then(setAwsProfiles).catch(console.error);
+        window.k8s.aws.getProfile().then(p => setAwsProfile(p || 'default')).catch(console.error);
+    }, []);
+
+    // Listen for AWS credential changes
+    useEffect(() => {
+        const cleanup = window.k8s.aws.onCredentialsChanged((data: { identity?: string; profile?: string }) => {
+            if (data.profile) setAwsProfile(data.profile);
+        });
+        return cleanup;
+    }, []);
+
     const handleOnboardingComplete = async () => {
         setShowOnboarding(false);
         try {
             await window.k8s.onboarding.setLastSeenVersion(appVersion);
         } catch (err) {
             console.warn('Failed to save onboarding status:', err);
+        }
+    };
+
+    const handleAwsProfileChange = async (profile: string) => {
+        setAwsProfile(profile);
+        await window.k8s.aws.setProfile(profile);
+    };
+
+    const handleToggleMute = () => {
+        setIsNotificationsMuted(prev => {
+            const next = !prev;
+            isNotificationsMutedRef.current = next;
+            window.k8s.settings.set('notificationsMuted', next).catch(() => { });
+            if (next) setToasts([]);
+            return next;
+        });
+    };
+
+    const handleToolApproval = (approved: boolean, trust: boolean) => {
+        if (pendingToolApproval) {
+            window.k8s.respondToolApproval(pendingToolApproval.toolCallId, approved, trust);
+            // Remove from queue and show next
+            pendingToolQueueRef.current = pendingToolQueueRef.current.filter(
+                r => r.toolCallId !== pendingToolApproval.toolCallId
+            );
+            const next = pendingToolQueueRef.current[0] || null;
+            setPendingToolApproval(next);
         }
     };
 
@@ -162,9 +215,22 @@ function App() {
         return cleanup;
     }, [aiModel]);
 
+    // Listen for tool approval requests from main process
+    useEffect(() => {
+        const cleanup = window.k8s.onToolApprovalRequest((request) => {
+            console.log('[AI Tools] Approval request received:', request);
+            pendingToolQueueRef.current.push(request);
+            // Show the first pending if nothing is currently shown
+            setPendingToolApproval(prev => prev || request);
+        });
+        return cleanup;
+    }, []);
+
     // --- Notification State ---
     const [isNotificationsPanelOpen, setIsNotificationsPanelOpen] = useState(false);
     const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+    const [isNotificationsMuted, setIsNotificationsMuted] = useState(false);
+    const isNotificationsMutedRef = useRef(false);
     const anomalyBatchRef = useRef<any[]>([]);
     const anomalyBatchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const seenAnomalyIdsRef = useRef<Set<string>>(new Set());
@@ -172,6 +238,12 @@ function App() {
     // Load unread count on mount
     useEffect(() => {
         window.k8s.notifications.getUnreadCount().then(setUnreadNotificationCount).catch(() => { });
+        window.k8s.settings.get('notificationsMuted').then((v: boolean | null) => {
+            if (typeof v === 'boolean') {
+                setIsNotificationsMuted(v);
+                isNotificationsMutedRef.current = v;
+            }
+        }).catch(() => { });
     }, []);
 
     // Apply saved font family and size on mount
@@ -311,6 +383,7 @@ function App() {
                 anomalyBatchRef.current = [];
 
                 if (batch.length === 0) return;
+                if (isNotificationsMutedRef.current) return; // Muted — skip toast, anomalies are still persisted above
 
                 const first = batch[0];
                 const firstName = first.resource?.name || 'Unknown';
@@ -389,6 +462,8 @@ function App() {
     const [aiContext, setAiContext] = useState<{ name: string; type: string; namespace?: string } | undefined>(undefined);
     const [aiStreamingContent, setAiStreamingContent] = useState<string>('');
     const [isAiStreaming, setIsAiStreaming] = useState(false);
+    const [pendingToolApproval, setPendingToolApproval] = useState<{ toolCallId: string; command: string; isReadOnly: boolean } | null>(null);
+    const pendingToolQueueRef = useRef<Array<{ toolCallId: string; command: string; isReadOnly: boolean }>>([]);
     const aiCleanupRef = useRef<(() => void) | null>(null);
     const currentStreamIdRef = useRef<string>('');
     const explainStreamIdRef = useRef<string | null>(null);
@@ -1299,6 +1374,7 @@ function App() {
                     provider,
                     systemPrompt,
                     messages: conversationHistoryRef.current, // Pass conversation history
+                    clusterName: selectedCluster,
                     resourceName: aiContext?.name || 'Chat',
                     resourceType: aiContext?.type || 'Conversation',
                     saveToHistory: true // Save session after each response
@@ -1644,8 +1720,15 @@ function App() {
                                     setIsNotificationsPanelOpen(prev => !prev);
                                 }}
                                 isNotificationsPanelOpen={isNotificationsPanelOpen}
+                                isNotificationsMuted={isNotificationsMuted}
+                                onToggleMute={handleToggleMute}
                                 aiProvider={aiProvider}
                                 aiModel={aiModel}
+                                clusters={clustersList}
+                                onClusterSelect={handleClusterSelect}
+                                awsProfile={awsProfile}
+                                awsProfiles={awsProfiles}
+                                onAwsProfileChange={handleAwsProfileChange}
                             />
                             <AnimatePresence>
                                 {isNotificationsPanelOpen && (
@@ -1695,6 +1778,8 @@ function App() {
                         aiModel={aiModel}
                         aiProvider={aiProvider}
                         theme={theme}
+                        pendingToolApproval={pendingToolApproval}
+                        onToolApproval={handleToolApproval}
                     />
                 )}
             </AnimatePresence>

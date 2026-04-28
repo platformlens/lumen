@@ -854,6 +854,74 @@ export class K8sService {
         return metrics;
     }
 
+    /**
+     * Fetches real-time node metrics from metrics-server.
+     * Returns a record of nodeName -> { cpu: string (millicores), memory: string (Mi) }.
+     * Silently returns empty if metrics-server is not installed.
+     */
+    async getNodeMetrics(contextName: string): Promise<Record<string, { cpu: string; memory: string }>> {
+        const metrics: Record<string, { cpu: string; memory: string }> = {};
+
+        try {
+            await this.setContextWithSmartReload(contextName);
+            const customApi = this.kc.makeApiClient(CustomObjectsApi);
+
+            const res = await customApi.listClusterCustomObject({
+                group: 'metrics.k8s.io',
+                version: 'v1beta1',
+                plural: 'nodes'
+            });
+            const items = (res as any).items || [];
+
+            for (const nodeMetric of items) {
+                const nodeName = nodeMetric.metadata?.name;
+                if (!nodeName) continue;
+
+                const cpuStr = nodeMetric.usage?.cpu || '0';
+                const memStr = nodeMetric.usage?.memory || '0';
+
+                // Parse CPU to nanocores then format as millicores
+                let cpuNano = 0;
+                if (cpuStr.endsWith('n')) {
+                    cpuNano = parseInt(cpuStr.slice(0, -1), 10) || 0;
+                } else if (cpuStr.endsWith('m')) {
+                    cpuNano = (parseInt(cpuStr.slice(0, -1), 10) || 0) * 1000000;
+                } else {
+                    cpuNano = (parseFloat(cpuStr) || 0) * 1000000000;
+                }
+
+                // Parse Memory to bytes then format as Mi
+                let memBytes = 0;
+                if (memStr.endsWith('Ki')) {
+                    memBytes = (parseInt(memStr.slice(0, -2), 10) || 0) * 1024;
+                } else if (memStr.endsWith('Mi')) {
+                    memBytes = (parseInt(memStr.slice(0, -2), 10) || 0) * 1024 * 1024;
+                } else if (memStr.endsWith('Gi')) {
+                    memBytes = (parseInt(memStr.slice(0, -2), 10) || 0) * 1024 * 1024 * 1024;
+                } else if (memStr.endsWith('K')) {
+                    memBytes = (parseInt(memStr.slice(0, -1), 10) || 0) * 1000;
+                } else if (memStr.endsWith('M')) {
+                    memBytes = (parseInt(memStr.slice(0, -1), 10) || 0) * 1000000;
+                } else if (memStr.endsWith('G')) {
+                    memBytes = (parseInt(memStr.slice(0, -1), 10) || 0) * 1000000000;
+                } else {
+                    memBytes = parseInt(memStr, 10) || 0;
+                }
+
+                const cpuMillicores = Math.round(cpuNano / 1000000);
+                const memoryMi = Math.round(memBytes / (1024 * 1024));
+
+                metrics[nodeName] = { cpu: `${cpuMillicores}m`, memory: `${memoryMi}Mi` };
+            }
+
+            console.log(`[k8s] Got metrics for ${Object.keys(metrics).length} nodes`);
+        } catch (error) {
+            console.warn('[k8s] Failed to get node metrics (metrics-server may not be installed):', error);
+        }
+
+        return metrics;
+    }
+
     async deletePod(contextName: string, namespace: string, name: string) {
         console.log(`[k8s] deletePod called for ${namespace}/${name}`);
         this.kc.setCurrentContext(contextName);

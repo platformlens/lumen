@@ -13,6 +13,51 @@ export interface WhatsNewRelease {
 
 export const WHATS_NEW_RELEASES: WhatsNewRelease[] = [
     {
+        version: '0.0.8',
+        title: 'Version 0.0.8',
+        description: 'Agentic AI debugging, AWS settings overhaul, cluster quick-switch, and real node metrics.',
+        sections: [
+            {
+                title: 'Agentic AI debugging',
+                colorAccent: 'bg-cyan-500',
+                items: [
+                    'AI assistant can now run kubectl commands against your cluster to debug issues with real data',
+                    'Human-in-the-loop approval — Allow, Allow & Trust, or Deny each tool call',
+                    'Trusted command prefixes for auto-approval — manage them in Settings → AI Models',
+                    'Safety guardrails — dangerous commands are always blocked, read-only mode available',
+                    'Works with AWS Bedrock (Claude), Google Gemini, and local LLMs',
+                ],
+            },
+            {
+                title: 'Settings & status bar',
+                colorAccent: 'bg-green-500',
+                items: [
+                    'AWS credentials moved to a dedicated settings section with full Granted integration',
+                    'Click the cluster name in the status bar to quickly switch clusters',
+                    'AWS profile indicator in the status bar with quick-switch support',
+                    'Mute button to silence anomaly notifications on noisy clusters',
+                ],
+            },
+            {
+                title: 'Node monitoring',
+                colorAccent: 'bg-blue-500',
+                items: [
+                    'Node CPU and memory columns now show real usage from metrics-server',
+                    'Node stats cards and charts update in real-time from the node watcher',
+                ],
+            },
+            {
+                title: 'Bug fixes',
+                colorAccent: 'bg-orange-500',
+                items: [
+                    'Fixed app logo not appearing in production builds (sidebar, splash, settings)',
+                    'Fixed macOS dock icon losing rounded corners with new logo',
+                    'Fixed node delete crashing the UI',
+                ],
+            },
+        ],
+    },
+    {
         version: '0.0.7',
         title: 'Version 0.0.7',
         description: 'Revamped AI assistance, account sign-in, and local LLM support.',

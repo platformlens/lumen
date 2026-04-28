@@ -193,7 +193,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 <ViewSummary resourceType="Node" enabled={summariesEnabled} />
                 <NodesView
                     nodes={nodes}
-                    pods={pods}
+                    clusterName={clusterName}
                     onRowClick={(node: any) => onResourceClick(node, 'node')}
                     searchQuery={searchQuery}
                 />

@@ -15,7 +15,8 @@ import { createGoogleGenerativeAI, type GoogleGenerativeAIProviderOptions } from
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAI } from '@ai-sdk/openai';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
-import { streamText, type ModelMessage, type LanguageModelUsage } from 'ai';
+import { streamText, stepCountIs, type ModelMessage, type LanguageModelUsage } from 'ai';
+import { buildKubectlTools, buildToolSystemPrompt, type ToolMode } from './ai-tools';
 import { startActiveObservation } from '@langfuse/tracing';
 import {
   isLangfuseTracingEnabled,
@@ -484,6 +485,10 @@ function registerIpcHandlers() {
     return Object.fromEntries(metricsMap);
   })
 
+  ipcMain.handle('k8s:getNodeMetrics', async (_, contextName) => {
+    return k8sService.getNodeMetrics(contextName);
+  })
+
   ipcMain.handle('k8s:getPod', (_, contextName, namespace, name) => {
     return k8sService.getPod(contextName, namespace, name);
   })
@@ -646,9 +651,10 @@ function registerIpcHandlers() {
   /**
    * Consume streamText fullStream so reasoning-delta parts reach the renderer.
    * Wraps reasoning in the same markers parsed by parseAssistantThinking in the UI.
+   * Also handles tool-call and tool-result parts for agentic mode.
    */
   async function accumulateStreamWithReasoning(
-    result: { fullStream: AsyncIterable<{ type: string; text?: string; delta?: string }> },
+    result: { fullStream: AsyncIterable<{ type: string; text?: string; delta?: string; [key: string]: any }> },
     sendChunk: (s: string) => void,
     isAborted?: () => boolean
   ): Promise<string> {
@@ -691,6 +697,30 @@ function registerIpcHandlers() {
             reasoningOpen = false;
           }
           break;
+        case 'tool-call': {
+          if (reasoningOpen) {
+            sendChunk(AI_THINK_CLOSE);
+            full += AI_THINK_CLOSE;
+            reasoningOpen = false;
+          }
+          const toolName = (part as any).toolName || 'unknown';
+          const args = (part as any).args || (part as any).input || {};
+          console.log(`[AI Tools] Tool call: ${toolName}`, JSON.stringify(args), 'part keys:', Object.keys(part));
+          const command = typeof args === 'object' ? (args.command || JSON.stringify(args)) : String(args);
+          const marker = `\n\n🔧 **Running:** \`${command}\`\n`;
+          sendChunk(marker);
+          full += marker;
+          break;
+        }
+        case 'tool-result': {
+          const toolResult = (part as any).result || (part as any).output || '';
+          console.log(`[AI Tools] Tool result (${typeof toolResult === 'string' ? toolResult.length : 'object'} chars)`);
+          const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+          const outputMarker = `\n<details><summary>📋 Output (click to expand)</summary>\n\n\`\`\`\n${resultStr}\n\`\`\`\n</details>\n\n`;
+          sendChunk(outputMarker);
+          full += outputMarker;
+          break;
+        }
         case 'text-delta': {
           const t = partText(part);
           if (!t) break;
@@ -704,6 +734,11 @@ function registerIpcHandlers() {
           break;
         }
         default:
+          // Log all part types for debugging multi-step tool calling
+          const partData: Record<string, unknown> = {};
+          if ((part as any).finishReason) partData.finishReason = (part as any).finishReason;
+          if ((part as any).isContinued) partData.isContinued = (part as any).isContinued;
+          console.log(`[AI Stream] Part: ${part.type}`, JSON.stringify(partData));
           break;
       }
     }
@@ -742,7 +777,7 @@ function registerIpcHandlers() {
           aiModel = bedrock(model);
         } else if (provider === 'local') {
           const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
-          aiModel = localProvider(model);
+          aiModel = localProvider.chat(model);
         } else {
           event.sender.send('ai:explainResourceStream:error', `Unknown provider: ${provider}`);
           return;
@@ -889,6 +924,27 @@ function registerIpcHandlers() {
     }
   });
 
+  // Tool approval response from renderer
+  ipcMain.on('ai:toolApprovalResponse', (_, toolCallId: string, approved: boolean, trust: boolean) => {
+    console.log(`[AI Tools] Approval response: ${toolCallId} approved=${approved} trust=${trust}`);
+    const resolver = (activeCustomPromptAbort as any)?.__resolveToolApproval;
+    if (resolver) {
+      const command = resolver(toolCallId, approved, trust);
+      // If user chose to trust this command pattern, save it
+      if (trust && approved && command) {
+        // Extract the verb prefix (e.g. "kubectl get", "kubectl describe")
+        const parts = command.trim().split(/\s+/);
+        const prefix = parts.length >= 2 ? `${parts[0]} ${parts[1]}` : command;
+        const existing = (store.get('settings_aiTrustedCommands') as string[]) || [];
+        if (!existing.includes(prefix)) {
+          const updated = [...existing, prefix];
+          store.set('settings_aiTrustedCommands', updated);
+          console.log(`[AI Tools] Trusted command added: "${prefix}"`);
+        }
+      }
+    }
+  });
+
   // Custom prompt streaming (for log analysis, etc.) - supports conversation history
   // Now context-aware: injects cluster state from ContextEngine and handles /kubectl prefix
   ipcMain.on('ai:customPromptStream', async (event, customPrompt, options) => {
@@ -931,7 +987,7 @@ function registerIpcHandlers() {
           aiModel = bedrock(model);
         } else if (provider === 'local') {
           const localProvider = createOpenAI({ baseURL: localEndpoint, apiKey: 'not-needed' });
-          aiModel = localProvider(model);
+          aiModel = localProvider.chat(model);
         } else {
           event.sender.send('ai:customPromptStream:error', `Unknown provider: ${provider}`);
           activeCustomPromptAbort = null;
@@ -972,6 +1028,23 @@ function registerIpcHandlers() {
         enhancedSystemPrompt += '\n\nNote: No live cluster context is currently available. Answer based on general Kubernetes knowledge.';
       }
 
+      // --- Tool calling (agentic mode) ---
+      const toolMode = (store.get('settings_aiToolMode') as ToolMode) || 'off';
+      const trustedCommands = (store.get('settings_aiTrustedCommands') as string[]) || [];
+      console.log(`[AI Tools] Tool mode: ${toolMode}, cluster: ${clusterName || 'none'}, trusted: ${trustedCommands.length}`);
+      const toolResult = buildKubectlTools(clusterName || undefined, toolMode, trustedCommands, win);
+      const kubectlTools = toolResult?.tools;
+      // Store the resolver so the IPC handler can reach it
+      if (toolResult) {
+        (activeCustomPromptAbort as any).__resolveToolApproval = toolResult.resolvePendingApproval;
+      }
+      if (toolMode !== 'off') {
+        enhancedSystemPrompt += buildToolSystemPrompt(toolMode);
+        console.log('[AI Tools] Tools enabled, mode:', toolMode);
+      } else {
+        console.log('[AI Tools] Tool calling is OFF');
+      }
+
       // Handle /kubectl mode
       if (isKubectlMode) {
         const activeCluster = clusterName || 'unknown';
@@ -981,7 +1054,8 @@ function registerIpcHandlers() {
       }
 
       let geminiCachedContentName: string | null = null;
-      if (provider === 'google' && geminiApiKey) {
+      // Skip Gemini caching when tools are enabled — tool definitions need to be passed directly
+      if (provider === 'google' && geminiApiKey && !kubectlTools) {
         geminiCachedContentName = await getOrCreateGeminiExplicitCachedContentName(
           geminiApiKey,
           model,
@@ -1047,38 +1121,49 @@ function registerIpcHandlers() {
           return { fullResponse };
         }
         let result: ReturnType<typeof streamText>;
-        if (messages && messages.length > 0) {
+
+        // When tools are enabled, always use messages format (required for multi-step tool calling)
+        const effectiveMessages = (messages && messages.length > 0)
+          ? messages
+          : [{ role: 'user' as const, content: actualQuery }];
+        const useMessagesFormat = (messages && messages.length > 0) || kubectlTools;
+
+        console.log(`[AI Tools] streamText config: useMessages=${useMessagesFormat}, hasTools=${!!kubectlTools}, provider=${provider}, model=${model}, maxSteps=${kubectlTools ? 10 : 1}`);
+
+        if (useMessagesFormat) {
           if (provider === 'bedrock' && isAnthropicBedrockModel(model)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             result = streamText({
               model: aiModel,
-              messages: bedrockMessagesWithOptionalCache(enhancedSystemPrompt, messages as ModelMessage[]),
+              messages: bedrockMessagesWithOptionalCache(enhancedSystemPrompt, effectiveMessages as ModelMessage[]),
               abortSignal,
               onError: handleStreamError,
+              tools: kubectlTools as any,
+              stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
             });
           } else if (provider === 'google' && googleCacheProviderOptions) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             result = streamText({
               model: aiModel,
-              messages: messages as ModelMessage[],
+              messages: effectiveMessages as ModelMessage[],
               providerOptions: googleCacheProviderOptions,
               abortSignal,
               onError: handleStreamError,
+              tools: kubectlTools as any,
+              stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
             });
           } else {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             result = streamText({
               model: aiModel,
-              messages: messages,
+              messages: effectiveMessages as ModelMessage[],
               system: enhancedSystemPrompt,
               abortSignal,
               onError: handleStreamError,
+              tools: kubectlTools as any,
+              stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
             });
           }
-        } else if (provider === 'bedrock' && isAnthropicBedrockModel(model)) {
-          result = streamText({
-            model: aiModel,
-            messages: bedrockMessagesWithOptionalCache(enhancedSystemPrompt, [{ role: 'user', content: actualQuery }]),
-            abortSignal,
-            onError: handleStreamError,
-          });
         } else if (provider === 'google' && googleCacheProviderOptions) {
           result = streamText({
             model: aiModel,

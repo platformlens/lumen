@@ -42,6 +42,7 @@ interface Window {
     getPods: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; status: string; restarts: number; age: string }>>
     getPodsForNode: (contextName: string, nodeName: string) => Promise<any[]>
     getPodMetrics: (contextName: string, namespaces?: string[]) => Promise<Record<string, { cpu: string; memory: string }>>
+    getNodeMetrics: (contextName: string) => Promise<Record<string, { cpu: string; memory: string }>>
     getPod: (contextName: string, namespace: string, name: string) => Promise<any>
     getReplicaSets: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; desired: number; current: number; ready: number }>>
     getReplicaSet: (contextName: string, namespace: string, name: string) => Promise<any>

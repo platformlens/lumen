@@ -104,8 +104,8 @@ interface NodeColumnDef {
 const NODE_COLUMNS: NodeColumnDef[] = [
     { key: 'name', label: 'Name', defaultWidth: 200, sortable: true, flexGrow: 2 },
     { key: 'status', label: 'Status', defaultWidth: 90, sortable: true },
-    { key: 'cpuUtil', label: 'CPU Requests', defaultWidth: 150, sortable: true, flexGrow: 1 },
-    { key: 'memUtil', label: 'Memory Requests', defaultWidth: 150, sortable: true, flexGrow: 1 },
+    { key: 'cpuUtil', label: 'CPU Usage', defaultWidth: 150, sortable: true, flexGrow: 1 },
+    { key: 'memUtil', label: 'Memory Usage', defaultWidth: 150, sortable: true, flexGrow: 1 },
     { key: 'instanceType', label: 'Instance Type', defaultWidth: 120, sortable: true },
     { key: 'zone', label: 'Zone', defaultWidth: 120, sortable: true },
     { key: 'capacityType', label: 'Capacity', defaultWidth: 100, sortable: true },
@@ -138,7 +138,7 @@ function saveColumnWidths(widths: Record<string, number>) {
 
 interface NodesViewProps {
     nodes: any[];
-    pods: any[];
+    clusterName: string;
     onRowClick?: (node: any) => void;
     searchQuery?: string;
 }
@@ -179,7 +179,7 @@ const UtilizationBar: React.FC<{ percentage: number; type: 'cpu' | 'memory' }> =
     );
 };
 
-const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, searchQuery = '' }) => {
+const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowClick, searchQuery = '' }) => {
     const [showStats, setShowStats] = useState(false);
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const [columnWidths, setColumnWidths] = useState<Record<string, number>>(loadColumnWidths);
@@ -246,75 +246,67 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, sea
 
     const effectiveTotalWidth = useMemo(() => Object.values(effectiveWidths).reduce((a, b) => a + b, 0), [effectiveWidths]);
 
-    // Calculate resource requests per node
-    const nodeUtilization = useMemo(() => {
-        const utilMap = new Map<string, { cpuRequested: number; memoryRequested: number; cpuCapacity: number; memoryCapacity: number }>();
+    // Fetch real-time node metrics from metrics-server
+    const [nodeMetrics, setNodeMetrics] = useState<Record<string, { cpu: string; memory: string }>>({});
 
-        const cpuCache = new Map<string, number>();
-        const memCache = new Map<string, number>();
+    useEffect(() => {
+        if (!clusterName) return;
+        let cancelled = false;
+
+        const fetchMetrics = () => {
+            window.k8s.getNodeMetrics(clusterName).then(metrics => {
+                if (!cancelled) setNodeMetrics(metrics);
+            }).catch(() => {
+                // metrics-server may not be installed — silently ignore
+            });
+        };
+
+        fetchMetrics();
+        const interval = setInterval(fetchMetrics, 30000); // refresh every 30s
+
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+    }, [clusterName]);
+
+    // Build utilization map from node capacity + real metrics-server usage
+    const nodeUtilization = useMemo(() => {
+        const utilMap = new Map<string, { cpuUsed: number; memoryUsed: number; cpuCapacity: number; memoryCapacity: number }>();
 
         const parseCpu = (cpu: string): number => {
             if (!cpu) return 0;
-            if (cpuCache.has(cpu)) return cpuCache.get(cpu)!;
-            let result: number;
-            if (cpu.endsWith('m')) {
-                result = parseInt(cpu);
-            } else {
-                result = parseFloat(cpu) * 1000;
-            }
-            cpuCache.set(cpu, result);
-            return result;
+            if (cpu.endsWith('m')) return parseInt(cpu);
+            return parseFloat(cpu) * 1000;
         };
 
         const parseMemory = (mem: string): number => {
             if (!mem) return 0;
-            if (memCache.has(mem)) return memCache.get(mem)!;
             const units: Record<string, number> = {
-                'Ki': 1024,
-                'Mi': 1024 * 1024,
-                'Gi': 1024 * 1024 * 1024,
-                'K': 1000,
-                'M': 1000 * 1000,
-                'G': 1000 * 1000 * 1000
+                'Ki': 1024, 'Mi': 1024 * 1024, 'Gi': 1024 * 1024 * 1024,
+                'K': 1000, 'M': 1000 * 1000, 'G': 1000 * 1000 * 1000
             };
-            let result = 0;
             for (const [suffix, multiplier] of Object.entries(units)) {
                 if (mem.endsWith(suffix)) {
-                    result = parseFloat(mem.slice(0, -suffix.length)) * multiplier;
-                    break;
+                    return parseFloat(mem.slice(0, -suffix.length)) * multiplier;
                 }
             }
-            if (result === 0) result = parseFloat(mem);
-            memCache.set(mem, result);
-            return result;
+            return parseFloat(mem);
         };
 
         nodes.forEach(node => {
             const nodeName = node.metadata?.name || node.name;
+            const metrics = nodeMetrics[nodeName];
             utilMap.set(nodeName, {
-                cpuRequested: 0,
-                memoryRequested: 0,
+                cpuUsed: metrics ? parseCpu(metrics.cpu) : 0,
+                memoryUsed: metrics ? parseMemory(metrics.memory) : 0,
                 cpuCapacity: parseCpu(node.cpu || '0'),
                 memoryCapacity: parseMemory(node.memory || '0')
             });
         });
 
-        pods.forEach(pod => {
-            const nodeName = pod.spec?.nodeName || pod.nodeName;
-            if (!nodeName) return;
-            const util = utilMap.get(nodeName);
-            if (!util) return;
-            const containers = pod.spec?.containers || [];
-            containers.forEach((container: any) => {
-                const requests = container.resources?.requests;
-                if (!requests) return;
-                util.cpuRequested += parseCpu(requests.cpu || '0');
-                util.memoryRequested += parseMemory(requests.memory || '0');
-            });
-        });
-
         return utilMap;
-    }, [nodes, pods]);
+    }, [nodes, nodeMetrics]);
 
     // Filter logic
     const filteredNodes = useMemo(() => {
@@ -367,15 +359,15 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, sea
                 case 'cpuUtil': {
                     const aUtil = nodeUtilization.get(a.metadata?.name || a.name);
                     const bUtil = nodeUtilization.get(b.metadata?.name || b.name);
-                    aValue = aUtil && aUtil.cpuCapacity ? (aUtil.cpuRequested / aUtil.cpuCapacity) : 0;
-                    bValue = bUtil && bUtil.cpuCapacity ? (bUtil.cpuRequested / bUtil.cpuCapacity) : 0;
+                    aValue = aUtil && aUtil.cpuCapacity ? (aUtil.cpuUsed / aUtil.cpuCapacity) : 0;
+                    bValue = bUtil && bUtil.cpuCapacity ? (bUtil.cpuUsed / bUtil.cpuCapacity) : 0;
                     break;
                 }
                 case 'memUtil': {
                     const aUtil = nodeUtilization.get(a.metadata?.name || a.name);
                     const bUtil = nodeUtilization.get(b.metadata?.name || b.name);
-                    aValue = aUtil && aUtil.memoryCapacity ? (aUtil.memoryRequested / aUtil.memoryCapacity) : 0;
-                    bValue = bUtil && bUtil.memoryCapacity ? (bUtil.memoryRequested / bUtil.memoryCapacity) : 0;
+                    aValue = aUtil && aUtil.memoryCapacity ? (aUtil.memoryUsed / aUtil.memoryCapacity) : 0;
+                    bValue = bUtil && bUtil.memoryCapacity ? (bUtil.memoryUsed / bUtil.memoryCapacity) : 0;
                     break;
                 }
                 default:
@@ -445,14 +437,14 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, pods, onRowClick, sea
                 const nodeName = node.metadata?.name || node.name;
                 const util = nodeUtilization.get(nodeName);
                 if (!util || util.cpuCapacity === 0) return <span className="text-gray-500 text-xs">N/A</span>;
-                const percentage = (util.cpuRequested / util.cpuCapacity) * 100;
+                const percentage = (util.cpuUsed / util.cpuCapacity) * 100;
                 return <UtilizationBar percentage={percentage} type="cpu" />;
             }
             case 'memUtil': {
                 const nodeName = node.metadata?.name || node.name;
                 const util = nodeUtilization.get(nodeName);
                 if (!util || util.memoryCapacity === 0) return <span className="text-gray-500 text-xs">N/A</span>;
-                const percentage = (util.memoryRequested / util.memoryCapacity) * 100;
+                const percentage = (util.memoryUsed / util.memoryCapacity) * 100;
                 return <UtilizationBar percentage={percentage} type="memory" />;
             }
             case 'instanceType': {

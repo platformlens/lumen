@@ -6,6 +6,7 @@ import {
 import { GlassButton } from '../../shared/GlassButton';
 import { ToggleGroup } from '../../shared/ToggleGroup';
 import packageJson from '../../../../package.json';
+import { lumenLogo } from '../../../assets/lumen-logo';
 
 const FONT_OPTIONS = [
   { value: 'Monaco', label: 'Monaco', stack: "'Monaco', 'Menlo', 'Consolas', monospace" },
@@ -61,6 +62,12 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   /** Langfuse OpenTelemetry: default on for existing installs (undefined = true). */
   const [aiTraceAnalyticsEnabled, setAiTraceAnalyticsEnabled] = useState(true);
+
+  /** AI tool calling mode: off, read, read-write */
+  const [aiToolMode, setAiToolMode] = useState<'off' | 'read' | 'read-write'>('off');
+
+  /** Trusted command prefixes for auto-approval */
+  const [trustedCommands, setTrustedCommands] = useState<string[]>([]);
 
   const [awsAuthType, setAwsAuthType] = useState<'none' | 'manual' | 'managed'>('none');
   const [forceManualAws, setForceManualAws] = useState(false);
@@ -134,6 +141,12 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     }).catch(() => { });
     window.k8s.settings.get('aiTraceAnalytics').then((saved: boolean | null) => {
       if (typeof saved === 'boolean') setAiTraceAnalyticsEnabled(saved);
+    }).catch(() => { });
+    window.k8s.settings.get('aiToolMode').then((saved: string | null) => {
+      if (saved === 'off' || saved === 'read' || saved === 'read-write') setAiToolMode(saved);
+    }).catch(() => { });
+    window.k8s.settings.get('aiTrustedCommands').then((saved: string[] | null) => {
+      if (Array.isArray(saved)) setTrustedCommands(saved);
     }).catch(() => { });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
@@ -418,6 +431,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const sectionTitles: Record<string, string> = {
     'settings-general': 'General',
     'settings-ai': 'AI Models',
+    'settings-aws': 'AWS',
     'settings-context': 'AI Context Engine',
     'settings-editor': 'Appearance',
     'settings-about': 'About',
@@ -571,150 +585,15 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         {selectedProvider === 'bedrock' && (
           <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
-              Configure AWS Credentials for Bedrock access.
+              AWS Bedrock provider selected.
               {awsAuthType === 'managed' && <span className="text-green-400 ml-2 font-semibold">✓ Authenticated via Environment/SSO</span>}
+              {awsAuthType === 'none' && <span className="text-yellow-400 ml-2 font-semibold">⚠ Not authenticated</span>}
             </p>
 
-            {/* AWS Profile Selector */}
-            {awsProfiles.length > 1 && (
-              <div className="space-y-1">
-                <label className="text-xs text-gray-500">AWS Profile</label>
-                <select
-                  value={selectedAwsProfile}
-                  onChange={async (e) => {
-                    const profile = e.target.value;
-                    setSelectedAwsProfile(profile);
-                    const setResult = await window.k8s.aws.setProfile(profile);
-                    if (setResult?.identity) {
-                      setAwsIdentity(setResult.identity);
-                    } else {
-                      const identity = await window.k8s.aws.getCallerIdentity();
-                      setAwsIdentity(identity?.isAuthenticated ? identity.identity : null);
-                    }
-                    const result = await window.k8s.checkAwsAuth();
-                    if (result.isAuthenticated && result.isManaged) setAwsAuthType('managed');
-                    else if (result.isAuthenticated) setAwsAuthType('manual');
-                    else setAwsAuthType('none');
-                    const models = await window.k8s.listModels('bedrock');
-                    if (models && models.length > 0) setBedrockModels(models);
-                  }}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/50"
-                >
-                  {awsProfiles.map(profile => (
-                    <option key={profile} value={profile} className="bg-gray-900">{profile}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Granted Detection Banner */}
-            {(grantedInfo.active || grantedInfo.configured) && (
-              <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Shield className="text-purple-400 flex-shrink-0" size={18} />
-                    <div className="min-w-0">
-                      <div className="text-sm text-purple-200">
-                        {grantedInfo.active
-                          ? `Granted credentials active${grantedInfo.envProfile ? ` — ${grantedInfo.envProfile}` : ''}`
-                          : `Granted detected — ${grantedInfo.configProfiles.length} profiles configured`}
-                      </div>
-                      {awsIdentity && (
-                        <div className="text-xs text-purple-300/70 mt-0.5 font-mono truncate">{awsIdentity}</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    {grantedInfo.configProfiles.length > 0 && (
-                      <button onClick={() => setShowGrantedProfiles(prev => !prev)} className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1">
-                        {showGrantedProfiles ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        {showGrantedProfiles ? 'Hide' : 'Profiles'}
-                      </button>
-                    )}
-                    <button
-                      onClick={async () => {
-                        await window.k8s.aws.setProfile(selectedAwsProfile);
-                        const [envActive, configResult, envCreds] = await Promise.all([
-                          window.k8s.aws.isGrantedActive(),
-                          window.k8s.aws.isGrantedConfigured(),
-                          window.k8s.aws.getGrantedCredentials(),
-                        ]);
-                        setGrantedInfo({ active: envActive, configured: configResult?.configured || false, envProfile: envCreds?.profile || undefined, configProfiles: configResult?.profiles || [] });
-                        const identity = await window.k8s.aws.getCallerIdentity();
-                        setAwsIdentity(identity?.isAuthenticated ? identity.identity : null);
-                        const result = await window.k8s.checkAwsAuth();
-                        if (result.isAuthenticated) setAwsAuthType(result.isManaged ? 'managed' : 'manual');
-                        const models = await window.k8s.listModels('bedrock');
-                        if (models && models.length > 0) setBedrockModels(models);
-                      }}
-                      className="text-xs text-purple-400 hover:text-purple-300 underline"
-                    >
-                      Refresh
-                    </button>
-                  </div>
-                </div>
-                {showGrantedProfiles && grantedInfo.configProfiles.length > 0 && (
-                  <div className="mt-2 max-h-48 overflow-y-auto bg-black/20 rounded-lg p-2 space-y-0.5">
-                    {grantedInfo.configProfiles.map(profile => (
-                      <div key={profile} className="text-xs text-purple-300/60 font-mono py-0.5 px-1 hover:text-purple-200 hover:bg-purple-500/10 rounded">{profile}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Active Identity */}
-            {!grantedInfo.active && !grantedInfo.configured && awsIdentity && (
-              <div className="text-xs text-gray-500 font-mono bg-black/20 rounded-lg px-3 py-2">
-                Identity: {awsIdentity}
-              </div>
-            )}
-
-            {awsAuthType === 'managed' && !forceManualAws && (
-              <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Shield className="text-green-400" size={18} />
-                  <div className="text-sm text-green-200">Using managed credentials (SSO/Environment). No manual keys required.</div>
-                </div>
-                <button onClick={() => setForceManualAws(true)} className="text-xs text-green-400 hover:text-green-300 underline">Override with Manual Keys</button>
-              </div>
-            )}
-
-            {(awsAuthType !== 'managed' || forceManualAws) && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-1 space-y-1">
-                    <label className="text-xs text-gray-500">Region</label>
-                    <input type="text" value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="us-east-1" />
-                  </div>
-                  <div className="col-span-1 space-y-1">
-                    <label className="text-xs text-gray-500">Access Key ID</label>
-                    <input type="text" value={awsAccessKey} onChange={(e) => setAwsAccessKey(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="AKIA..." />
-                  </div>
-                  <div className="col-span-1 space-y-1">
-                    <label className="text-xs text-gray-500">Secret Access Key</label>
-                    <input type="password" value={awsSecretKey} onChange={(e) => setAwsSecretKey(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="Secret Key" />
-                  </div>
-                  <div className="col-span-1 space-y-1">
-                    <label className="text-xs text-gray-500">Session Token (Optional)</label>
-                    <input type="password" value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="Session Token" />
-                  </div>
-                </div>
-                <div className="flex justify-end pt-2">
-                  {awsAuthType === 'managed' && (
-                    <button onClick={() => setForceManualAws(false)} className="mr-auto text-xs text-gray-500 hover:text-gray-300">Cancel Override</button>
-                  )}
-                  <GlassButton
-                    onClick={handleSaveAwsCreds}
-                    variant={isSaved ? 'secondary' : 'primary'}
-                    className={isSaved ? 'bg-green-500/10 text-green-400 border-green-500/20' : ''}
-                    icon={isSaved ? <Check size={16} /> : undefined}
-                  >
-                    {isSaved ? 'Saved AWS Creds' : 'Save AWS Creds'}
-                  </GlassButton>
-                </div>
-              </>
-            )}
+            <div className="flex items-center gap-2 text-xs text-gray-500 bg-black/20 rounded-lg px-3 py-2">
+              <Shield size={12} />
+              <span>Configure AWS credentials in the <strong className="text-gray-300">AWS</strong> settings section</span>
+            </div>
 
             <div className="mt-4">
               <h4 className="text-sm font-medium text-gray-300 mb-2">Available Models</h4>
@@ -824,6 +703,84 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         <div className="flex items-center gap-2 text-xs text-gray-500 mt-2 px-1">
           <Shield size={12} />
           <span>Stored locally in encrypted configuration</span>
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <div className="w-1 h-6 bg-green-500 rounded-full" />
+            Tool Calling (Agentic)
+          </h3>
+        </div>
+        <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+          <p className="text-sm text-gray-400 leading-relaxed">
+            When enabled, the AI assistant can execute <strong className="text-gray-300 font-medium">kubectl commands</strong> against
+            your cluster to gather real data for debugging. Instead of guessing, it will inspect pods, logs, events, and resources
+            directly — then provide analysis based on actual cluster state.
+          </p>
+          <SettingRow
+            label="Tool calling mode"
+            description="Controls what the AI can do. Read-only allows get, describe, logs, etc. Read-write also allows apply, scale, rollout, etc."
+          >
+            <select
+              value={aiToolMode}
+              onChange={async (e) => {
+                const mode = e.target.value as 'off' | 'read' | 'read-write';
+                setAiToolMode(mode);
+                await window.k8s.settings.set('aiToolMode', mode);
+                showSavedFeedback();
+              }}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/50"
+            >
+              <option value="off" className="bg-gray-900">Off</option>
+              <option value="read" className="bg-gray-900">Read-only (get, describe, logs)</option>
+              <option value="read-write" className="bg-gray-900">Read &amp; Write (apply, scale, rollout)</option>
+            </select>
+          </SettingRow>
+          {aiToolMode !== 'off' && (
+            <div className="flex items-center gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/10 rounded-lg px-3 py-2">
+              <Info size={12} />
+              <span>The AI will run kubectl commands using your current kubeconfig context. Commands are logged to the console.</span>
+            </div>
+          )}
+          {aiToolMode !== 'off' && trustedCommands.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-gray-500 font-medium">Auto-approved command prefixes</label>
+                <button
+                  onClick={async () => {
+                    setTrustedCommands([]);
+                    await window.k8s.settings.set('aiTrustedCommands', []);
+                    showSavedFeedback();
+                  }}
+                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                >
+                  Clear all
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {trustedCommands.map((cmd, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-green-500/10 border border-green-500/20 rounded text-xs text-green-400 font-mono"
+                  >
+                    {cmd}
+                    <button
+                      onClick={async () => {
+                        const updated = trustedCommands.filter((_, idx) => idx !== i);
+                        setTrustedCommands(updated);
+                        await window.k8s.settings.set('aiTrustedCommands', updated);
+                      }}
+                      className="text-green-500/50 hover:text-red-400 transition-colors"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -1088,7 +1045,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
             <p className="text-gray-400 text-sm">Kubernetes Management Tool</p>
           </div>
           <div className="w-16 h-16 rounded-xl overflow-hidden">
-            <img src="/logo-new.png" alt="Lumen Logo" className="w-full h-full object-cover" />
+            <img src={lumenLogo} alt="Lumen Logo" className="w-full h-full object-cover" />
           </div>
         </div>
         <div className="space-y-3 pt-4 border-t border-white/10">
@@ -1125,10 +1082,172 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     </div>
   );
 
+  const renderAwsSection = () => (
+    <div className="space-y-8">
+      <section>
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <div className="w-1 h-6 bg-orange-500 rounded-full"></div>
+            AWS Credentials
+          </h3>
+        </div>
+
+        <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+          <p className="text-sm text-gray-400">
+            Configure AWS Credentials for Bedrock and AWS resource access.
+            {awsAuthType === 'managed' && <span className="text-green-400 ml-2 font-semibold">✓ Authenticated via Environment/SSO</span>}
+          </p>
+
+          {/* AWS Profile Selector */}
+          {awsProfiles.length > 1 && (
+            <div className="space-y-1">
+              <label className="text-xs text-gray-500">AWS Profile</label>
+              <select
+                value={selectedAwsProfile}
+                onChange={async (e) => {
+                  const profile = e.target.value;
+                  setSelectedAwsProfile(profile);
+                  const setResult = await window.k8s.aws.setProfile(profile);
+                  if (setResult?.identity) {
+                    setAwsIdentity(setResult.identity);
+                  } else {
+                    const identity = await window.k8s.aws.getCallerIdentity();
+                    setAwsIdentity(identity?.isAuthenticated ? identity.identity : null);
+                  }
+                  const result = await window.k8s.checkAwsAuth();
+                  if (result.isAuthenticated && result.isManaged) setAwsAuthType('managed');
+                  else if (result.isAuthenticated) setAwsAuthType('manual');
+                  else setAwsAuthType('none');
+                  const models = await window.k8s.listModels('bedrock');
+                  if (models && models.length > 0) setBedrockModels(models);
+                }}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500/50"
+              >
+                {awsProfiles.map(profile => (
+                  <option key={profile} value={profile} className="bg-gray-900">{profile}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Granted Detection Banner */}
+          {(grantedInfo.active || grantedInfo.configured) && (
+            <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Shield className="text-purple-400 flex-shrink-0" size={18} />
+                  <div className="min-w-0">
+                    <div className="text-sm text-purple-200">
+                      {grantedInfo.active
+                        ? `Granted credentials active${grantedInfo.envProfile ? ` — ${grantedInfo.envProfile}` : ''}`
+                        : `Granted detected — ${grantedInfo.configProfiles.length} profiles configured`}
+                    </div>
+                    {awsIdentity && (
+                      <div className="text-xs text-purple-300/70 mt-0.5 font-mono truncate">{awsIdentity}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {grantedInfo.configProfiles.length > 0 && (
+                    <button onClick={() => setShowGrantedProfiles(prev => !prev)} className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1">
+                      {showGrantedProfiles ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      {showGrantedProfiles ? 'Hide' : 'Profiles'}
+                    </button>
+                  )}
+                  <button
+                    onClick={async () => {
+                      await window.k8s.aws.setProfile(selectedAwsProfile);
+                      const [envActive, configResult, envCreds] = await Promise.all([
+                        window.k8s.aws.isGrantedActive(),
+                        window.k8s.aws.isGrantedConfigured(),
+                        window.k8s.aws.getGrantedCredentials(),
+                      ]);
+                      setGrantedInfo({ active: envActive, configured: configResult?.configured || false, envProfile: envCreds?.profile || undefined, configProfiles: configResult?.profiles || [] });
+                      const identity = await window.k8s.aws.getCallerIdentity();
+                      setAwsIdentity(identity?.isAuthenticated ? identity.identity : null);
+                      const result = await window.k8s.checkAwsAuth();
+                      if (result.isAuthenticated) setAwsAuthType(result.isManaged ? 'managed' : 'manual');
+                      const models = await window.k8s.listModels('bedrock');
+                      if (models && models.length > 0) setBedrockModels(models);
+                    }}
+                    className="text-xs text-purple-400 hover:text-purple-300 underline"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              {showGrantedProfiles && grantedInfo.configProfiles.length > 0 && (
+                <div className="mt-2 max-h-48 overflow-y-auto bg-black/20 rounded-lg p-2 space-y-0.5">
+                  {grantedInfo.configProfiles.map(profile => (
+                    <div key={profile} className="text-xs text-purple-300/60 font-mono py-0.5 px-1 hover:text-purple-200 hover:bg-purple-500/10 rounded">{profile}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Active Identity */}
+          {!grantedInfo.active && !grantedInfo.configured && awsIdentity && (
+            <div className="text-xs text-gray-500 font-mono bg-black/20 rounded-lg px-3 py-2">
+              Identity: {awsIdentity}
+            </div>
+          )}
+
+          {awsAuthType === 'managed' && !forceManualAws && (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Shield className="text-green-400" size={18} />
+                <div className="text-sm text-green-200">Using managed credentials (SSO/Environment). No manual keys required.</div>
+              </div>
+              <button onClick={() => setForceManualAws(true)} className="text-xs text-green-400 hover:text-green-300 underline">Override with Manual Keys</button>
+            </div>
+          )}
+
+          {(awsAuthType !== 'managed' || forceManualAws) && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-1 space-y-1">
+                  <label className="text-xs text-gray-500">Region</label>
+                  <input type="text" value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="us-east-1" />
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <label className="text-xs text-gray-500">Access Key ID</label>
+                  <input type="text" value={awsAccessKey} onChange={(e) => setAwsAccessKey(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="AKIA..." />
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <label className="text-xs text-gray-500">Secret Access Key</label>
+                  <input type="password" value={awsSecretKey} onChange={(e) => setAwsSecretKey(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="Secret Key" />
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <label className="text-xs text-gray-500">Session Token (Optional)</label>
+                  <input type="password" value={awsSessionToken} onChange={(e) => setAwsSessionToken(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white text-sm" placeholder="Session Token" />
+                </div>
+              </div>
+              <div className="flex justify-end pt-2">
+                {awsAuthType === 'managed' && (
+                  <button onClick={() => setForceManualAws(false)} className="mr-auto text-xs text-gray-500 hover:text-gray-300">Cancel Override</button>
+                )}
+                <GlassButton
+                  onClick={handleSaveAwsCreds}
+                  variant={isSaved ? 'secondary' : 'primary'}
+                  className={isSaved ? 'bg-green-500/10 text-green-400 border-green-500/20' : ''}
+                  icon={isSaved ? <Check size={16} /> : undefined}
+                >
+                  {isSaved ? 'Saved AWS Creds' : 'Save AWS Creds'}
+                </GlassButton>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+
   const renderContent = () => {
     switch (activeSection) {
       case 'settings-general': return renderGeneralSection();
       case 'settings-ai': return renderAISection();
+      case 'settings-aws': return renderAwsSection();
       case 'settings-context': return renderContextSection();
       case 'settings-editor': return renderEditorSection();
       case 'settings-about': return renderAboutSection();
@@ -1149,6 +1268,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         <p className="text-sm text-gray-400 mt-1 ml-5">
           {activeSection === 'settings-general' && 'Kubeconfig, cluster defaults, and app behavior'}
           {activeSection === 'settings-ai' && 'Configure AI providers and model selection'}
+          {activeSection === 'settings-aws' && 'AWS profiles, credentials, and Granted integration'}
           {activeSection === 'settings-context' && 'Token budget, view summaries, and anomaly detection'}
           {activeSection === 'settings-editor' && 'Font, size, YAML editor, and terminal preferences'}
           {activeSection === 'settings-about' && 'Version info and keyboard shortcuts'}

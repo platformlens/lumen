@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('k8s', {
   getPodsForNode: (contextName: string, nodeName: string) => ipcRenderer.invoke('k8s:getPodsForNode', contextName, nodeName),
   getPodsLite: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPodsLite', contextName, namespaces),
   getPodMetrics: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getPodMetrics', contextName, namespaces),
+  getNodeMetrics: (contextName: string) => ipcRenderer.invoke('k8s:getNodeMetrics', contextName),
   getPod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getPod', contextName, namespace, name),
   getReplicaSets: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getReplicaSets', contextName, namespaces),
   getDeploymentRevisions: (contextName: string, namespace: string, deploymentName: string) => ipcRenderer.invoke('k8s:getDeploymentRevisions', contextName, namespace, deploymentName),
@@ -198,6 +199,15 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.off('ai:customPromptStream:done', doneListener);
       ipcRenderer.off('ai:customPromptStream:error', errorListener);
     };
+  },
+  // Tool approval IPC
+  onToolApprovalRequest: (callback: (request: { toolCallId: string; command: string; isReadOnly: boolean }) => void) => {
+    const listener = (_: any, request: any) => callback(request);
+    ipcRenderer.on('ai:toolApprovalRequest', listener);
+    return () => { ipcRenderer.off('ai:toolApprovalRequest', listener); };
+  },
+  respondToolApproval: (toolCallId: string, approved: boolean, trust: boolean) => {
+    ipcRenderer.send('ai:toolApprovalResponse', toolCallId, approved, trust);
   },
   decodeCertificate: (certData: string) => ipcRenderer.invoke('k8s:decodeCertificate', certData),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

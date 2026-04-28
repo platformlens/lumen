@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { lumenLogo } from '../../assets/lumen-logo';
 
 interface SplashScreenProps {
     onFinished: () => void;
@@ -173,7 +174,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinished, minDurat
                                 transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
                             />
                             <img
-                                src="/logo-new.png"
+                                src={lumenLogo}
                                 alt="Lumen"
                                 className="w-20 h-20 relative z-10 drop-shadow-[0_0_30px_rgba(59,130,246,0.3)]"
                             />

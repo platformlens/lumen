@@ -1,5 +1,5 @@
-import React from 'react';
-import { Terminal, Bell, Wifi, Server } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Terminal, Bell, BellOff, Wifi, Server, Shield } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface StatusBarProps {
@@ -9,8 +9,15 @@ interface StatusBarProps {
     notificationCount?: number;
     onToggleNotifications?: () => void;
     isNotificationsPanelOpen?: boolean;
+    isNotificationsMuted?: boolean;
+    onToggleMute?: () => void;
     aiProvider?: 'google' | 'bedrock' | 'local';
     aiModel?: string;
+    clusters?: Array<{ name: string }>;
+    onClusterSelect?: (clusterName: string) => void;
+    awsProfile?: string;
+    awsProfiles?: string[];
+    onAwsProfileChange?: (profile: string) => void;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -20,24 +27,31 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     notificationCount = 0,
     onToggleNotifications,
     isNotificationsPanelOpen,
+    isNotificationsMuted,
+    onToggleMute,
     aiProvider,
-    aiModel
+    aiModel,
+    clusters,
+    onClusterSelect,
+    awsProfile,
+    awsProfiles,
+    onAwsProfileChange
 }) => {
+    const [showClusterPicker, setShowClusterPicker] = useState(false);
+    const [showAwsProfilePicker, setShowAwsProfilePicker] = useState(false);
+    const clusterButtonRef = useRef<HTMLButtonElement>(null);
+    const awsButtonRef = useRef<HTMLButtonElement>(null);
+
     // Format model name to be more readable
     const formatModelName = (model: string) => {
         if (!model) return '';
-
-        // Remove provider prefixes and region codes
-        // e.g., "us.anthropic.claude-3-5-sonnet-20241022-v2:0" -> "Claude 3.5 Sonnet"
-        // e.g., "anthropic.claude-3-sonnet-20240229-v1:0" -> "Claude 3 Sonnet"
-        // e.g., "gemini-2.0-flash-exp" -> "Gemini 2.0 Flash"
 
         let formatted = model;
 
         // Remove region prefix (us., eu., etc.)
         formatted = formatted.replace(/^[a-z]{2}\./i, '');
 
-        // Remove provider prefix (anthropic., amazon., etc.)
+        // Remove provider prefix (anthropic., amazon., meta., etc.)
         formatted = formatted.replace(/^(anthropic|amazon|meta)\./i, '');
 
         // Remove version suffix (v1:0, v2:0, etc.)
@@ -87,19 +101,105 @@ export const StatusBar: React.FC<StatusBarProps> = ({
                         <span className="bg-red-500 text-white px-1 rounded-full text-[10px] min-w-[16px] text-center leading-tight">{notificationCount > 99 ? '99+' : notificationCount}</span>
                     )}
                 </button>
+
+                <button
+                    onClick={onToggleMute}
+                    className={clsx(
+                        "flex items-center gap-1.5 px-2 h-full hover:bg-white/10 transition-colors focus:outline-none",
+                        isNotificationsMuted && "text-yellow-500"
+                    )}
+                    title={isNotificationsMuted ? "Unmute notifications" : "Mute anomaly notifications"}
+                >
+                    <BellOff size={12} />
+                </button>
             </div>
 
             {/* Right Section */}
             <div className="flex items-center h-full gap-4">
-                {activeCluster ? (
-                    <div className="flex items-center gap-1.5 px-2 h-full hover:bg-white/10 hover:text-gray-200 transition-colors cursor-pointer">
-                        <Server size={12} />
-                        <span>{activeCluster}</span>
-                    </div>
-                ) : (
-                    <div className="flex items-center gap-1.5 px-2 h-full text-gray-600">
-                        <Server size={12} />
-                        <span>No Cluster</span>
+                {/* Cluster Indicator / Switcher */}
+                <div className="relative">
+                    {activeCluster ? (
+                        <button
+                            ref={clusterButtonRef}
+                            onClick={() => setShowClusterPicker(prev => !prev)}
+                            className="flex items-center gap-1.5 px-2 h-6 hover:bg-white/10 hover:text-gray-200 transition-colors cursor-pointer focus:outline-none"
+                        >
+                            <Server size={12} />
+                            <span>{activeCluster}</span>
+                        </button>
+                    ) : (
+                        <button
+                            ref={clusterButtonRef}
+                            onClick={() => setShowClusterPicker(prev => !prev)}
+                            className="flex items-center gap-1.5 px-2 h-6 text-gray-600 hover:bg-white/10 hover:text-gray-400 transition-colors cursor-pointer focus:outline-none"
+                        >
+                            <Server size={12} />
+                            <span>No Cluster</span>
+                        </button>
+                    )}
+
+                    {/* Cluster Picker Popup */}
+                    {showClusterPicker && clusters && clusters.length > 0 && (
+                        <>
+                            <div className="fixed inset-0 z-[199]" onClick={() => setShowClusterPicker(false)} />
+                            <div className="absolute bottom-full right-0 mb-1 bg-[#1e1e1e] border border-white/10 rounded-lg shadow-xl z-[200] min-w-[200px] max-h-[300px] overflow-y-auto">
+                                <div className="px-3 py-2 text-xs text-gray-500 border-b border-white/10 font-medium">Switch Cluster</div>
+                                {clusters.map(cluster => (
+                                    <button
+                                        key={cluster.name}
+                                        onClick={() => {
+                                            onClusterSelect?.(cluster.name);
+                                            setShowClusterPicker(false);
+                                        }}
+                                        className={clsx(
+                                            "w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer transition-colors",
+                                            activeCluster === cluster.name ? "bg-white/10 text-blue-400" : "text-gray-400"
+                                        )}
+                                    >
+                                        {cluster.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                {/* AWS Profile Indicator / Switcher */}
+                {awsProfile && (
+                    <div className="relative">
+                        <button
+                            ref={awsButtonRef}
+                            onClick={() => setShowAwsProfilePicker(prev => !prev)}
+                            className="flex items-center gap-1.5 px-2 h-6 hover:bg-white/10 hover:text-gray-200 transition-colors cursor-pointer focus:outline-none"
+                        >
+                            <Shield size={12} />
+                            <span>{awsProfile}</span>
+                        </button>
+
+                        {/* AWS Profile Picker Popup */}
+                        {showAwsProfilePicker && awsProfiles && awsProfiles.length > 0 && (
+                            <>
+                                <div className="fixed inset-0 z-[199]" onClick={() => setShowAwsProfilePicker(false)} />
+                                <div className="absolute bottom-full right-0 mb-1 bg-[#1e1e1e] border border-white/10 rounded-lg shadow-xl z-[200] min-w-[200px] max-h-[300px] overflow-y-auto">
+                                    <div className="px-3 py-2 text-xs text-gray-500 border-b border-white/10 font-medium">AWS Profile</div>
+                                    {awsProfiles.map(profile => (
+                                        <button
+                                            key={profile}
+                                            onClick={() => {
+                                                onAwsProfileChange?.(profile);
+                                                setShowAwsProfilePicker(false);
+                                            }}
+                                            className={clsx(
+                                                "w-full text-left px-3 py-2 text-xs hover:bg-white/10 cursor-pointer transition-colors",
+                                                awsProfile === profile ? "bg-white/10 text-blue-400" : "text-gray-400"
+                                            )}
+                                        >
+                                            {profile}
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
 
