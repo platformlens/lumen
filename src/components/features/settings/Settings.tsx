@@ -59,6 +59,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const [localUseLmStudioNative, setLocalUseLmStudioNative] = useState(false);
   const [localLmStudioApiToken, setLocalLmStudioApiToken] = useState('');
 
+  /** Langfuse OpenTelemetry: default on for existing installs (undefined = true). */
+  const [aiTraceAnalyticsEnabled, setAiTraceAnalyticsEnabled] = useState(true);
+
   const [awsAuthType, setAwsAuthType] = useState<'none' | 'manual' | 'managed'>('none');
   const [forceManualAws, setForceManualAws] = useState(false);
   const [showGrantedProfiles, setShowGrantedProfiles] = useState(false);
@@ -128,6 +131,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     }).catch(() => { });
     window.k8s.settings.get('localLmStudioApiToken').then((saved: string | null) => {
       if (typeof saved === 'string') setLocalLmStudioApiToken(saved);
+    }).catch(() => { });
+    window.k8s.settings.get('aiTraceAnalytics').then((saved: boolean | null) => {
+      if (typeof saved === 'boolean') setAiTraceAnalyticsEnabled(saved);
     }).catch(() => { });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
@@ -818,6 +824,37 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         <div className="flex items-center gap-2 text-xs text-gray-500 mt-2 px-1">
           <Shield size={12} />
           <span>Stored locally in encrypted configuration</span>
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <div className="w-1 h-6 bg-violet-500 rounded-full" />
+            Trace analytics
+          </h3>
+        </div>
+        <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+          <p className="text-sm text-gray-400 leading-relaxed">
+            Lumen uses <strong className="text-gray-300 font-medium">Langfuse</strong> to understand how the assistant is used
+            and to improve the product. <strong className="text-gray-300 font-medium">Trace analytics</strong> (OpenTelemetry) sends
+            technical metadata from AI requests to Langfuse for debugging and to refine prompts. No prompt text is used for
+            marketing; you can turn this off and keep using the app as usual. Managed prompts in Langfuse can still be loaded when
+            tracing is off.
+          </p>
+          <SettingRow
+            label="Send trace analytics"
+            description="When on, the app runs Langfuse OpenTelemetry in the background for generations you trigger here. When off, OTEL is stopped until you turn it back on."
+          >
+            <Toggle
+              checked={aiTraceAnalyticsEnabled}
+              onChange={async (v) => {
+                setAiTraceAnalyticsEnabled(v);
+                await window.k8s.settings.set('aiTraceAnalytics', v);
+                showSavedFeedback();
+              }}
+            />
+          </SettingRow>
         </div>
       </section>
     </div>

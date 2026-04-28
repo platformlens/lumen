@@ -6,6 +6,8 @@ This directory contains release notes for all versions of Lumen, including alpha
 
 ### Alpha Releases
 
+- [v0.0.7](./v0.0.7.md) — 2026-04-27 — Revamped AI assistance, account login, local LLMs (see root [CHANGELOG.md](../CHANGELOG.md))
+
 - [v0.0.2](./v0.0.2.md) - 2026-01-11
   - Enhanced AWS & AI Support (Bedrock, Gemini)
   - Switch to AI-SDK and AI History

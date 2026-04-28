@@ -16,7 +16,14 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAI } from '@ai-sdk/openai';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
 import { streamText, type ModelMessage, type LanguageModelUsage } from 'ai';
-import { resolveLumenChatSystemBase } from './langfuse-lumen';
+import { startActiveObservation } from '@langfuse/tracing';
+import {
+  isLangfuseTracingEnabled,
+  setLangfuseTraceAnalyticsPreferenceReader,
+  shutdownLangfuseOtel,
+  syncLangfuseOtelWithStore,
+} from './langfuse-otel';
+import { getLangfuseClient, mapAiUsageToLangfuse, resolveLumenChatSystemBase } from './langfuse-lumen';
 import { withTimeout } from '../src/lib/with-timeout';
 import {
   bedrockMessagesWithOptionalCache,
@@ -59,7 +66,6 @@ if (process.platform === 'darwin') {
 
 dotenv.config();
 
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -85,6 +91,12 @@ const APP_LOGO_PNG = path.join(process.env.VITE_PUBLIC, 'logo-new.png')
 
 let win: BrowserWindow | null
 const store = new Store();
+
+setLangfuseTraceAnalyticsPreferenceReader(() => {
+  const v = store.get('settings_aiTraceAnalytics') as boolean | undefined;
+  return v !== false;
+});
+syncLangfuseOtelWithStore();
 
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
@@ -286,6 +298,7 @@ function ensurePodWorker(): Electron.UtilityProcess {
 }
 
 app.on('before-quit', () => {
+  void shutdownLangfuseOtel().catch(() => {});
   // Stop all K8s watchers to prevent reconnection loops during shutdown
   k8sService.stopAllWatchers();
 
@@ -943,7 +956,7 @@ function registerIpcHandlers() {
       }
 
       // Build enhanced system prompt (Langfuse text prompt `chat-system-prompt`, label production, when configured)
-      const { baseSystem } = await resolveLumenChatSystemBase(
+      const { baseSystem, promptRef } = await resolveLumenChatSystemBase(
         {
           resourceContext: options?.resourceContext,
           resourceName: options?.resourceName,
@@ -1120,19 +1133,70 @@ function registerIpcHandlers() {
       let fullResponse = '';
       let customPromptStreamFailed = false;
 
-      try {
-        const { fullResponse: fr } = await runModelStream();
-        fullResponse = fr;
-        if (abortSignal.aborted) {
-          console.log('[AI] Stream aborted');
-          activeCustomPromptAbort = null;
+      if (isLangfuseTracingEnabled()) {
+        const sessionId = chatSessionManager.getCurrentSession()?.id;
+        await startActiveObservation(
+          'lumen-custom-prompt',
+          async (generation) => {
+            generation.update({
+              model: String(model),
+              input: { message: userMessage.slice(0, 8000) },
+              metadata: {
+                isKubectlMode: String(isKubectlMode),
+                sessionId: sessionId ?? '',
+                provider: String(provider),
+                hasClusterContext: String(Boolean(clusterContext)),
+              },
+              prompt: promptRef
+                ? { name: promptRef.name, version: promptRef.version, isFallback: promptRef.isFallback }
+                : undefined,
+            });
+            try {
+              const { fullResponse: fr, usage } = await runModelStream();
+              fullResponse = fr;
+              if (abortSignal.aborted) {
+                console.log('[AI] Stream aborted');
+                activeCustomPromptAbort = null;
+                return;
+              }
+              generation.update({
+                output: fullResponse.slice(0, 50000),
+                usageDetails: mapAiUsageToLangfuse(usage),
+              });
+            } catch (streamError: unknown) {
+              if ((streamError instanceof Error && streamError.name === 'AbortError') || abortSignal.aborted) {
+                console.log('[AI] Stream was aborted');
+                activeCustomPromptAbort = null;
+                return;
+              }
+              console.error('[AI] Stream iteration error:', streamError);
+              generation.update({
+                level: 'ERROR',
+                statusMessage: streamError instanceof Error ? streamError.message : String(streamError),
+              });
+              if (finishStreamError(streamError) === 'fail') {
+                customPromptStreamFailed = true;
+              }
+            }
+          },
+          { asType: 'generation' }
+        );
+        void getLangfuseClient()?.flush().catch(() => {});
+      } else {
+        try {
+          const { fullResponse: fr } = await runModelStream();
+          fullResponse = fr;
+          if (abortSignal.aborted) {
+            console.log('[AI] Stream aborted');
+            activeCustomPromptAbort = null;
+            return;
+          }
+        } catch (streamError: unknown) {
+          if (finishStreamError(streamError) === 'fail') {
+            customPromptStreamFailed = true;
+          }
           return;
         }
-      } catch (streamError: unknown) {
-        if (finishStreamError(streamError) === 'fail') {
-          customPromptStreamFailed = true;
-        }
-        return;
       }
 
       if (customPromptStreamFailed) {
@@ -2054,6 +2118,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle('settings:set', async (_, key: string, value: string | number | boolean) => {
     store.set(`settings_${key}`, value);
+    if (key === 'aiTraceAnalytics') {
+      syncLangfuseOtelWithStore();
+    }
     return true;
   });
 

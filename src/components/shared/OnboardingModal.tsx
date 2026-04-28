@@ -158,7 +158,7 @@ export const DEFAULT_ONBOARDING_STEPS: OnboardingStep[] = [
         id: 'welcome',
         title: 'Welcome to Lumen',
         description:
-            'A modern Kubernetes management tool designed for speed, clarity, and a great developer experience.',
+            'A modern Kubernetes workspace with revamped AI assistance, optional account sign-in, and local LLMs — built for speed, clarity, and a solid developer experience.',
         icon: <Rocket size={28} />,
     },
     {
@@ -179,7 +179,7 @@ export const DEFAULT_ONBOARDING_STEPS: OnboardingStep[] = [
         id: 'ai',
         title: 'AI-Powered Insights',
         description:
-            'Use the built-in AI assistant to explain resources, analyze logs, and troubleshoot issues. Supports Google Gemini and AWS Bedrock.',
+            'Revamped assistant for clearer explanations and faster troubleshooting. Use Google Gemini, AWS Bedrock, or a local OpenAI-compatible LLM when you want workloads to stay on your machine.',
         icon: <Sparkles size={28} />,
     },
     {

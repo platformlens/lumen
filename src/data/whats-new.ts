@@ -13,6 +13,28 @@ export interface WhatsNewRelease {
 
 export const WHATS_NEW_RELEASES: WhatsNewRelease[] = [
     {
+        version: '0.0.7',
+        title: 'Version 0.0.7',
+        description: 'Revamped AI assistance, account sign-in, and local LLM support.',
+        sections: [
+            {
+                title: 'AI & productivity',
+                colorAccent: 'bg-cyan-500',
+                items: [
+                    'Revamped AI assistance for a clearer, faster troubleshooting and analysis experience',
+                    'Add support for local LLMs — use an OpenAI-compatible endpoint for private, offline-capable AI',
+                ],
+            },
+            {
+                title: 'Accounts',
+                colorAccent: 'bg-green-500',
+                items: [
+                    'Account login and registration — sign in to sync preferences and access org features',
+                ],
+            },
+        ],
+    },
+    {
         version: '0.0.6-patch1',
         title: 'Version 0.0.6 — Patch 1',
         description: 'Theme support, log search, user accounts, Helm diffs and more.',
