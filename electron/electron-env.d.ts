@@ -180,6 +180,7 @@ interface Window {
         provider: string;
         systemPrompt?: string;
         messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+        clusterName?: string | null;
         resourceName?: string;
         resourceType?: string;
         saveToHistory?: boolean;
@@ -318,6 +319,8 @@ interface Window {
 
     // --- AI Events ---
     onBedrockAccessDenied: (callback: (message: string) => void) => () => void
+    onToolApprovalRequest: (callback: (request: { toolCallId: string; command: string; isReadOnly: boolean }) => void) => () => void
+    respondToolApproval: (toolCallId: string, approved: boolean, trust: boolean) => void
 
     // --- Generic Resource Batch Watcher ---
     onGenericResourceBatchChange: (callback: (resourceType: string, events: Array<{ type: string; resource: any }>) => void) => () => void

@@ -189,7 +189,7 @@ export function buildKubectlTools(
   // Return tools + a function to resolve pending approvals (called from IPC handler)
   return {
     tools,
-    resolvePendingApproval: (toolCallId: string, approved: boolean, trust: boolean) => {
+    resolvePendingApproval: (toolCallId: string, approved: boolean, _trust: boolean) => {
       const pending = pendingApprovals.get(toolCallId);
       if (pending) {
         pendingApprovals.delete(toolCallId);

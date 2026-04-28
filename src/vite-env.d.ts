@@ -168,7 +168,23 @@ declare global {
 
             // --- AI Streaming ---
             streamExplainResource: (resource: any, options: any, onChunk: (chunk: string) => void, onDone: () => void, onError: (err: any) => void) => () => void;
-            streamCustomPrompt: (prompt: string, options: any, onChunk: (chunk: string) => void, onDone: () => void, onError: (err: any) => void) => () => void;
+            streamCustomPrompt: (
+                prompt: string,
+                options: {
+                    model: string;
+                    provider: string;
+                    systemPrompt?: string;
+                    messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+                    clusterName?: string | null;
+                    resourceName?: string;
+                    resourceType?: string;
+                    saveToHistory?: boolean;
+                    promptPreview?: string;
+                },
+                onChunk: (chunk: string) => void,
+                onDone: () => void,
+                onError: (err: any) => void
+            ) => () => void;
             listModels: (provider: string) => Promise<any[]>;
             checkAwsAuth: () => Promise<any>;
             saveAwsCreds: (creds: any) => Promise<boolean>;
@@ -178,6 +194,10 @@ declare global {
             saveModelSelection: (provider: string, model: string) => Promise<boolean>;
             decodeCertificate: (certData: string) => Promise<any>;
             onBedrockAccessDenied: (callback: (message: string) => void) => () => void;
+            onToolApprovalRequest: (
+                callback: (request: { toolCallId: string; command: string; isReadOnly: boolean }) => void
+            ) => () => void;
+            respondToolApproval: (toolCallId: string, approved: boolean, trust: boolean) => void;
 
             // --- Terminal ---
             terminal: {
