@@ -1,101 +1,124 @@
-# Lumen (K8ptain)
+# Lumen
 
-![Lumen Screenshot](./screenshots/screenshot_ai_2.png)
+**The Kubernetes cockpit that keeps up with you.** Lumen puts live cluster state, deep operational detail, and a context-aware AI in one polished desktop app—so you diagnose faster, collaborate cleaner, and spend less time context-switching between terminals, tabs, and cloud consoles.
 
-Lumen is a modern, high-performance Kubernetes management tool built with Electron, React, and TypeScript. It offers a sleek, intuitive interface for monitoring and managing your Kubernetes clusters with a focus on developer experience and visual clarity.
+Stop duct-taping half a dozen tools together. Spin up production-grade visibility, sane defaults, and an assistant that actually speaks *your* cluster—whether that’s Gemini or Bedrock in the cloud or a **local LLM** on your machine—without leaving your flow.
+
+![Lumen — AI assistant with cluster context, workloads, and live Kubernetes insight](./screenshots/lumen-ai.png)
+
+*Lumen AI: ask questions across resources and logs without losing where you are in the cluster.*
+
+Built for teams who ship on Kubernetes—not for fighting the UI—**Electron** · **React** · **TypeScript** · blazing watches and a UX built for clarity first.
+
+---
+
+## Highlights
+
+| Area | What you get |
+|------|----------------|
+| **Clusters** | Work across contexts from your kubeconfig; pin favorites for instant switching |
+| **Live data** | Watches for pods, deployments, nodes, CRDs/custom resources (where supported), and more |
+| **AI** | Revamped assistant: explain resources and logs; Google Gemini, AWS Bedrock, or **local** OpenAI-compatible models |
+| **Accounts** | Optional sign-in and org flows (sync and collaboration-oriented features evolve here) |
+| **Cloud** | AWS-aware views — EKS, EC2/VPC signals, Granted-friendly profiles, audits where wired |
+| **Ops** | Log streaming with search/export, YAML editing, exec terminal, port forwarding |
 
 ## Features
 
-- **Real-time Monitoring**: Live updates for Pods, Nodes, Deployments, and other resources.
-- **Multi-Cluster Support**: seamless switching between different Kubernetes contexts.
-- **Resource Management**: Detailed views and management for:
-  - Workloads (Pods, Deployments, DaemonSets, StatefulSets, Jobs, CronJobs)
-  - Network (Services, Ingress)
-  - Config (ConfigMaps, Secrets)
-  - Access Control (Roles, RoleBindings)
-- **Log Viewer**: Integrated real-time log streaming for pods.
-- **Port Forwarding**: Easy-to-use port forwarding interface.
-- **Interactive Terminal**: Built-in shell for direct cluster interaction.
-- **Modern UI**: Dark-mode first design with Tailwind CSS and glassmorphism aesthetics.
+### Workloads & resources
 
-## Tech Stack
+- **Workloads**: Pods, Deployments, ReplicaSets, DaemonSets, StatefulSets, Jobs, CronJobs — with detail drawers and safe edit paths where applicable  
+- **Network**: Services, Ingress, IngressClasses, Endpoint(Slice)s, NetworkPolicies  
+- **Config & secrets**: ConfigMaps and Secrets  
+- **Access**: Roles, RoleBindings, ClusterRoles, ClusterRoleBindings, ServiceAccounts  
+- **Storage & infra**: PVCs/PVs, StorageClasses — plus CRDs and custom objects for supported types  
+- **Global operations**: Unified delete YAML flows, deployment revision history & diffs where enabled  
 
-- **Core**: [Electron](https://www.electronjs.org/), [React](https://react.dev/), [TypeScript](https://www.typescriptlang.org/)
-- **Build Tool**: [Vite](https://vitejs.dev/)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/), [Framer Motion](https://www.framer.com/motion/)
-- **State Management**: [Zustand](https://github.com/pmndrs/zustand) (inferred) or React Context / Hooks
-- **Kubernetes Client**: [@kubernetes/client-node](https://github.com/kubernetes-client/javascript)
+### Operations & UX
 
-## Getting Started
+- **Logs**: Stream container logs with search and download-friendly workflows  
+- **Terminal**: kubectl-style interaction and pod exec flows from the UI  
+- **Port forwarding**: Start/stop forwards with clear lifecycle  
+- **YAML**: In-app editor aligned with cluster objects  
+- **Themes**: Dark-first UI with multiple accents (including charcoal-style defaults)
+
+### Observability helpers
+
+Context engine hooks for summaries and anomaly hints (availability depends on configuration).  
+Structured notifications for important cluster events where enabled.
+
+### AI assistant
+
+Cluster-aware prompting: summarize resources, reason about failures, inspect log snippets — with configurable provider (**Gemini**, **Bedrock**, or **local** LLM URL). Conversation history persists per session workflows.
+
+See **[CHANGELOG](./CHANGELOG.md)** and **[release notes](./release-notes/)** for version-by-version changes.
+
+## Tech stack
+
+| Layer | Choices |
+|--------|---------|
+| App shell | [Electron](https://www.electronjs.org/), [vite-plugin-electron](https://github.com/electron-vite/vite-plugin-electron) |
+| UI | [React](https://react.dev/), [Tailwind CSS](https://tailwindcss.com/), [Framer Motion](https://www.framer.com/motion/) |
+| Build | [Vite](https://vitejs.dev/), TypeScript `strict` |
+| State | [Zustand](https://github.com/pmndrs/zustand) (and focused React hooks) |
+| Kubernetes | [@kubernetes/client-node](https://github.com/kubernetes-client/javascript), `kubectl` integration where applicable |
+| AI | AI SDK–style streaming to Gemini / Bedrock / OpenAI-compatible (`local`) providers |
+
+## Getting started
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
-- [npm](https://www.npmjs.com/) (usually comes with Node.js)
+- **[Node.js](https://nodejs.org/)** ≥ 18  
+- **[npm](https://www.npmjs.com/)** (bundled with Node)  
+- A valid **`kubectl`** context (`~/.kube/config`)  
 
-### Installation
+### Clone & install
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd ai-experiment
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+```bash
+git clone <repository-url> lumen
+cd lumen
+npm install
+```
 
 ### Development
-
-Start the application in development mode with hot-reloading:
 
 ```bash
 npm run dev
 ```
 
-This will start the Vite dev server and launch the Electron application.
+Runs the Vite dev server and launches the Electron app with hot reload for the renderer.
 
-### Building for Production
-
-To create a production build for your platform (macOS):
+### Production build
 
 ```bash
 npm run build
 ```
 
-The output artifacts will be available in the `release` or `dist-electron` directory (depending on configuration).
+Artifacts land under **`release/`** and related build dirs per `electron-builder` config (paths may vary by branch).
 
-## Project Structure
+### Project layout
 
-- `electron/`: Main process and preload scripts.
-- `src/`: Renderer process (React application).
-  - `components/`: UI components.
-  - `App.tsx`: Main entry point.
-- `vite.config.ts`: Vite configuration for both main and renderer processes.
-- `electron-builder.json5`: Configuration for packaging the application.
+```
+electron/          # Main process: IPC, kube access, filesystem, integrations
+electron/preload.ts
+src/               # Renderer: React UI, stores, dashboards, AI panels
+vite.config.ts
+```
 
-## Troubleshooting
+## Signing & distribution (macOS)
 
-### Code Signing (macOS)
+Official release builds use Apple **code signing** and **notarization**. Forks and local builds typically run unsigned; to ship your own binaries you need your own Apple Developer credentials and entitlement setup.
 
-**Important Note for Forks and Contributors:**
-Official builds of Lumen are code-signed and notarized using our specific Apple Developer credentials. If you fork this project or build it locally, you will **not** have access to these credentials.
-- Your local builds will be **unsigned** by default.
-- If you wish to distribute a forked version, you must provide your own Apple Developer credentials and sign the application yourself. Use the detailed instructions in `package.json` and `electron-builder.json5` as a guide, but you will need your own `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, and `APPLE_ID_PASSWORD` secrets.
+Details: **[CODESIGNING.md](./CODESIGNING.md)** and **`electron-builder`** config in-repo.
 
-If you encounter issues with code signing during the build process, ensure you have the correct Apple Developer certificates installed. For local development, you may modify `package.json` or `electron-builder.json5` to skip signing if strictly necessary, but signed builds are required for distribution.
+### Port forwarding
 
-### Port Forwarding
+Requires a working **`kubectl`** and kubeconfig pointing at reachable API servers.
 
-Port forwarding relies on the local `kubectl` binary or the internal Kubernetes client. Ensure your kubeconfig is correctly set up at `~/.kube/config`.
+## Contributing
 
-## Contributors
+Issues and PRs welcome. Please keep changes focused and match existing patterns in the codebase.
 
-We welcome contributions from the community! If you'd like to contribute, please check out our issues page.
+## Code of conduct
 
-## Code of Conduct
-
-We are committed to providing a friendly, safe, and welcoming environment for all, regardless of gender, sexual orientation, disability, ethnicity, religion, or similar personal characteristic.
-
-Please be kind and respectful in all interactions. Harassment, hate speech, and offensive behavior will not be tolerated.
+Be respectful and inclusive in issues, reviews, and chat. Harassment and discriminatory behavior are not tolerated.
