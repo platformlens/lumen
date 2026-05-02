@@ -41,6 +41,9 @@ type AuthStore = AuthState & AuthActions;
 const NOT_CONFIGURED_ERROR =
   'Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.';
 
+/** Confirmed-email links from Supabase redirect here; must be listed under Auth → URL Configuration → Redirect URLs. */
+const SIGNUP_EMAIL_REDIRECT_TO = 'https://www.platformlens.io';
+
 /**
  * Validates that a password meets the minimum length requirement.
  * @returns true if the password is at least 6 characters long.
@@ -88,6 +91,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         email,
         password,
         options: {
+          emailRedirectTo: SIGNUP_EMAIL_REDIRECT_TO,
           data: { full_name: fullName },
         },
       });
