@@ -812,8 +812,26 @@ function registerIpcHandlers() {
     return full;
   }
 
+  let activeExplainAbort: AbortController | null = null;
+
+  ipcMain.on('ai:cancelExplainResourceStream', () => {
+    if (activeExplainAbort) {
+      console.log('[AI] Canceling active explain resource stream');
+      activeExplainAbort.abort();
+      activeExplainAbort = null;
+    }
+  });
+
   ipcMain.on('ai:explainResourceStream', async (event, resource, options) => {
     try {
+      if (activeExplainAbort) {
+        console.log('[AI] Canceling previous explain stream');
+        activeExplainAbort.abort();
+        activeExplainAbort = null;
+      }
+      activeExplainAbort = new AbortController();
+      const explainAbortSignal = activeExplainAbort.signal;
+
       const { provider = 'google', model = 'gemini-1.5-flash', clusterName } = options || {};
       const localEndpoint =
         (store.get('settings_localModelEndpoint') as string) || 'http://localhost:1234/v1';
@@ -828,6 +846,7 @@ function registerIpcHandlers() {
           const apiKey = getApiKey();
           if (!apiKey) {
             event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
+            activeExplainAbort = null;
             return;
           }
           const google = createGoogleGenerativeAI({ apiKey });
@@ -841,6 +860,7 @@ function registerIpcHandlers() {
           aiModel = localProvider.chat(model);
         } else {
           event.sender.send('ai:explainResourceStream:error', `Unknown provider: ${provider}`);
+          activeExplainAbort = null;
           return;
         }
       }
@@ -912,6 +932,7 @@ function registerIpcHandlers() {
             apiToken: token,
             model,
             input: prompt,
+            signal: explainAbortSignal,
             onChunk: (chunk) => event.sender.send('ai:explainResourceStream:chunk', chunk),
           });
         } else {
@@ -919,7 +940,9 @@ function registerIpcHandlers() {
             model: aiModel!,
             prompt: prompt,
             maxOutputTokens: 1024,
+            abortSignal: explainAbortSignal,
             onError: ({ error }: { error: unknown }) => {
+              if (explainAbortSignal.aborted) return;
               console.error('[AI] streamText onError:', error);
               const { message: errMsg, isAccessDenied } = extractAiErrorInfo(error);
               event.sender.send('ai:explainResourceStream:error', errMsg);
@@ -930,19 +953,30 @@ function registerIpcHandlers() {
           });
           fullResponse = await accumulateStreamWithReasoning(
             result,
-            (chunk) => event.sender.send('ai:explainResourceStream:chunk', chunk)
+            (chunk) => event.sender.send('ai:explainResourceStream:chunk', chunk),
+            () => explainAbortSignal.aborted
           );
         }
       } catch (streamError: unknown) {
+        if (
+          explainAbortSignal.aborted ||
+          (streamError instanceof Error && streamError.name === 'AbortError')
+        ) {
+          console.log('[AI] Explain stream was aborted');
+          activeExplainAbort = null;
+          return;
+        }
         console.error('[AI] Stream iteration error:', streamError);
         const { message: errMsg, isAccessDenied } = extractAiErrorInfo(streamError);
         event.sender.send('ai:explainResourceStream:error', errMsg);
         if (isAccessDenied) {
           event.sender.send('ai:bedrockAccessDenied', errMsg);
         }
+        activeExplainAbort = null;
         return;
       }
 
+      activeExplainAbort = null;
       // Save to ChatSessionManager
       try {
         const resourceName = resource.metadata?.name || resource.name;
@@ -964,6 +998,7 @@ function registerIpcHandlers() {
       event.sender.send('ai:explainResourceStream:done');
 
     } catch (error: unknown) {
+      activeExplainAbort = null;
       console.error('AI Error:', error);
       const { message: errMsg, isAccessDenied } = extractAiErrorInfo(error);
       event.sender.send('ai:explainResourceStream:error', errMsg);

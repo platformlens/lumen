@@ -1309,6 +1309,17 @@ function App() {
         window.k8s.startSession(undefined).catch(() => { });
     };
 
+    const handleStopAiStreaming = useCallback(() => {
+        currentStreamIdRef.current = '';
+        explainStreamIdRef.current = null;
+        setPendingToolApproval(null);
+        if (aiCleanupRef.current) {
+            aiCleanupRef.current();
+            aiCleanupRef.current = null;
+        }
+        setIsAiStreaming(false);
+    }, []);
+
     const handleSendPrompt = async (userPrompt: string) => {
         // Add guardrails - check if the prompt is Kubernetes-related
         const k8sKeywords = [
@@ -1780,6 +1791,7 @@ function App() {
                         theme={theme}
                         pendingToolApproval={pendingToolApproval}
                         onToolApproval={handleToolApproval}
+                        onStopStreaming={handleStopAiStreaming}
                     />
                 )}
             </AnimatePresence>

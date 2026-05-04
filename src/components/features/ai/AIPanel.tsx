@@ -250,6 +250,8 @@ interface AIPanelProps {
   pendingToolApproval?: { toolCallId: string; command: string; isReadOnly: boolean } | null;
   /** Callback to approve/reject a tool call. trust=true saves the command pattern for auto-approval. */
   onToolApproval?: (approved: boolean, trust: boolean) => void;
+  /** Abort the in-flight LLM stream (main process + IPC listeners). */
+  onStopStreaming?: () => void;
 }
 
 interface MessageType {
@@ -277,6 +279,7 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   theme = 'charcoal',
   pendingToolApproval,
   onToolApproval,
+  onStopStreaming,
 }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat');
   const [history, setHistory] = useState<ChatSession[]>([]);
@@ -560,7 +563,10 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     return 'ready';
   }, [isStreaming]);
 
-  const isSubmitDisabled = useMemo(() => !text.trim() || status === 'streaming', [text, status]);
+  const isSubmitDisabled = useMemo(() => {
+    if (status === 'streaming') return false;
+    return !text.trim();
+  }, [text, status]);
 
   const contextAttachments = useMemo(() => {
     const atts = [];
@@ -875,7 +881,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                           </div>
                         </div>
                       </PromptInputTools>
-                      <PromptInputSubmit disabled={isSubmitDisabled} status={status} />
+                      <PromptInputSubmit
+                        disabled={isSubmitDisabled}
+                        status={status}
+                        onStop={onStopStreaming}
+                      />
                     </PromptInputFooter>
                   </PromptInput>
                 </div>

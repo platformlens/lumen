@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('k8s', {
     ipcRenderer.on('ai:explainResourceStream:error', errorListener);
 
     return () => {
+      ipcRenderer.send('ai:cancelExplainResourceStream');
       ipcRenderer.off('ai:explainResourceStream:chunk', chunkListener);
       ipcRenderer.off('ai:explainResourceStream:done', doneListener);
       ipcRenderer.off('ai:explainResourceStream:error', errorListener);
