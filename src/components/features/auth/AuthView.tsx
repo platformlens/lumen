@@ -4,6 +4,7 @@ import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 import { ProfilePage } from './ProfilePage';
 import { TeamPage } from './TeamPage';
+import { EmailConfirmationPending } from './EmailConfirmationPending';
 
 type AuthMode = 'login' | 'register';
 
@@ -14,12 +15,25 @@ export const AuthView: React.FC<{
   onUserViewChange?: (view: string) => void;
 }> = ({ activeSection, onUserViewChange }) => {
   const [mode, setMode] = useState<AuthMode>('login');
-  const { user, error, clearError } = useAuthStore();
+  const { user, error, clearError, pendingVerificationEmail, clearPendingVerificationEmail } = useAuthStore();
 
   const handleToggleMode = () => {
     clearError();
     setMode((prev) => (prev === 'login' ? 'register' : 'login'));
   };
+
+  if (pendingVerificationEmail) {
+    return (
+      <EmailConfirmationPending
+        email={pendingVerificationEmail}
+        onBackToSignIn={() => {
+          clearPendingVerificationEmail();
+          clearError();
+          setMode('login');
+        }}
+      />
+    );
+  }
 
   if (user) {
     if (activeSection?.startsWith(USER_TEAM_PREFIX)) {

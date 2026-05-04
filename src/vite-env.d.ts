@@ -252,10 +252,22 @@ declare global {
                 setLastSeenVersion: (version: string) => Promise<boolean>;
             };
 
+            // --- Auth (Supabase via main process store) ---
+            auth: {
+                saveSession: (session: string | object) => Promise<boolean>;
+                getSession: () => Promise<string | object | null>;
+                clearSession: () => Promise<boolean>;
+                onOAuthCallback: (callback: (callbackUrl: string) => void) => () => void;
+            };
+
             // --- Pinned Clusters ---
             getPinnedClusters: () => Promise<string[]>;
             addPinnedCluster: (clusterName: string) => Promise<string[]>;
             removePinnedCluster: (clusterName: string) => Promise<string[]>;
         }
     }
+}
+
+interface ImportMetaEnv {
+    readonly VITE_SUPABASE_OAUTH_REDIRECT?: string;
 }

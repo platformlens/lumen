@@ -44,6 +44,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
       storage: ipcStorage,
       autoRefreshToken: true,
       persistSession: true,
+      // Default Supabase-js is `implicit` (tokens in `#` fragment). Electron deep link + exchangeCodeForSession requires PKCE (`?code=...`).
+      flowType: 'pkce',
       detectSessionInUrl: false,
       // Electron: single window — skip Navigator/Web Locks. Combined with not awaiting
       // supabase.data calls inside onAuthStateChange, avoids getSession/REST deadlocks

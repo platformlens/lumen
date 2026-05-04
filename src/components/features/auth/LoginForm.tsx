@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../../stores/authStore';
 import { GlassButton } from '../../shared/GlassButton';
+import { GithubAuthButton } from './GithubAuthButton';
 
 export const LoginForm: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -14,6 +15,7 @@ export const LoginForm: React.FC = () => {
   };
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label htmlFor="login-email" className="block text-sm text-gray-400 mb-1">
@@ -54,5 +56,7 @@ export const LoginForm: React.FC = () => {
         {isLoading ? 'Signing in...' : 'Sign In'}
       </GlassButton>
     </form>
+    <GithubAuthButton />
+  </>
   );
 };

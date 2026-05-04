@@ -464,6 +464,11 @@ contextBridge.exposeInMainWorld('k8s', {
     saveSession: (session: string | object) => ipcRenderer.invoke('auth:saveSession', session),
     getSession: () => ipcRenderer.invoke('auth:getSession'),
     clearSession: () => ipcRenderer.invoke('auth:clearSession'),
+    onOAuthCallback: (callback: (callbackUrl: string) => void) => {
+      const listener = (_: unknown, callbackUrl: string) => callback(callbackUrl)
+      ipcRenderer.on('auth:oauth-callback', listener)
+      return () => { ipcRenderer.removeListener('auth:oauth-callback', listener) }
+    },
   },
 
   // --- AI Events ---

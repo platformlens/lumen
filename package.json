@@ -111,6 +111,16 @@
     "vitest": "^4.0.18"
   },
   "main": "dist-electron/main.js",
+  "build": {
+    "appId": "io.platformlens.lumen",
+    "productName": "Lumen",
+    "protocols": [
+      {
+        "name": "Lumen OAuth",
+        "schemes": ["io.platformlens.lumen"]
+      }
+    ]
+  },
   "overrides": {
     "node-gyp": "^10.0.0"
   }

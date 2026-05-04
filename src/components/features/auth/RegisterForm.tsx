@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuthStore, validatePassword } from '../../../stores/authStore';
 import { GlassButton } from '../../shared/GlassButton';
+import { GithubAuthButton } from './GithubAuthButton';
 
 export const RegisterForm: React.FC = () => {
   const [fullName, setFullName] = useState('');
@@ -31,6 +32,7 @@ export const RegisterForm: React.FC = () => {
   };
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label htmlFor="register-fullname" className="block text-sm text-gray-400 mb-1">
@@ -89,5 +91,7 @@ export const RegisterForm: React.FC = () => {
         {isLoading ? 'Creating account...' : 'Create Account'}
       </GlassButton>
     </form>
+    <GithubAuthButton />
+    </>
   );
 };

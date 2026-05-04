@@ -322,6 +322,14 @@ interface Window {
     onToolApprovalRequest: (callback: (request: { toolCallId: string; command: string; isReadOnly: boolean }) => void) => () => void
     respondToolApproval: (toolCallId: string, approved: boolean, trust: boolean) => void
 
+    // --- Auth (Supabase session via Electron store) ---
+    auth: {
+      saveSession: (session: string | object) => Promise<boolean>
+      getSession: () => Promise<string | object | null>
+      clearSession: () => Promise<boolean>
+      onOAuthCallback: (callback: (callbackUrl: string) => void) => () => void
+    }
+
     // --- Generic Resource Batch Watcher ---
     onGenericResourceBatchChange: (callback: (resourceType: string, events: Array<{ type: string; resource: any }>) => void) => () => void
 

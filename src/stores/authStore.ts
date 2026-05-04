@@ -3,6 +3,15 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { lumenLogAuth as authLog, lumenShortId as shortUserId } from '../lib/lumen-logger';
 
+/** Must be listed under Supabase Auth → URL Configuration → Redirect URLs (custom scheme handled by Electron). */
+export const LUMEN_SUPABASE_OAUTH_REDIRECT =
+  typeof import.meta.env.VITE_SUPABASE_OAUTH_REDIRECT === 'string' &&
+  import.meta.env.VITE_SUPABASE_OAUTH_REDIRECT.trim().length > 0
+    ? import.meta.env.VITE_SUPABASE_OAUTH_REDIRECT.trim()
+    : 'io.platformlens.lumen://auth/callback';
+
+let githubOAuthIpcCleanup: (() => void) | null = null;
+
 /** Unsubscribe for the single Supabase auth listener (avoids duplicate handlers if initialize runs more than once). */
 let supabaseAuthUnsubscribe: (() => void) | null = null;
 
@@ -25,15 +34,19 @@ interface AuthState {
   /** True while the profiles table row is being fetched. */
   isProfileLoading: boolean;
   error: string | null;
+  /** Set after email/password sign-up when Supabase returns no session until email is confirmed. */
+  pendingVerificationEmail: string | null;
 }
 
 interface AuthActions {
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
+  signInWithGithub: () => Promise<void>;
   signOut: () => Promise<void>;
   initialize: () => void;
   fetchProfile: () => Promise<void>;
   clearError: () => void;
+  clearPendingVerificationEmail: () => void;
 }
 
 type AuthStore = AuthState & AuthActions;
@@ -66,6 +79,32 @@ export function getInitials(fullName: string): string {
     .join('');
 }
 
+const DUPLICATE_EMAIL_SIGNUP_MESSAGE =
+  'An account with this email already exists. Sign in instead.';
+
+/** GoTrue may return a fake user with no identities when signup targets an existing confirmed account (obfuscated response). */
+export function isDuplicateSignupObfuscatedUser(user: User | null | undefined): boolean {
+  if (!user) return false;
+  return Array.isArray(user.identities) && user.identities.length === 0;
+}
+
+function isDuplicateSignupError(error: { code?: string; message?: string; status?: number }): boolean {
+  const code = typeof error.code === 'string' ? error.code.toLowerCase() : '';
+  if (code === 'email_exists' || code === 'user_already_exists' || code === 'identity_already_exists' || code === 'conflict') {
+    return true;
+  }
+  const msg = (error.message ?? '').toLowerCase();
+  return (
+    msg.includes('already registered') ||
+    msg.includes('already been registered') ||
+    msg.includes('user already registered') ||
+    (msg.includes('email') && msg.includes('already')) ||
+    msg.includes('already exists') ||
+    msg.includes('duplicate') ||
+    error.status === 422
+  );
+}
+
 export const useAuthStore = create<AuthStore>((set, get) => ({
   // --- State ---
   user: null,
@@ -75,6 +114,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   authHydrated: false,
   isProfileLoading: false,
   error: null,
+  pendingVerificationEmail: null,
 
   // --- Actions ---
 
@@ -97,10 +137,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       });
 
       if (error) {
-        if (error.message?.toLowerCase().includes('already registered') ||
-            error.message?.toLowerCase().includes('already been registered') ||
-            error.status === 422) {
-          set({ error: 'An account with this email already exists.', isLoading: false });
+        if (isDuplicateSignupError(error)) {
+          set({ error: DUPLICATE_EMAIL_SIGNUP_MESSAGE, isLoading: false });
         } else if (
           error.message?.toLowerCase().includes('fetch') ||
           error.message?.toLowerCase().includes('network') ||
@@ -113,15 +151,42 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         return;
       }
 
+      if (isDuplicateSignupObfuscatedUser(data.user)) {
+        authLog('signUp: duplicate email (obfuscated user, empty identities)');
+        set({ error: DUPLICATE_EMAIL_SIGNUP_MESSAGE, isLoading: false });
+        return;
+      }
+
+      if (!data.user) {
+        set({ error: 'Could not create an account. Try again or sign in if you already registered.', isLoading: false });
+        return;
+      }
+
+      if (!data.session) {
+        const verifyEmail = (data.user.email ?? email).trim();
+        authLog('signUp: email confirmation required, pending verification UI', {
+          email: verifyEmail.includes('@') ? `${verifyEmail.split('@')[0].slice(0, 2)}…@${verifyEmail.split('@')[1]}` : '(redacted)',
+        });
+        set({
+          user: null,
+          session: null,
+          profile: null,
+          pendingVerificationEmail: verifyEmail,
+          isLoading: false,
+          error: null,
+          isProfileLoading: false,
+        });
+        return;
+      }
+
       set({
         user: data.user,
         session: data.session,
       });
 
-      // Fetch profile created by the database trigger
       await get().fetchProfile();
 
-      if (data.session) {
+      {
         const orgUid = data.session.user.id;
         authLog('signUp: scheduling org rehydrate (setTimeout 0)', { userId: shortUserId(orgUid) });
         setTimeout(() => {
@@ -129,8 +194,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
             void useOrgStore.getState().rehydrateSessionOrgData(orgUid);
           });
         }, 0);
-      } else {
-        authLog('signUp: no session in response (e.g. email confirm required) — org rehydrate skipped');
       }
 
       set({ isLoading: false });
@@ -181,6 +244,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       set({
         user: data.user,
         session: data.session,
+        pendingVerificationEmail: null,
       });
       authLog('signIn: success', { userId: shortUserId(data.user.id) });
 
@@ -200,6 +264,124 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       } else {
         set({ error: err?.message || 'An unexpected error occurred.', isLoading: false });
       }
+    }
+  },
+
+  signInWithGithub: async () => {
+    if (!supabase) {
+      set({ error: NOT_CONFIGURED_ERROR });
+      return;
+    }
+
+    const client = supabase;
+
+    const k8s = typeof window !== 'undefined' ? (window as unknown as { k8s?: { auth?: { onOAuthCallback?: (fn: (url: string) => void) => () => void }; openExternal?: (url: string) => Promise<void> } }).k8s : undefined;
+    const onOAuth = k8s?.auth?.onOAuthCallback;
+    if (!onOAuth || !k8s?.openExternal) {
+      set({ error: 'GitHub sign-in is only available in the Lumen desktop app.' });
+      return;
+    }
+
+    githubOAuthIpcCleanup?.();
+    githubOAuthIpcCleanup = null;
+
+    set({ isLoading: true, error: null });
+    authLog('signInWithGithub: starting OAuth');
+
+    let settled = false;
+    const oauthTimeoutMs = 120_000;
+    const timeoutId = window.setTimeout(() => {
+      if (settled) return;
+      githubOAuthIpcCleanup?.();
+      githubOAuthIpcCleanup = null;
+      settled = true;
+      set({ error: 'GitHub sign-in timed out. Try again.', isLoading: false });
+      authLog('signInWithGithub: timeout');
+    }, oauthTimeoutMs);
+
+    const finish = () => {
+      if (!settled) settled = true;
+      window.clearTimeout(timeoutId);
+    };
+
+    githubOAuthIpcCleanup = onOAuth(async (callbackUrl: string) => {
+      githubOAuthIpcCleanup?.();
+      githubOAuthIpcCleanup = null;
+      finish();
+
+      authLog('signInWithGithub: received redirect');
+      try {
+        let parsed: URL;
+        try {
+          parsed = new URL(callbackUrl);
+        } catch {
+          set({ error: 'Invalid sign-in redirect. Try again.', isLoading: false });
+          return;
+        }
+
+        const authErr =
+          parsed.searchParams.get('error_description')?.replace(/\+/g, ' ') ||
+          parsed.searchParams.get('error');
+        if (authErr) {
+          set({ error: authErr, isLoading: false });
+          return;
+        }
+
+        const code = parsed.searchParams.get('code');
+        if (!code) {
+          set({ error: 'Missing authorization code after GitHub. Try again.', isLoading: false });
+          return;
+        }
+
+        const { error: exchangeError } = await client.auth.exchangeCodeForSession(code);
+        if (exchangeError) {
+          authLog('signInWithGithub: exchange failed', { message: exchangeError.message });
+          set({ error: exchangeError.message, isLoading: false });
+          return;
+        }
+
+        authLog('signInWithGithub: exchange ok');
+        await get().fetchProfile();
+        set({ isLoading: false });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'GitHub sign-in failed.';
+        set({ error: msg, isLoading: false });
+      }
+    });
+
+    try {
+      const { data, error } = await client.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          redirectTo: LUMEN_SUPABASE_OAUTH_REDIRECT,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) {
+        githubOAuthIpcCleanup?.();
+        githubOAuthIpcCleanup = null;
+        finish();
+        authLog('signInWithGithub: signInWithOAuth error', { message: error.message });
+        set({ error: error.message, isLoading: false });
+        return;
+      }
+
+      if (!data.url) {
+        githubOAuthIpcCleanup?.();
+        githubOAuthIpcCleanup = null;
+        finish();
+        set({ error: 'Could not start GitHub sign-in.', isLoading: false });
+        return;
+      }
+
+      await k8s.openExternal(data.url);
+    } catch (err: unknown) {
+      githubOAuthIpcCleanup?.();
+      githubOAuthIpcCleanup = null;
+      finish();
+      const msg = err instanceof Error ? err.message : 'GitHub sign-in failed.';
+      set({ error: msg, isLoading: false });
     }
   },
 
@@ -229,6 +411,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       session: null,
       isLoading: false,
       isProfileLoading: false,
+      pendingVerificationEmail: null,
     });
     authLog('signOut: local state cleared');
   },
@@ -258,7 +441,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
             });
             set({ profile: null });
           }
-          set({ user: session.user, session, isLoading: false });
+          set({ user: session.user, session, isLoading: false, pendingVerificationEmail: null });
           const prof = get().profile;
           const needs =
             !prof || prof.id !== session.user.id;
@@ -294,7 +477,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           }
         } else {
           authLog('onAuthStateChange: session cleared');
-          set({ user: null, session: null, profile: null, isLoading: false, isProfileLoading: false });
+          set({
+            user: null,
+            session: null,
+            profile: null,
+            isLoading: false,
+            isProfileLoading: false,
+            pendingVerificationEmail: null,
+          });
         }
       });
       supabaseAuthUnsubscribe = () => {
@@ -319,7 +509,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           authLog('initialize: session restored from storage', {
             userId: shortUserId(data.session.user.id),
           });
-          set({ user: data.session.user, session: data.session, isLoading: false });
+          set({
+            user: data.session.user,
+            session: data.session,
+            isLoading: false,
+            pendingVerificationEmail: null,
+          });
           await get().fetchProfile();
           authLog('initialize: profile loaded, running org rehydrate');
           await new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -328,7 +523,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           authLog('initialize: org rehydrate finished');
         } else {
           authLog('initialize: no session in storage (signed out or first launch)');
-          set({ user: null, session: null, profile: null, isLoading: false, isProfileLoading: false });
+          set({
+            user: null,
+            session: null,
+            profile: null,
+            isLoading: false,
+            isProfileLoading: false,
+            pendingVerificationEmail: null,
+          });
         }
       } catch (e) {
         console.error('Auth hydrate error:', e);
@@ -347,9 +549,13 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       return;
     }
 
-    const { user } = get();
+    const { user, session } = get();
     if (!user) {
       authLog('fetchProfile: skip — no user in store');
+      return;
+    }
+    if (!session) {
+      authLog('fetchProfile: skip — no session (e.g. email not confirmed)');
       return;
     }
 
@@ -387,5 +593,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   clearError: () => {
     set({ error: null });
+  },
+
+  clearPendingVerificationEmail: () => {
+    set({ pendingVerificationEmail: null });
   },
 }));

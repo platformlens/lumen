@@ -67,6 +67,66 @@ if (process.platform === 'darwin') {
 
 dotenv.config();
 
+/** Custom URL scheme for Supabase OAuth PKCE redirect (also add to Auth → URL Configuration in Supabase). */
+const OAUTH_CALLBACK_PROTOCOL = 'io.platformlens.lumen'
+
+function registerOAuthDeepLinkProtocol(): void {
+  try {
+    if (process.defaultApp && process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(OAUTH_CALLBACK_PROTOCOL, process.execPath, [path.resolve(process.argv[1])])
+    } else {
+      app.setAsDefaultProtocolClient(OAUTH_CALLBACK_PROTOCOL)
+    }
+  } catch (e) {
+    console.error('[main] setAsDefaultProtocolClient failed:', e)
+  }
+}
+
+let win: BrowserWindow | null = null
+let pendingOAuthDeepLink: string | null = null
+
+function queueOAuthDeepLink(url: string): void {
+  if (!url.startsWith(`${OAUTH_CALLBACK_PROTOCOL}:`)) return
+  pendingOAuthDeepLink = url
+  if (win && !win.isDestroyed() && !win.webContents.isLoading()) {
+    flushPendingOAuthDeepLink()
+  }
+}
+
+function flushPendingOAuthDeepLink(): void {
+  if (!pendingOAuthDeepLink || !win || win.isDestroyed()) return
+  win.webContents.send('auth:oauth-callback', pendingOAuthDeepLink)
+  pendingOAuthDeepLink = null
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+  process.exit(0)
+}
+
+registerOAuthDeepLinkProtocol()
+
+app.on('second-instance', (_event, argv) => {
+  const url = argv.find(
+    (a): a is string => typeof a === 'string' && a.startsWith(`${OAUTH_CALLBACK_PROTOCOL}:`),
+  )
+  if (url) queueOAuthDeepLink(url)
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  }
+})
+
+if (process.platform === 'darwin') {
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    if (url.startsWith(`${OAUTH_CALLBACK_PROTOCOL}:`)) {
+      queueOAuthDeepLink(url)
+    }
+  })
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -90,7 +150,6 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 /** App/window/dock icon: `public/` in dev, Vite `dist/` in packaged builds. */
 const APP_LOGO_PNG = path.join(process.env.VITE_PUBLIC, 'logo-new.png')
 
-let win: BrowserWindow | null
 const store = new Store();
 
 setLangfuseTraceAnalyticsPreferenceReader(() => {
@@ -2562,6 +2621,7 @@ function createWindow() {
       if (savedZoom !== 100) {
         win.webContents.setZoomFactor(savedZoom / 100);
       }
+      flushPendingOAuthDeepLink();
     }
   })
 
@@ -2610,6 +2670,12 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32' || process.platform === 'linux') {
+    const startupDeepLink = process.argv.find(
+      (a): a is string => typeof a === 'string' && a.startsWith(`${OAUTH_CALLBACK_PROTOCOL}:`),
+    )
+    if (startupDeepLink) queueOAuthDeepLink(startupDeepLink)
+  }
   if (process.platform === 'darwin') {
     try {
       app.dock?.setIcon(APP_LOGO_PNG);
