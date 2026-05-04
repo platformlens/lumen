@@ -182,9 +182,16 @@ declare global {
                     resourceType?: string;
                     saveToHistory?: boolean;
                     promptPreview?: string;
+                    geminiServiceTier?: 'standard' | 'flex';
                 },
                 onChunk: (chunk: string) => void,
-                onDone: () => void,
+                onDone: (usage?: {
+                    inputTokens?: number;
+                    outputTokens?: number;
+                    totalTokens?: number;
+                    reasoningTokens?: number;
+                    cachedInputTokens?: number;
+                }) => void,
                 onError: (err: any) => void
             ) => () => void;
             listModels: (provider: string) => Promise<any[]>;

@@ -60,6 +60,12 @@ import {
 } from "@/components/ai-elements/context";
 
 import { hasUnclosedThinkingBlock, parseAssistantThinking } from "@/utils/ai-thinking";
+import {
+  geminiMeterToUsage,
+  EMPTY_GEMINI_METER,
+  type GeminiSessionMeter,
+} from "@/utils/ai-meter";
+import { googleGeminiTokenlensModelId } from "@/utils/google-gemini-tokenlens-model-id";
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -252,6 +258,11 @@ interface AIPanelProps {
   onToolApproval?: (approved: boolean, trust: boolean) => void;
   /** Abort the in-flight LLM stream (main process + IPC listeners). */
   onStopStreaming?: () => void;
+  /** Cumulative Gemini token meter for this panel session (from API usage after each reply). */
+  geminiSessionMeter?: GeminiSessionMeter;
+  /** Google Gemini processing tier (passed through to the Generative AI API). */
+  geminiServiceTier?: 'standard' | 'flex';
+  onGeminiServiceTierChange?: (tier: 'standard' | 'flex') => void;
 }
 
 interface MessageType {
@@ -280,6 +291,9 @@ export const AIPanel: React.FC<AIPanelProps> = ({
   pendingToolApproval,
   onToolApproval,
   onStopStreaming,
+  geminiSessionMeter = EMPTY_GEMINI_METER,
+  geminiServiceTier = 'standard',
+  onGeminiServiceTierChange,
 }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'history'>('chat');
   const [history, setHistory] = useState<ChatSession[]>([]);
@@ -596,6 +610,48 @@ export const AIPanel: React.FC<AIPanelProps> = ({
     return Math.ceil(textLength / 4);
   }, [messages]);
 
+  const contextMaxTokens = useMemo(
+    () => (aiProvider === 'google' ? 1_048_576 : 128_000),
+    [aiProvider]
+  );
+
+  const googleMeterUsage = useMemo(() => {
+    if (aiProvider !== 'google') return null;
+    return geminiMeterToUsage(geminiSessionMeter);
+  }, [aiProvider, geminiSessionMeter]);
+
+  const contextUsageForPopover = useMemo(() => {
+    if (aiProvider === 'google' && googleMeterUsage) {
+      return googleMeterUsage;
+    }
+    return {
+      cachedInputTokens: 0,
+      inputTokens: estimatedTokens,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: estimatedTokens,
+    };
+  }, [aiProvider, googleMeterUsage, estimatedTokens]);
+
+  const usedTokensForCircle = useMemo(() => {
+    if (aiProvider === 'google' && googleMeterUsage) {
+      const sum =
+        (googleMeterUsage.inputTokens ?? 0) +
+        (googleMeterUsage.outputTokens ?? 0) +
+        (googleMeterUsage.reasoningTokens ?? 0);
+      return Math.max(sum, estimatedTokens);
+    }
+    return estimatedTokens;
+  }, [aiProvider, googleMeterUsage, estimatedTokens]);
+
+  const geminiCostMultiplier =
+    aiProvider === 'google' && geminiServiceTier === 'flex' ? 0.5 : 1;
+
+  const contextCostModelId = useMemo(() => {
+    if (aiProvider === 'google') return googleGeminiTokenlensModelId(aiModel);
+    return `${aiProvider}:${aiModel}`;
+  }, [aiProvider, aiModel]);
+
   const getProviderLogo = (provider: string) => {
     if (provider === 'bedrock') return 'amazon-bedrock';
     if (provider === 'google') return 'google';
@@ -851,16 +907,14 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                       <PromptInputTools>
                         <div className="flex items-center gap-2">
                           <Context
-                            maxTokens={128000}
-                            modelId={`${aiProvider}:${aiModel}`}
-                            usage={{
-                              cachedInputTokens: 0,
-                              inputTokens: estimatedTokens,
-                              outputTokens: 0,
-                              reasoningTokens: 0,
-                              totalTokens: estimatedTokens,
-                            }}
-                            usedTokens={estimatedTokens}
+                            maxTokens={contextMaxTokens}
+                            modelId={contextCostModelId}
+                            usage={contextUsageForPopover}
+                            usedTokens={usedTokensForCircle}
+                            costMultiplier={
+                              geminiCostMultiplier !== 1 ? geminiCostMultiplier : undefined
+                            }
+                            alwaysShowUsageBreakdown={aiProvider === 'google'}
                           >
                             <ContextTrigger />
                             <ContextContent className={chrome.contextPopover}>
@@ -874,6 +928,36 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                               <ContextContentFooter className={chrome.contextFooter} />
                             </ContextContent>
                           </Context>
+
+                          {aiProvider === 'google' && onGeminiServiceTierChange && (
+                            <div
+                              className={`flex rounded-md border text-[10px] font-medium overflow-hidden shrink-0 ${chrome.modelBadge}`}
+                              title="Standard is the default latency tier. Flex is typically cheaper with slower responses."
+                            >
+                              <button
+                                type="button"
+                                onClick={() => onGeminiServiceTierChange('standard')}
+                                className={`px-2 py-1 transition-colors ${
+                                  geminiServiceTier === 'standard'
+                                    ? `${chrome.tabActive} rounded-l-md`
+                                    : 'text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                Standard
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onGeminiServiceTierChange('flex')}
+                                className={`px-2 py-1 transition-colors border-l border-inherit ${
+                                  geminiServiceTier === 'flex'
+                                    ? `${chrome.tabActive}`
+                                    : 'text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                Flex
+                              </button>
+                            </div>
+                          )}
 
                           <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-medium text-muted-foreground select-none ${chrome.modelBadge}`}>
                             <ModelSelectorLogo provider={getProviderLogo(aiProvider)} className="size-3" />

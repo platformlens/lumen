@@ -1,4 +1,5 @@
 import { ipcRenderer, contextBridge } from 'electron'
+import type { AiStreamUsagePayload } from '../src/utils/ai-meter'
 
 // --------- Expose some API to the Renderer process ---------
 contextBridge.exposeInMainWorld('ipcRenderer', {
@@ -172,7 +173,13 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.off('ai:explainResourceStream:error', errorListener);
     };
   },
-  streamCustomPrompt: (prompt: string, options: any, onChunk: (chunk: string) => void, onDone: () => void, onError: (err: any) => void) => {
+  streamCustomPrompt: (
+    prompt: string,
+    options: any,
+    onChunk: (chunk: string) => void,
+    onDone: (usage?: AiStreamUsagePayload) => void,
+    onError: (err: any) => void
+  ) => {
     // Cancel any previous stream first
     ipcRenderer.send('ai:cancelCustomPromptStream');
 
@@ -182,7 +189,7 @@ contextBridge.exposeInMainWorld('k8s', {
     }, 10);
 
     const chunkListener = (_: any, chunk: string) => onChunk(chunk);
-    const doneListener = () => onDone();
+    const doneListener = (_: any, usage?: AiStreamUsagePayload) => onDone(usage);
     const errorListener = (_: any, err: any) => onError(err);
 
     // Prevent duplicate listeners by removing previous ones

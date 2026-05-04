@@ -27,6 +27,12 @@ import { AIPanel } from './components/features/ai/AIPanel';
 import { ViewTabBar, ViewTab } from './components/dashboard/ViewTabBar';
 import { getViewLabel } from './utils/view-labels';
 import { assistantContentForModelHistory } from './utils/ai-thinking';
+import {
+    addGeminiMeter,
+    EMPTY_GEMINI_METER,
+    type AiStreamUsagePayload,
+    type GeminiSessionMeter,
+} from './utils/ai-meter';
 
 function App() {
     const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor' | 'user'>('clusters')
@@ -57,6 +63,10 @@ function App() {
         // Use sync IPC to get persisted value on cold start
         return window.k8s.getModelSync();
     });
+    const [geminiSessionMeter, setGeminiSessionMeter] = useState<GeminiSessionMeter>(() => ({
+        ...EMPTY_GEMINI_METER,
+    }));
+    const [geminiServiceTier, setGeminiServiceTier] = useState<'standard' | 'flex'>('standard');
 
     // Dashboard Sub-views
     const [resourceView, setResourceView] = useState<string>('overview')
@@ -325,6 +335,7 @@ function App() {
                 resourceType: resourceKind,
                 saveToHistory: true,
                 promptPreview: `Explain anomaly: ${notif.type} on ${resourceName}`,
+                geminiServiceTier,
             },
             (chunk) => {
                 if (currentStreamIdRef.current === streamId) {
@@ -332,8 +343,9 @@ function App() {
                     setAiStreamingContent(prev => prev + chunk);
                 }
             },
-            () => {
+            (usage?: AiStreamUsagePayload) => {
                 if (currentStreamIdRef.current === streamId) {
+                    applyStreamUsageToGeminiMeter(usage);
                     conversationHistoryRef.current.push({
                         role: 'assistant',
                         content: assistantContentForModelHistory(fullResponse),
@@ -468,6 +480,24 @@ function App() {
     const currentStreamIdRef = useRef<string>('');
     const explainStreamIdRef = useRef<string | null>(null);
     const conversationHistoryRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+    const aiProviderRef = useRef(aiProvider);
+    aiProviderRef.current = aiProvider;
+
+    useEffect(() => {
+        window.k8s.settings.get('geminiServiceTier').then((v: unknown) => {
+            if (v === 'flex' || v === 'standard') setGeminiServiceTier(v);
+        }).catch(() => {});
+    }, []);
+
+    const handleGeminiTierChange = useCallback((tier: 'standard' | 'flex') => {
+        setGeminiServiceTier(tier);
+        window.k8s.settings.set('geminiServiceTier', tier).catch(() => {});
+    }, []);
+
+    const applyStreamUsageToGeminiMeter = useCallback((usage?: AiStreamUsagePayload) => {
+        if (aiProviderRef.current !== 'google') return;
+        setGeminiSessionMeter((m) => addGeminiMeter(m, usage));
+    }, []);
 
     useEffect(() => {
         window.k8s.getPinnedClusters().then(setPinnedClusters).catch(console.error);
@@ -655,6 +685,7 @@ function App() {
             console.log("[AI Model] Event received:", customEvent.detail);
             setAiProvider(customEvent.detail.provider);
             setAiModel(customEvent.detail.model);
+            setGeminiSessionMeter({ ...EMPTY_GEMINI_METER });
         };
         window.addEventListener("aiModelChanged", handleAIModelChange);
         return () => window.removeEventListener("aiModelChanged", handleAIModelChange);
@@ -1229,7 +1260,8 @@ function App() {
                     resourceName: podName,
                     resourceType: 'Pod Logs',
                     saveToHistory: true,
-                    promptPreview: `Analyze logs for ${podName} (${containerName})`
+                    promptPreview: `Analyze logs for ${podName} (${containerName})`,
+                    geminiServiceTier,
                 },
                 (chunk) => {
                     // Only process chunks for the current stream
@@ -1240,8 +1272,9 @@ function App() {
                         console.log('[AI] Ignoring chunk from old stream');
                     }
                 },
-                () => {
+                (usage?: AiStreamUsagePayload) => {
                     if (currentStreamIdRef.current === streamId) {
+                        applyStreamUsageToGeminiMeter(usage);
                         // Add assistant response to conversation history
                         conversationHistoryRef.current.push({
                             role: 'assistant',
@@ -1291,6 +1324,7 @@ function App() {
         if (meta?.provider === 'google' || meta?.provider === 'bedrock' || meta?.provider === 'local') {
             setAiProvider(meta.provider);
         }
+        setGeminiSessionMeter({ ...EMPTY_GEMINI_METER });
     };
 
     const handleNewChat = () => {
@@ -1304,6 +1338,7 @@ function App() {
         setAiStreamingContent('');
         setIsAiStreaming(false);
         setAiContext(undefined);
+        setGeminiSessionMeter({ ...EMPTY_GEMINI_METER });
         // Save previous session and start a fresh one
         window.k8s.saveCurrentSession().catch(() => { });
         window.k8s.startSession(undefined).catch(() => { });
@@ -1388,7 +1423,8 @@ function App() {
                     clusterName: selectedCluster,
                     resourceName: aiContext?.name || 'Chat',
                     resourceType: aiContext?.type || 'Conversation',
-                    saveToHistory: true // Save session after each response
+                    saveToHistory: true, // Save session after each response
+                    geminiServiceTier,
                 },
                 (chunk) => {
                     // Only process chunks for the current stream
@@ -1399,8 +1435,9 @@ function App() {
                         console.log('[AI] Ignoring chunk from old stream');
                     }
                 },
-                () => {
+                (usage?: AiStreamUsagePayload) => {
                     if (currentStreamIdRef.current === streamId) {
+                        applyStreamUsageToGeminiMeter(usage);
                         // Add assistant response to conversation history
                         conversationHistoryRef.current.push({
                             role: 'assistant',
@@ -1792,6 +1829,9 @@ function App() {
                         pendingToolApproval={pendingToolApproval}
                         onToolApproval={handleToolApproval}
                         onStopStreaming={handleStopAiStreaming}
+                        geminiSessionMeter={geminiSessionMeter}
+                        geminiServiceTier={geminiServiceTier}
+                        onGeminiServiceTierChange={handleGeminiTierChange}
                     />
                 )}
             </AnimatePresence>

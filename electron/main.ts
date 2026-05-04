@@ -33,6 +33,21 @@ import {
 } from './ai-prompt-cache';
 import { AI_THINK_CLOSE, AI_THINK_OPEN } from '../src/utils/ai-thinking';
 import dotenv from 'dotenv'
+
+function serializeAiUsageForRenderer(u: LanguageModelUsage | undefined) {
+  if (!u) return undefined;
+  const reasoning =
+    u.reasoningTokens ?? u.outputTokenDetails?.reasoningTokens;
+  const cached =
+    u.cachedInputTokens ?? u.inputTokenDetails?.cacheReadTokens;
+  return {
+    ...(u.inputTokens != null ? { inputTokens: u.inputTokens } : {}),
+    ...(u.outputTokens != null ? { outputTokens: u.outputTokens } : {}),
+    ...(u.totalTokens != null ? { totalTokens: u.totalTokens } : {}),
+    ...(reasoning != null ? { reasoningTokens: reasoning } : {}),
+    ...(cached != null ? { cachedInputTokens: cached } : {}),
+  };
+}
 import Store from 'electron-store'
 import { Worker } from 'worker_threads'
 import { WatcherBatchBuffer } from './watcher-batch-buffer'
@@ -1159,12 +1174,20 @@ function registerIpcHandlers() {
           abortSignal
         );
       }
-      const googleCacheProviderOptions:
+      const geminiServiceTier: 'flex' | 'standard' =
+        options?.geminiServiceTier === 'flex' ? 'flex' : 'standard';
+      const hasGeminiCache = geminiCachedContentName != null;
+      const googleStreamProviderOptions:
         | { google: GoogleGenerativeAIProviderOptions }
         | undefined =
-        geminiCachedContentName != null
+        provider === 'google' && (hasGeminiCache || geminiServiceTier === 'flex')
           ? {
-              google: { cachedContent: geminiCachedContentName } satisfies GoogleGenerativeAIProviderOptions,
+              google: {
+                ...(hasGeminiCache && geminiCachedContentName
+                  ? { cachedContent: geminiCachedContentName }
+                  : {}),
+                ...(geminiServiceTier === 'flex' ? { serviceTier: 'flex' as const } : {}),
+              } satisfies GoogleGenerativeAIProviderOptions,
             }
           : undefined;
 
@@ -1237,12 +1260,13 @@ function registerIpcHandlers() {
               tools: kubectlTools as any,
               stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
             });
-          } else if (provider === 'google' && googleCacheProviderOptions) {
+          } else if (provider === 'google') {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             result = streamText({
               model: aiModel,
               messages: effectiveMessages as ModelMessage[],
-              providerOptions: googleCacheProviderOptions,
+              ...(googleStreamProviderOptions ? { providerOptions: googleStreamProviderOptions } : {}),
+              ...(!hasGeminiCache ? { system: enhancedSystemPrompt } : {}),
               abortSignal,
               onError: handleStreamError,
               tools: kubectlTools as any,
@@ -1260,11 +1284,16 @@ function registerIpcHandlers() {
               stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
             });
           }
-        } else if (provider === 'google' && googleCacheProviderOptions) {
+        } else if (provider === 'google') {
+          const promptForGemini = hasGeminiCache
+            ? actualQuery
+            : enhancedSystemPrompt
+              ? `${enhancedSystemPrompt}\n\n${actualQuery}`
+              : actualQuery;
           result = streamText({
             model: aiModel,
-            prompt: actualQuery,
-            providerOptions: googleCacheProviderOptions,
+            prompt: promptForGemini,
+            ...(googleStreamProviderOptions ? { providerOptions: googleStreamProviderOptions } : {}),
             abortSignal,
             onError: handleStreamError,
           });
@@ -1313,6 +1342,7 @@ function registerIpcHandlers() {
 
       let fullResponse = '';
       let customPromptStreamFailed = false;
+      let lastStreamUsage: LanguageModelUsage | undefined;
 
       if (isLangfuseTracingEnabled()) {
         const sessionId = chatSessionManager.getCurrentSession()?.id;
@@ -1335,6 +1365,7 @@ function registerIpcHandlers() {
             try {
               const { fullResponse: fr, usage } = await runModelStream();
               fullResponse = fr;
+              lastStreamUsage = usage;
               if (abortSignal.aborted) {
                 console.log('[AI] Stream aborted');
                 activeCustomPromptAbort = null;
@@ -1365,8 +1396,9 @@ function registerIpcHandlers() {
         void getLangfuseClient()?.flush().catch(() => {});
       } else {
         try {
-          const { fullResponse: fr } = await runModelStream();
+          const { fullResponse: fr, usage } = await runModelStream();
           fullResponse = fr;
+          lastStreamUsage = usage;
           if (abortSignal.aborted) {
             console.log('[AI] Stream aborted');
             activeCustomPromptAbort = null;
@@ -1401,7 +1433,10 @@ function registerIpcHandlers() {
         }
       }
 
-      event.sender.send('ai:customPromptStream:done');
+      event.sender.send(
+        'ai:customPromptStream:done',
+        serializeAiUsageForRenderer(lastStreamUsage)
+      );
       activeCustomPromptAbort = null;
 
     } catch (error: unknown) {

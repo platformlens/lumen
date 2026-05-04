@@ -185,9 +185,16 @@ interface Window {
         resourceType?: string;
         saveToHistory?: boolean;
         promptPreview?: string;
+        geminiServiceTier?: 'standard' | 'flex';
       },
       onChunk: (chunk: string) => void,
-      onDone: () => void,
+      onDone: (usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+        reasoningTokens?: number;
+        cachedInputTokens?: number;
+      }) => void,
       onError: (error: any) => void
     ) => () => void
     saveAwsCreds: (creds: any) => Promise<void>

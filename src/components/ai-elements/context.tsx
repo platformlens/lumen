@@ -27,6 +27,10 @@ interface ContextSchema {
   /** Token breakdown from the AI SDK; partial values are fine for the context meter. */
   usage?: Partial<LanguageModelUsage>;
   modelId?: ModelId;
+  /** Multiply displayed USD estimates (e.g. 0.5 for Gemini Flex tier). */
+  costMultiplier?: number;
+  /** When true, Input/Output rows still render at zero so you can verify metering. */
+  alwaysShowUsageBreakdown?: boolean;
 }
 
 const ContextContext = createContext<ContextSchema | null>(null);
@@ -48,11 +52,27 @@ export const Context = ({
   maxTokens,
   usage,
   modelId,
+  costMultiplier,
+  alwaysShowUsageBreakdown,
   ...props
 }: ContextProps) => {
   const contextValue = useMemo(
-    () => ({ maxTokens, modelId, usage, usedTokens }),
-    [maxTokens, modelId, usage, usedTokens]
+    () => ({
+      maxTokens,
+      modelId,
+      usage,
+      usedTokens,
+      costMultiplier,
+      alwaysShowUsageBreakdown,
+    }),
+    [
+      maxTokens,
+      modelId,
+      usage,
+      usedTokens,
+      costMultiplier,
+      alwaysShowUsageBreakdown,
+    ]
   );
 
   return (
@@ -197,7 +217,8 @@ export const ContextContentFooter = ({
   className,
   ...props
 }: ContextContentFooterProps) => {
-  const { modelId, usage } = useContextValue();
+  const { modelId, usage, costMultiplier } = useContextValue();
+  const mult = costMultiplier ?? 1;
   const costUSD = modelId
     ? getUsage({
         modelId,
@@ -210,7 +231,7 @@ export const ContextContentFooter = ({
   const totalCost = new Intl.NumberFormat("en-US", {
     currency: "USD",
     style: "currency",
-  }).format(costUSD ?? 0);
+  }).format((costUSD ?? 0) * mult);
 
   return (
     <div
@@ -222,7 +243,9 @@ export const ContextContentFooter = ({
     >
       {children ?? (
         <>
-          <span className="text-muted-foreground">Total cost</span>
+          <span className="text-muted-foreground">
+            Total cost{mult !== 1 ? " (adjusted)" : ""}
+          </span>
           <span>{totalCost}</span>
         </>
       )}
@@ -256,14 +279,16 @@ export const ContextInputUsage = ({
   children,
   ...props
 }: ContextInputUsageProps) => {
-  const { usage, modelId } = useContextValue();
+  const { usage, modelId, costMultiplier, alwaysShowUsageBreakdown } =
+    useContextValue();
+  const mult = costMultiplier ?? 1;
   const inputTokens = usage?.inputTokens ?? 0;
 
   if (children) {
     return children;
   }
 
-  if (!inputTokens) {
+  if (!inputTokens && !alwaysShowUsageBreakdown) {
     return null;
   }
 
@@ -276,7 +301,7 @@ export const ContextInputUsage = ({
   const inputCostText = new Intl.NumberFormat("en-US", {
     currency: "USD",
     style: "currency",
-  }).format(inputCost ?? 0);
+  }).format((inputCost ?? 0) * mult);
 
   return (
     <div
@@ -296,14 +321,16 @@ export const ContextOutputUsage = ({
   children,
   ...props
 }: ContextOutputUsageProps) => {
-  const { usage, modelId } = useContextValue();
+  const { usage, modelId, costMultiplier, alwaysShowUsageBreakdown } =
+    useContextValue();
+  const mult = costMultiplier ?? 1;
   const outputTokens = usage?.outputTokens ?? 0;
 
   if (children) {
     return children;
   }
 
-  if (!outputTokens) {
+  if (!outputTokens && !alwaysShowUsageBreakdown) {
     return null;
   }
 
@@ -316,7 +343,7 @@ export const ContextOutputUsage = ({
   const outputCostText = new Intl.NumberFormat("en-US", {
     currency: "USD",
     style: "currency",
-  }).format(outputCost ?? 0);
+  }).format((outputCost ?? 0) * mult);
 
   return (
     <div
@@ -336,14 +363,19 @@ export const ContextReasoningUsage = ({
   children,
   ...props
 }: ContextReasoningUsageProps) => {
-  const { usage, modelId } = useContextValue();
-  const reasoningTokens = usage?.reasoningTokens ?? 0;
+  const { usage, modelId, costMultiplier, alwaysShowUsageBreakdown } =
+    useContextValue();
+  const mult = costMultiplier ?? 1;
+  const reasoningTokens =
+    usage?.reasoningTokens ??
+    usage?.outputTokenDetails?.reasoningTokens ??
+    0;
 
   if (children) {
     return children;
   }
 
-  if (!reasoningTokens) {
+  if (!reasoningTokens && !alwaysShowUsageBreakdown) {
     return null;
   }
 
@@ -356,7 +388,7 @@ export const ContextReasoningUsage = ({
   const reasoningCostText = new Intl.NumberFormat("en-US", {
     currency: "USD",
     style: "currency",
-  }).format(reasoningCost ?? 0);
+  }).format((reasoningCost ?? 0) * mult);
 
   return (
     <div
@@ -376,14 +408,19 @@ export const ContextCacheUsage = ({
   children,
   ...props
 }: ContextCacheUsageProps) => {
-  const { usage, modelId } = useContextValue();
-  const cacheTokens = usage?.cachedInputTokens ?? 0;
+  const { usage, modelId, costMultiplier, alwaysShowUsageBreakdown } =
+    useContextValue();
+  const mult = costMultiplier ?? 1;
+  const cacheTokens =
+    usage?.cachedInputTokens ??
+    usage?.inputTokenDetails?.cacheReadTokens ??
+    0;
 
   if (children) {
     return children;
   }
 
-  if (!cacheTokens) {
+  if (!cacheTokens && !alwaysShowUsageBreakdown) {
     return null;
   }
 
@@ -396,7 +433,7 @@ export const ContextCacheUsage = ({
   const cacheCostText = new Intl.NumberFormat("en-US", {
     currency: "USD",
     style: "currency",
-  }).format(cacheCost ?? 0);
+  }).format((cacheCost ?? 0) * mult);
 
   return (
     <div
