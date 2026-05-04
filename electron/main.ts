@@ -15,6 +15,7 @@ import { createGoogleGenerativeAI, type GoogleGenerativeAIProviderOptions } from
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAI } from '@ai-sdk/openai';
 import { BedrockClient, ListFoundationModelsCommand, ListInferenceProfilesCommand } from '@aws-sdk/client-bedrock';
+import { APICallError } from '@ai-sdk/provider';
 import { streamText, stepCountIs, type ModelMessage, type LanguageModelUsage } from 'ai';
 import { buildKubectlTools, buildToolSystemPrompt, type ToolMode } from './ai-tools';
 import { startActiveObservation } from '@langfuse/tracing';
@@ -32,6 +33,7 @@ import {
   isAnthropicBedrockModel,
 } from './ai-prompt-cache';
 import { AI_THINK_CLOSE, AI_THINK_OPEN } from '../src/utils/ai-thinking';
+import { geminiThinkingConfigForModel } from '../src/utils/gemini-thinking-config';
 import dotenv from 'dotenv'
 
 function serializeAiUsageForRenderer(u: LanguageModelUsage | undefined) {
@@ -729,6 +731,26 @@ function registerIpcHandlers() {
    * Wraps reasoning in the same markers parsed by parseAssistantThinking in the UI.
    * Also handles tool-call and tool-result parts for agentic mode.
    */
+  function buildGoogleProviderOptionsForStream(opts: {
+    model: string;
+    cachedContent?: string | null;
+    serviceTier: 'flex' | 'standard';
+  }): { google: GoogleGenerativeAIProviderOptions } | undefined {
+    const google: GoogleGenerativeAIProviderOptions = {};
+    if (opts.cachedContent) {
+      google.cachedContent = opts.cachedContent;
+    }
+    if (opts.serviceTier === 'flex') {
+      google.serviceTier = 'flex';
+    }
+    const thinkingConfig = geminiThinkingConfigForModel(opts.model);
+    if (thinkingConfig) {
+      google.thinkingConfig = thinkingConfig;
+    }
+    if (Object.keys(google).length === 0) return undefined;
+    return { google };
+  }
+
   async function accumulateStreamWithReasoning(
     result: { fullStream: AsyncIterable<{ type: string; text?: string; delta?: string; [key: string]: any }> },
     sendChunk: (s: string) => void,
@@ -783,7 +805,9 @@ function registerIpcHandlers() {
           const args = (part as any).args || (part as any).input || {};
           console.log(`[AI Tools] Tool call: ${toolName}`, JSON.stringify(args), 'part keys:', Object.keys(part));
           const command = typeof args === 'object' ? (args.command || JSON.stringify(args)) : String(args);
-          const marker = `\n\n🔧 **Running:** \`${command}\`\n`;
+          const marker =
+            `\n\n🔧 **Running:** \`${command}\`\n\n` +
+            `*Starting tool execution…*\n`;
           sendChunk(marker);
           full += marker;
           break;
@@ -795,6 +819,9 @@ function registerIpcHandlers() {
           const outputMarker = `\n<details><summary>📋 Output (click to expand)</summary>\n\n\`\`\`\n${resultStr}\n\`\`\`\n</details>\n\n`;
           sendChunk(outputMarker);
           full += outputMarker;
+          const continuationHint = '*Model is processing the tool output…*\n\n';
+          sendChunk(continuationHint);
+          full += continuationHint;
           break;
         }
         case 'text-delta': {
@@ -807,6 +834,24 @@ function registerIpcHandlers() {
           }
           sendChunk(t);
           full += t;
+          break;
+        }
+        case 'finish-step': {
+          const p = part as { finishReason?: string; rawFinishReason?: string };
+          console.log(
+            `[AI Stream] finish-step: finishReason=${String(p.finishReason)} raw=${String(p.rawFinishReason ?? '')}`
+          );
+          break;
+        }
+        case 'finish': {
+          const p = part as { finishReason?: string; rawFinishReason?: string };
+          console.log(
+            `[AI Stream] finish: finishReason=${String(p.finishReason)} raw=${String(p.rawFinishReason ?? '')}`
+          );
+          break;
+        }
+        case 'abort': {
+          console.log('[AI Stream] abort', (part as { reason?: string }).reason ?? '');
           break;
         }
         default:
@@ -951,10 +996,19 @@ function registerIpcHandlers() {
             onChunk: (chunk) => event.sender.send('ai:explainResourceStream:chunk', chunk),
           });
         } else {
+          const explainGoogleOpts =
+            provider === 'google'
+              ? buildGoogleProviderOptionsForStream({
+                  model,
+                  cachedContent: undefined,
+                  serviceTier: 'standard',
+                })
+              : undefined;
           const result = streamText({
             model: aiModel!,
             prompt: prompt,
             maxOutputTokens: 1024,
+            ...(explainGoogleOpts ? { providerOptions: explainGoogleOpts } : {}),
             abortSignal: explainAbortSignal,
             onError: ({ error }: { error: unknown }) => {
               if (explainAbortSignal.aborted) return;
@@ -1143,7 +1197,12 @@ function registerIpcHandlers() {
       const toolMode = (store.get('settings_aiToolMode') as ToolMode) || 'off';
       const trustedCommands = (store.get('settings_aiTrustedCommands') as string[]) || [];
       console.log(`[AI Tools] Tool mode: ${toolMode}, cluster: ${clusterName || 'none'}, trusted: ${trustedCommands.length}`);
-      const toolResult = buildKubectlTools(clusterName || undefined, toolMode, trustedCommands, win);
+      const toolResult = buildKubectlTools(clusterName || undefined, toolMode, trustedCommands, win, {
+        onAgentHint: (markdownChunk) => {
+          if (abortSignal.aborted) return;
+          event.sender.send('ai:customPromptStream:chunk', markdownChunk);
+        },
+      });
       const kubectlTools = toolResult?.tools;
       // Store the resolver so the IPC handler can reach it
       if (toolResult) {
@@ -1155,6 +1214,9 @@ function registerIpcHandlers() {
       } else {
         console.log('[AI Tools] Tool calling is OFF');
       }
+
+      /** Max model rounds for agentic kubectl (tool call + follow-up text), Google Gemini and other providers. */
+      const KUBECTL_AGENT_MAX_STEPS = 10;
 
       // Handle /kubectl mode
       if (isKubectlMode) {
@@ -1177,18 +1239,13 @@ function registerIpcHandlers() {
       const geminiServiceTier: 'flex' | 'standard' =
         options?.geminiServiceTier === 'flex' ? 'flex' : 'standard';
       const hasGeminiCache = geminiCachedContentName != null;
-      const googleStreamProviderOptions:
-        | { google: GoogleGenerativeAIProviderOptions }
-        | undefined =
-        provider === 'google' && (hasGeminiCache || geminiServiceTier === 'flex')
-          ? {
-              google: {
-                ...(hasGeminiCache && geminiCachedContentName
-                  ? { cachedContent: geminiCachedContentName }
-                  : {}),
-                ...(geminiServiceTier === 'flex' ? { serviceTier: 'flex' as const } : {}),
-              } satisfies GoogleGenerativeAIProviderOptions,
-            }
+      const googleStreamProviderOptions =
+        provider === 'google'
+          ? buildGoogleProviderOptionsForStream({
+              model,
+              cachedContent: hasGeminiCache ? geminiCachedContentName : undefined,
+              serviceTier: geminiServiceTier,
+            })
           : undefined;
 
       // Shared error handler for streamText onError callback
@@ -1247,7 +1304,7 @@ function registerIpcHandlers() {
           : [{ role: 'user' as const, content: actualQuery }];
         const useMessagesFormat = (messages && messages.length > 0) || kubectlTools;
 
-        console.log(`[AI Tools] streamText config: useMessages=${useMessagesFormat}, hasTools=${!!kubectlTools}, provider=${provider}, model=${model}, maxSteps=${kubectlTools ? 10 : 1}`);
+        console.log(`[AI Tools] streamText config: useMessages=${useMessagesFormat}, hasTools=${!!kubectlTools}, provider=${provider}, model=${model}, maxSteps=${kubectlTools ? KUBECTL_AGENT_MAX_STEPS : 1}`);
 
         if (useMessagesFormat) {
           if (provider === 'bedrock' && isAnthropicBedrockModel(model)) {
@@ -1258,9 +1315,11 @@ function registerIpcHandlers() {
               abortSignal,
               onError: handleStreamError,
               tools: kubectlTools as any,
-              stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
+              ...(kubectlTools ? { toolChoice: 'auto' as const } : {}),
+              stopWhen: kubectlTools ? stepCountIs(KUBECTL_AGENT_MAX_STEPS) : stepCountIs(1),
             });
           } else if (provider === 'google') {
+            // Gemini: same agentic loop as Bedrock (messages + kubectl tool + multi-step).
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             result = streamText({
               model: aiModel,
@@ -1270,7 +1329,8 @@ function registerIpcHandlers() {
               abortSignal,
               onError: handleStreamError,
               tools: kubectlTools as any,
-              stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
+              ...(kubectlTools ? { toolChoice: 'auto' as const } : {}),
+              stopWhen: kubectlTools ? stepCountIs(KUBECTL_AGENT_MAX_STEPS) : stepCountIs(1),
             });
           } else {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1281,7 +1341,8 @@ function registerIpcHandlers() {
               abortSignal,
               onError: handleStreamError,
               tools: kubectlTools as any,
-              stopWhen: kubectlTools ? stepCountIs(10) : stepCountIs(1),
+              ...(kubectlTools ? { toolChoice: 'auto' as const } : {}),
+              stopWhen: kubectlTools ? stepCountIs(KUBECTL_AGENT_MAX_STEPS) : stepCountIs(1),
             });
           }
         } else if (provider === 'google') {
@@ -1311,6 +1372,26 @@ function registerIpcHandlers() {
           (chunk) => event.sender.send('ai:customPromptStream:chunk', chunk),
           () => abortSignal.aborted
         );
+        try {
+          const [finishReason, steps] = await Promise.all([
+            withTimeout(result.finishReason, 8_000, 'finishReason'),
+            withTimeout(result.steps, 8_000, 'steps'),
+          ]);
+          const stepList = steps as Array<{
+            finishReason?: string;
+            text?: string;
+            toolCalls?: unknown[];
+          }>;
+          const last = stepList.length > 0 ? stepList[stepList.length - 1] : undefined;
+          console.log(
+            `[AI] streamText completed: aggregateFinish=${String(finishReason)} steps=${stepList.length}` +
+              (last
+                ? ` lastStepFinish=${String(last.finishReason)} textChars=${last.text?.length ?? 0} toolCalls=${last.toolCalls?.length ?? 0}`
+                : '')
+          );
+        } catch (metaErr) {
+          console.warn('[AI] streamText finish metadata unavailable', metaErr);
+        }
         let usage: LanguageModelUsage | undefined;
         try {
           usage = await withTimeout(
@@ -2566,28 +2647,133 @@ function stripResourceForAI(resource: Record<string, unknown>): Record<string, u
   return clone;
 }
 
-function extractAiErrorInfo(error: unknown): { message: string; isAccessDenied: boolean } {
-  // Try to get a clean message from various error shapes
-  let message = 'Unknown error';
-  const err = error as Record<string, unknown>;
-
-  // The AI SDK puts the response body as a JSON string
-  if (typeof err.responseBody === 'string') {
-    try {
-      const parsed = JSON.parse(err.responseBody);
-      message = parsed.message || err.responseBody;
-    } catch {
-      message = err.responseBody;
+function formatAiProviderResponseBodySnippet(body: string | undefined): string {
+  if (!body || typeof body !== 'string') return '';
+  const trimmed = body.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      message?: string;
+      error?: { message?: string; status?: string; code?: number };
+    };
+    const nested = parsed.error;
+    if (nested?.message) {
+      const st = nested.status ? ` [${nested.status}]` : '';
+      return `${nested.message.trim()}${st}`;
     }
-  } else if ((err.data as Record<string, unknown>)?.message) {
-    message = (err.data as Record<string, unknown>).message as string;
-  } else if (error instanceof Error) {
-    message = error.message;
+    if (typeof parsed.message === 'string' && parsed.message.trim()) {
+      return parsed.message.trim();
+    }
+  } catch {
+    /* not JSON */
+  }
+  return trimmed.length > 800 ? `${trimmed.slice(0, 800)}…` : trimmed;
+}
+
+function httpStatusLabel(code: number): string {
+  switch (code) {
+    case 400:
+      return 'Bad Request';
+    case 401:
+      return 'Unauthorized';
+    case 403:
+      return 'Forbidden';
+    case 404:
+      return 'Not Found';
+    case 429:
+      return 'Too Many Requests';
+    case 502:
+      return 'Bad Gateway';
+    case 503:
+      return 'Service Unavailable';
+    case 504:
+      return 'Gateway Timeout';
+    default:
+      return '';
+  }
+}
+
+function appendPartsFromApiCall(parts: string[], e: APICallError): void {
+  const sc = e.statusCode;
+  if (sc != null) {
+    const label = httpStatusLabel(sc);
+    parts.push(label ? `HTTP ${sc} (${label})` : `HTTP ${sc}`);
+  } else if (e.message) {
+    parts.push(e.message);
+  }
+  const bodyLine = formatAiProviderResponseBodySnippet(e.responseBody);
+  if (bodyLine && !parts.some((p) => p.includes(bodyLine.slice(0, 60)))) {
+    parts.push(bodyLine);
+  } else if (e.message?.trim()) {
+    const m = e.message.trim();
+    if (!parts.some((p) => p.includes(m.slice(0, Math.min(48, m.length))))) {
+      parts.push(m);
+    }
+  }
+  if (sc != null && sc >= 500 && e.url?.includes('googleapis.com')) {
+    parts.push(
+      'Google Generative Language API returned a server error. This is usually temporary; retry in a moment or check Google AI Studio status.'
+    );
+  }
+}
+
+function extractAiErrorInfo(error: unknown): { message: string; isAccessDenied: boolean } {
+  const parts: string[] = [];
+  let cursor: unknown = error;
+  const seen = new Set<object>();
+
+  for (let depth = 0; depth < 10 && cursor != null; depth++) {
+    if (typeof cursor === 'object' && cursor !== null) {
+      if (seen.has(cursor as object)) break;
+      seen.add(cursor as object);
+    }
+
+    if (APICallError.isInstance(cursor)) {
+      appendPartsFromApiCall(parts, cursor);
+    } else if (cursor instanceof Error && cursor.message?.trim()) {
+      const msg = cursor.message.trim();
+      if (!parts.some((p) => p.includes(msg.slice(0, 40)))) {
+        parts.push(msg);
+      }
+    } else if (typeof cursor === 'string' && cursor.trim()) {
+      parts.push(cursor.trim());
+    }
+
+    cursor =
+      cursor instanceof Error && cursor.cause !== undefined ? cursor.cause : undefined;
   }
 
-  const isAccessDenied = (err.statusCode as number) === 403
-    || message.includes('Model access is denied')
-    || message.includes('aws-marketplace');
+  if (parts.length === 0 && error && typeof error === 'object') {
+    const err = error as Record<string, unknown>;
+    if (typeof err.responseBody === 'string') {
+      const snippet = formatAiProviderResponseBodySnippet(err.responseBody);
+      if (snippet) parts.push(snippet);
+    }
+    if ((err.data as Record<string, unknown>)?.message) {
+      parts.push(String((err.data as Record<string, unknown>).message));
+    }
+    const sc = err.statusCode as number | undefined;
+    if (sc != null) {
+      const label = httpStatusLabel(sc);
+      parts.unshift(label ? `HTTP ${sc} (${label})` : `HTTP ${sc}`);
+    } else if (error instanceof Error && error.message) {
+      parts.push(error.message);
+    }
+  }
+
+  const message =
+    parts
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .filter((p, i, arr) => arr.findIndex((x) => x === p) === i)
+      .join(' ') || 'Unknown error';
+
+  const isAccessDenied =
+    message.includes('HTTP 403') ||
+    message.includes('PERMISSION_DENIED') ||
+    (error as Record<string, unknown>)?.statusCode === 403 ||
+    message.includes('Model access is denied') ||
+    message.includes('aws-marketplace');
 
   return { message, isAccessDenied };
 }

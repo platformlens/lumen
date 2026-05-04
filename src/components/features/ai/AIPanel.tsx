@@ -59,6 +59,8 @@ import {
   ContextTrigger,
 } from "@/components/ai-elements/context";
 
+import { Shimmer } from "@/components/ai-elements/shimmer";
+
 import { hasUnclosedThinkingBlock, parseAssistantThinking } from "@/utils/ai-thinking";
 import {
   geminiMeterToUsage,
@@ -66,6 +68,7 @@ import {
   type GeminiSessionMeter,
 } from "@/utils/ai-meter";
 import { googleGeminiTokenlensModelId } from "@/utils/google-gemini-tokenlens-model-id";
+import { KUBECTL_APPROVAL_TIMEOUT_MINUTES } from "@/constants/ai-kubectl-approval";
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -795,7 +798,11 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                                       <ChainOfThoughtContent>
                                         <ChainOfThoughtStep
                                           icon={Brain}
-                                          label="Reasoning trace"
+                                          label={
+                                            aiProvider === 'google'
+                                              ? 'Thought trace'
+                                              : 'Reasoning trace'
+                                          }
                                           status={isCurrentStream ? 'active' : 'complete'}
                                         >
                                           {thinkingText.trim() ? (
@@ -826,11 +833,20 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                       </MessageBranch>
                     ))}
                     {isStreaming && messages.length > 0 && messages[messages.length - 1].from === 'user' && (
-                       <Message from="assistant">
-                         <MessageContent className={chrome.messageAssistant}>
-                           <MessageResponse>...</MessageResponse>
-                         </MessageContent>
-                       </Message>
+                      <Message from="assistant">
+                        <MessageContent className={chrome.messageAssistant}>
+                          <div className="flex flex-col gap-1.5 py-0.5">
+                            <Shimmer duration={1} className="text-sm" as="span">
+                              {aiProvider === 'google' ? 'Thinking…' : 'Generating…'}
+                            </Shimmer>
+                            <p className="text-[11px] text-muted-foreground leading-snug">
+                              {aiProvider === 'google'
+                                ? 'Thought summaries appear in the expandable trace when your model supports thinking. Tool calls may pause here while kubectl runs or waits for approval.'
+                                : 'Streaming may pause briefly during tool calls or long cluster commands.'}
+                            </p>
+                          </div>
+                        </MessageContent>
+                      </Message>
                     )}
                   </ConversationContent>
                   <ConversationScrollButton />
@@ -858,6 +874,10 @@ export const AIPanel: React.FC<AIPanelProps> = ({
                       <code className="block text-xs text-white font-mono bg-black/30 rounded-lg px-3 py-2 break-all">
                         {pendingToolApproval.command}
                       </code>
+                      <p className="text-[10px] text-yellow-200/70 leading-snug">
+                        If you do not choose an action within {KUBECTL_APPROVAL_TIMEOUT_MINUTES} minutes, this request
+                        is declined automatically so the assistant can continue.
+                      </p>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => onToolApproval?.(true, false)}

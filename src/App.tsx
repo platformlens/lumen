@@ -331,6 +331,8 @@ function App() {
             {
                 model: aiModel,
                 provider: aiProvider,
+                clusterName: selectedCluster,
+                ...(namespace ? { namespace } : {}),
                 resourceName,
                 resourceType: resourceKind,
                 saveToHistory: true,
@@ -420,6 +422,15 @@ function App() {
         };
     }, [aiModel, aiProvider]);
 
+    const showToastRef = useRef<
+        | ((
+              message: string,
+              type?: 'success' | 'error' | 'info',
+              action?: { label: string; onClick: () => void }
+          ) => void)
+        | null
+    >(null);
+
     const handleAiError = (err: any, streamId?: string) => {
         if (streamId && currentStreamIdRef.current !== streamId) return;
         const message = typeof err === 'string' ? err : (err?.message || String(err));
@@ -427,7 +438,18 @@ function App() {
         // Access denied errors are handled by the onBedrockAccessDenied listener above,
         // so we only append non-access errors to the streaming content.
         if (!message.includes('Model access is denied') && !message.includes('aws-marketplace')) {
-            setAiStreamingContent(prev => prev + `\n\nError: ${message}`);
+            setAiStreamingContent(prev => prev + `\n\n**Error**\n\n${message}`);
+        }
+        const isGoogleServerError =
+            /\bHTTP 5\d\d\b/i.test(message) ||
+            /\b503\b/.test(message) ||
+            /Service Unavailable/i.test(message) ||
+            /\bUNAVAILABLE\b/i.test(message);
+        if (isGoogleServerError) {
+            showToastRef.current?.(
+                message.length > 160 ? `${message.slice(0, 160)}…` : message,
+                'error'
+            );
         }
         setIsAiStreaming(false);
         aiCleanupRef.current = null;
@@ -651,6 +673,7 @@ function App() {
         const id = Math.random().toString(36).substr(2, 9);
         setToasts(prev => [...prev, { id, message, type, action }]);
     };
+    showToastRef.current = showToast;
 
     const removeToast = (id: string) => {
         setToasts(prev => prev.filter(t => t.id !== id));
@@ -1421,6 +1444,7 @@ function App() {
                     systemPrompt,
                     messages: conversationHistoryRef.current, // Pass conversation history
                     clusterName: selectedCluster,
+                    ...(aiContext?.namespace !== undefined ? { namespace: aiContext.namespace } : {}),
                     resourceName: aiContext?.name || 'Chat',
                     resourceType: aiContext?.type || 'Conversation',
                     saveToHistory: true, // Save session after each response

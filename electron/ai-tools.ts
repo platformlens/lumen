@@ -9,6 +9,7 @@ import { jsonSchema } from 'ai';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { BrowserWindow } from 'electron';
+import { KUBECTL_APPROVAL_TIMEOUT_MS } from '../src/constants/ai-kubectl-approval';
 
 const execFileAsync = promisify(execFile);
 
@@ -95,6 +96,11 @@ export interface ToolApprovalRequest {
   isReadOnly: boolean;
 }
 
+export interface BuildKubectlToolsOptions {
+  /** Stream markdown hints to the renderer while kubectl waits (approval / exec / latency). */
+  onAgentHint?: (markdownChunk: string) => void;
+}
+
 /**
  * Build tool definitions with execute functions that support human-in-the-loop.
  *
@@ -109,13 +115,17 @@ export function buildKubectlTools(
   mode: ToolMode,
   trustedCommands: string[],
   win: BrowserWindow | null,
+  options?: BuildKubectlToolsOptions,
 ) {
   if (mode === 'off') return undefined;
+
+  const hint = options?.onAgentHint;
 
   // Pending approval resolvers keyed by toolCallId
   const pendingApprovals = new Map<string, {
     resolve: (approved: boolean) => void;
     command: string;
+    timer: ReturnType<typeof setTimeout> | null;
   }>();
 
   const executeKubectl = async ({ command }: { command: string }): Promise<string> => {
@@ -132,33 +142,49 @@ export function buildKubectlTools(
 
     if (isAutoApproved(command, trustedCommands)) {
       console.log(`[AI Tool] Auto-approved (trusted): ${command}`);
+      hint?.('\n\n*Executing kubectl against the cluster…*\n\n');
       return runKubectl(command, clusterContext);
     }
 
     const toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+    hint?.('\n\n*Waiting for your approval in the panel below…*\n\n');
+
+    let approvalTimedOut = false;
     const approved = await new Promise<boolean>((resolve) => {
-      pendingApprovals.set(toolCallId, { resolve, command });
+      const timer = setTimeout(() => {
+        const pending = pendingApprovals.get(toolCallId);
+        if (!pending) return;
+        approvalTimedOut = true;
+        pendingApprovals.delete(toolCallId);
+        console.warn(
+          `[AI Tool] kubectl approval timed out after ${KUBECTL_APPROVAL_TIMEOUT_MS}ms:`,
+          command
+        );
+        hint?.(
+          '\n\n*Approval timed out. The assistant was told the command was not approved in time.*\n\n'
+        );
+        resolve(false);
+      }, KUBECTL_APPROVAL_TIMEOUT_MS);
+
+      pendingApprovals.set(toolCallId, { resolve, command, timer });
 
       win?.webContents.send('ai:toolApprovalRequest', {
         toolCallId,
         command,
         isReadOnly: readOnly,
       } satisfies ToolApprovalRequest);
-
-      setTimeout(() => {
-        if (pendingApprovals.has(toolCallId)) {
-          pendingApprovals.delete(toolCallId);
-          resolve(false);
-        }
-      }, 60000);
     });
 
     if (!approved) {
+      if (approvalTimedOut) {
+        return `⏱️ Approval timed out (no response within ${KUBECTL_APPROVAL_TIMEOUT_MS / 60_000} minutes). Command was not run: "${command}"`;
+      }
       return `⛔ Command rejected by user: "${command}"`;
     }
 
     console.log(`[AI Tool] User approved: ${command}`);
+    hint?.('\n\n*Executing kubectl against the cluster…*\n\n');
     return runKubectl(command, clusterContext);
   };
 
@@ -192,6 +218,7 @@ export function buildKubectlTools(
     resolvePendingApproval: (toolCallId: string, approved: boolean, _trust: boolean) => {
       const pending = pendingApprovals.get(toolCallId);
       if (pending) {
+        if (pending.timer) clearTimeout(pending.timer);
         pendingApprovals.delete(toolCallId);
         pending.resolve(approved);
       }

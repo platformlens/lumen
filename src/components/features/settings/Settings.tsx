@@ -7,6 +7,7 @@ import { GlassButton } from '../../shared/GlassButton';
 import { ToggleGroup } from '../../shared/ToggleGroup';
 import packageJson from '../../../../package.json';
 import { lumenLogo } from '../../../assets/lumen-logo';
+import { KUBECTL_APPROVAL_TIMEOUT_MINUTES } from '../../../constants/ai-kubectl-approval';
 
 const FONT_OPTIONS = [
   { value: 'Monaco', label: 'Monaco', stack: "'Monaco', 'Menlo', 'Consolas', monospace" },
@@ -717,7 +718,8 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
           <p className="text-sm text-gray-400 leading-relaxed">
             When enabled, the AI assistant can execute <strong className="text-gray-300 font-medium">kubectl commands</strong> against
             your cluster to gather real data for debugging. Instead of guessing, it will inspect pods, logs, events, and resources
-            directly — then provide analysis based on actual cluster state.
+            directly — then provide analysis based on actual cluster state. With <strong className="text-gray-300 font-medium">Google Gemini</strong>
+            or <strong className="text-gray-300 font-medium">AWS Bedrock</strong>, the assistant can run multiple kubectl steps in one reply (agentic mode).
           </p>
           <SettingRow
             label="Tool calling mode"
@@ -741,7 +743,11 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
           {aiToolMode !== 'off' && (
             <div className="flex items-center gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/10 rounded-lg px-3 py-2">
               <Info size={12} />
-              <span>The AI will run kubectl commands using your current kubeconfig context. Commands are logged to the console.</span>
+              <span>
+                The AI will run kubectl commands using your current kubeconfig context. Commands are logged to the
+                console. Each command that needs approval must get Allow or Deny within{' '}
+                {KUBECTL_APPROVAL_TIMEOUT_MINUTES} minutes or it is declined automatically.
+              </span>
             </div>
           )}
           {aiToolMode !== 'off' && trustedCommands.length > 0 && (

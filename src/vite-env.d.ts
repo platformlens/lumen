@@ -178,6 +178,7 @@ declare global {
                     systemPrompt?: string;
                     messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
                     clusterName?: string | null;
+                    namespace?: string;
                     resourceName?: string;
                     resourceType?: string;
                     saveToHistory?: boolean;
