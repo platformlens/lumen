@@ -28,6 +28,11 @@ const getViewTitle = (view: string): string => {
         return `Helm Release: ${name}`;
     }
 
+    if (view.startsWith('helm-chart-detail/')) {
+        const chart = decodeURIComponent(view.split('/')[2] ?? '');
+        return chart ? `Helm chart: ${chart}` : 'Helm chart';
+    }
+
     const titleMap: Record<string, string> = {
         'overview': 'Overview',
         'pods': 'Pods',
@@ -64,6 +69,7 @@ const getViewTitle = (view: string): string => {
         'crd-definitions': 'CRD Definitions',
         'certificates': 'Certificates',
         'helm-releases': 'Helm Releases',
+        'helm-charts': 'Helm Charts',
         'aws': 'AWS',
     };
 

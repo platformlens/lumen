@@ -1309,6 +1309,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (activeView === 'priorityclasses') return priorityClasses.length;
         if (activeView === 'runtimeclasses') return runtimeClasses.length;
         if (activeView === 'helm-releases') return helmReleases.length;
+        if (activeView === 'helm-charts') return 0;
+        if (activeView.startsWith('helm-chart-detail/')) return 0;
         if (activeView === 'crd-definitions') return crdDefinitions.length;
         if (activeView.startsWith('crd/')) return (customObjects && typeof customObjects === 'object' && 'items' in customObjects) ? (customObjects.items as any[]).length : (Array.isArray(customObjects) ? customObjects.length : 0);
         return 0;

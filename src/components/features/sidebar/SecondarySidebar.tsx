@@ -34,6 +34,7 @@ import {
     Pin,
     Brain,
     Anchor,
+    Package,
     PenTool,
     FilePlus,
     FolderOpen,
@@ -324,6 +325,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
             title: 'Helm',
             items: [
                 { label: 'Releases', view: 'helm-releases', icon: <Anchor size={18} /> },
+                { label: 'Charts', view: 'helm-charts', icon: <Package size={18} /> },
             ]
         },
         {

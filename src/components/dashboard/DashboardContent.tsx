@@ -8,6 +8,8 @@ import { AwsView } from './views/AwsView';
 import { KarpenterView } from './views/KarpenterView';
 import { GenericResourceView } from './views/GenericResourceView';
 import { HelmReleasesView } from './views/HelmReleasesView';
+import { HelmChartsView } from './views/HelmChartsView';
+import { HelmChartDetailView } from './views/HelmChartDetailView';
 import { HelmReleaseDetail } from './views/HelmReleaseDetail';
 import { ViewSummary } from '../shared/ViewSummary';
 import { TimeAgo } from '../shared/TimeAgo';
@@ -921,6 +923,33 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
                 showToast={showToast || (() => { })}
                 helmReleases={helmReleases}
                 isLoading={helmReleasesLoading}
+            />
+        );
+    }
+
+    // Helm chart detail (README, values, schema from Artifact Hub)
+    if (activeView.startsWith('helm-chart-detail/')) {
+        const parts = activeView.split('/');
+        const repoName = decodeURIComponent(parts[1] ?? '');
+        const chartName = decodeURIComponent(parts[2] ?? '');
+        if (!repoName || !chartName) return null;
+        return (
+            <HelmChartDetailView
+                repoName={repoName}
+                chartName={chartName}
+                onBack={() => onNavigate?.('helm-charts')}
+                showToast={showToast || (() => {})}
+            />
+        );
+    }
+
+    // Helm Charts (Artifact Hub + local helm repo list)
+    if (activeView === 'helm-charts') {
+        return (
+            <HelmChartsView
+                searchQuery={searchQuery}
+                showToast={showToast || (() => {})}
+                onNavigate={onNavigate}
             />
         );
     }

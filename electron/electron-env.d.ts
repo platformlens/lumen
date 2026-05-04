@@ -216,6 +216,26 @@ interface Window {
       getUnreadCount: () => Promise<number>
     }
 
+    // --- Helm ---
+    helm: {
+      getReleases: (contextName: string, namespaces: string[]) => Promise<any[]>
+      getRelease: (contextName: string, namespace: string, name: string) => Promise<any>
+      getReleaseHistory: (contextName: string, namespace: string, name: string) => Promise<any[]>
+      uninstallRelease: (contextName: string, namespace: string, name: string) => Promise<any>
+      rollbackRelease: (contextName: string, namespace: string, name: string, revision: number) => Promise<any>
+      watchHelmReleases: (contextName: string, namespaces: string[]) => void
+      stopWatchHelmReleases: () => void
+      onHelmReleaseBatchChange: (callback: (events: Array<{ type: string; resource: any }>) => void) => () => void
+      listRepos: () => Promise<Array<{ name: string; url: string }>>
+      updateRepos: () => Promise<string>
+      addRepo: (name: string, url: string) => Promise<void>
+      getCatalog: (opts?: { force?: boolean }) => Promise<import('../src/lib/helm-catalog-types').HelmCatalogSection[]>
+    }
+
+    artifactHub: {
+      fetch: (pathAndQuery: string, options?: { accept?: string }) => Promise<{ ok: boolean; status: number; body: string }>
+    }
+
     // --- Pinned Clusters ---
     getPinnedClusters: () => Promise<string[]>
     addPinnedCluster: (clusterName: string) => Promise<string[]>

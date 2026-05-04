@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { X, LayoutGrid, Box, Layers, Server, Ghost, Database, Copy, Play, Clock, Network, Share2, Globe, ShieldCheck, HardDrive, File, Key, TrendingUp, Shield, Webhook, Star, Cpu, Anchor, Users, Puzzle } from 'lucide-react';
+import { X, LayoutGrid, Box, Layers, Server, Ghost, Database, Copy, Play, Clock, Network, Share2, Globe, ShieldCheck, HardDrive, File, Key, TrendingUp, Shield, Webhook, Star, Cpu, Anchor, Package, Users, Puzzle } from 'lucide-react';
 
 export interface ViewTab {
     id: string;   // matches the view name (e.g. 'pods', 'deployments')
@@ -42,6 +42,7 @@ const VIEW_ICON_MAP: Record<string, React.ReactNode> = {
     'priorityclasses': <Star size={13} />,
     'runtimeclasses': <Cpu size={13} />,
     'helm-releases': <Anchor size={13} />,
+    'helm-charts': <Package size={13} />,
     'clusterroles': <Shield size={13} />,
     'clusterrolebindings': <Shield size={13} />,
     'roles': <Users size={13} />,
@@ -54,6 +55,7 @@ const VIEW_ICON_MAP: Record<string, React.ReactNode> = {
 
 function getViewIcon(viewId: string): React.ReactNode {
     if (viewId.startsWith('crd/')) return <Puzzle size={13} />;
+    if (viewId.startsWith('helm-chart-detail/')) return <Package size={13} />;
     return VIEW_ICON_MAP[viewId] ?? <Box size={13} />;
 }
 

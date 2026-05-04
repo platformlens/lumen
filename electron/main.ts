@@ -39,6 +39,8 @@ import { WatcherBatchBuffer } from './watcher-batch-buffer'
 import type { TransformRequest, TransformResponse } from './resource-transform-worker'
 import type { AuditLogWorkerRequest, AuditLogWorkerResponse } from './audit-log-worker'
 import type { LightweightPod, WorkerOutbound } from '../src/types/pod-worker'
+import { artifactHubFetchMain } from './artifacthub-fetch'
+import { getHelmCatalogForIpc } from './helm-catalog-main'
 
 // Fix PATH for MacOS to find aws/kubectl etc
 fixPath();
@@ -2391,6 +2393,33 @@ function registerIpcHandlers() {
   ipcMain.handle('helm:rollbackRelease', async (_, contextName: string, namespace: string, name: string, revision: number) => {
     return k8sService.rollbackHelmRelease(contextName, namespace, name, revision);
   });
+
+  ipcMain.handle('helm:listRepos', async () => {
+    return k8sService.listHelmRepos();
+  });
+
+  ipcMain.handle('helm:updateRepos', async () => {
+    return k8sService.updateHelmRepos();
+  });
+
+  ipcMain.handle('helm:addRepo', async (_, name: string, url: string) => {
+    return k8sService.addHelmRepo(name, url);
+  });
+
+  /** Artifact Hub HTTP from main process (avoids renderer CORS when loaded from file://). */
+  ipcMain.handle('artifacthub:fetch', async (_evt, pathAndQuery: string, options?: { accept?: string }) => {
+    try {
+      return await artifactHubFetchMain(String(pathAndQuery), options);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[artifacthub] fetch failed', msg);
+      throw new Error(msg || 'Artifact Hub request failed');
+    }
+  });
+
+  ipcMain.handle('helm:getCatalog', async (_evt, opts?: { force?: boolean }) =>
+    getHelmCatalogForIpc(store, opts)
+  );
 
   // --- Helm release watcher (real-time) ---
   ipcMain.on('k8s:watchHelmReleases', (event, contextName, namespaces) => {

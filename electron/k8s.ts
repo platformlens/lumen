@@ -41,6 +41,11 @@ export interface HelmRelease {
     manifest?: string;
 }
 
+export interface HelmRepo {
+    name: string;
+    url: string;
+}
+
 export class K8sService {
     private kc: KubeConfig;
     private activeForwards: Map<string, ActiveForward> = new Map();
@@ -3708,6 +3713,72 @@ export class K8sService {
                 resolve({ name, namespace, revision });
             });
         });
+    }
+
+    /**
+     * List Helm chart repositories configured on this machine (`helm repo list`).
+     */
+    public async listHelmRepos(): Promise<HelmRepo[]> {
+        return new Promise((resolve, reject) => {
+            execFile('helm', ['repo', 'list', '-o', 'json'], { timeout: 60_000 }, (err, stdout, stderr) => {
+                if (err) {
+                    const msg = stderr?.trim() || err.message;
+                    console.error(`[k8s] helm repo list failed:`, msg);
+                    reject(new Error(`Failed to list Helm repositories: ${msg}`));
+                    return;
+                }
+                try {
+                    const rows = JSON.parse(stdout || '[]') as Array<{ name: string; url: string }>;
+                    resolve(rows.map(r => ({ name: r.name, url: r.url })));
+                } catch (parseErr) {
+                    reject(new Error('Failed to parse helm repo list output'));
+                }
+            });
+        });
+    }
+
+    /**
+     * Update indices for all Helm repos (`helm repo update`).
+     */
+    public async updateHelmRepos(): Promise<string> {
+        return new Promise((resolve, reject) => {
+            execFile('helm', ['repo', 'update'], { timeout: 300_000 }, (err, stdout, stderr) => {
+                if (err) {
+                    const msg = stderr?.trim() || err.message;
+                    console.error(`[k8s] helm repo update failed:`, msg);
+                    reject(new Error(`helm repo update failed: ${msg}`));
+                    return;
+                }
+                resolve((stdout || '').trim() || 'Repositories updated.');
+            });
+        });
+    }
+
+    /**
+     * Add a Helm chart repository. If the name already exists, retries with --force-update.
+     */
+    public async addHelmRepo(name: string, url: string): Promise<void> {
+        const run = (args: string[]) =>
+            new Promise<void>((resolve, reject) => {
+                execFile('helm', args, { timeout: 120_000 }, (err, _stdout, stderr) => {
+                    if (err) {
+                        reject(new Error(stderr?.trim() || err.message));
+                        return;
+                    }
+                    resolve();
+                });
+            });
+
+        try {
+            await run(['repo', 'add', name, url]);
+        } catch (e: any) {
+            const msg = String(e?.message ?? e);
+            if (/already exists/i.test(msg)) {
+                await run(['repo', 'add', name, url, '--force-update']);
+                return;
+            }
+            throw e;
+        }
     }
 
     /**

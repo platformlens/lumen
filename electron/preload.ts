@@ -412,6 +412,15 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.on('k8s:helmReleaseBatchChange', listener);
       return () => ipcRenderer.off('k8s:helmReleaseBatchChange', listener);
     },
+    listRepos: () => ipcRenderer.invoke('helm:listRepos'),
+    updateRepos: () => ipcRenderer.invoke('helm:updateRepos'),
+    addRepo: (name: string, url: string) => ipcRenderer.invoke('helm:addRepo', name, url),
+    getCatalog: (opts?: { force?: boolean }) => ipcRenderer.invoke('helm:getCatalog', opts),
+  },
+
+  artifactHub: {
+    fetch: (pathAndQuery: string, options?: { accept?: string }) =>
+      ipcRenderer.invoke('artifacthub:fetch', pathAndQuery, options),
   },
 
   // --- Pod Worker ---

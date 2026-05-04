@@ -28,6 +28,7 @@ const VIEW_LABELS: Record<string, string> = {
     'priorityclasses': 'Priority Classes',
     'runtimeclasses': 'Runtime Classes',
     'helm-releases': 'Helm Releases',
+    'helm-charts': 'Helm Charts',
     'clusterroles': 'Cluster Roles',
     'clusterrolebindings': 'Cluster Role Bindings',
     'roles': 'Roles',
@@ -40,6 +41,10 @@ const VIEW_LABELS: Record<string, string> = {
 
 export function getViewLabel(viewId: string): string {
     if (VIEW_LABELS[viewId]) return VIEW_LABELS[viewId];
+    if (viewId.startsWith('helm-chart-detail/')) {
+        const chart = viewId.split('/')[2];
+        return chart ? `Chart: ${decodeURIComponent(chart)}` : 'Helm chart';
+    }
     // CRD views: crd/group/version/plural → extract the plural and capitalize
     if (viewId.startsWith('crd/')) {
         const parts = viewId.split('/');
