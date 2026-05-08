@@ -528,17 +528,33 @@ export class AwsService extends EventEmitter {
 
     /**
      * Create a fresh credential provider that respects file-based creds, then the selected profile.
-     * When Granted's ExportCredsToAWS is active, credentials are in [default] of ~/.aws/credentials,
-     * so we should NOT pass a profile override to the provider chain.
+     * Reads directly from ~/.aws/credentials first to bypass the SDK's internal credential caching,
+     * which can serve stale/expired tokens after a Granted profile switch.
+     * Falls back to fromNodeProviderChain for SSO, credential_process, and other mechanisms.
      */
     private getFreshCredentialProvider() {
-        // fromNodeProviderChain checks: env vars → shared credentials file → config file (credential_process).
-        // Granted writes to [default] in ~/.aws/credentials, so passing no profile lets the SDK
-        // pick up those credentials naturally. Only pass a profile if there's no [default] file creds.
-        return fromNodeProviderChain({
-            ...(this.currentProfile ? { profile: this.currentProfile } : {}),
-            clientConfig: { region: 'us-east-1' }
-        });
+        const profile = this.currentProfile;
+        return async () => {
+            // Try file-based credentials first (always fresh from disk)
+            const fileCreds = await this.readCredentialsFile(profile);
+            if (fileCreds && fileCreds.accessKeyId && fileCreds.secretAccessKey) {
+                return {
+                    accessKeyId: fileCreds.accessKeyId,
+                    secretAccessKey: fileCreds.secretAccessKey,
+                    sessionToken: fileCreds.sessionToken,
+                    // Set a short expiration so the SDK re-invokes this provider periodically
+                    // rather than caching the credentials indefinitely within the client instance.
+                    expiration: new Date(Date.now() + 5 * 60 * 1000),
+                };
+            }
+
+            // Fall back to provider chain (credential_process, SSO, etc.)
+            const provider = fromNodeProviderChain({
+                ...(profile ? { profile } : {}),
+                clientConfig: { region: 'us-east-1' }
+            });
+            return provider();
+        };
     }
 
     private getEc2Client(region: string, creds: any) {

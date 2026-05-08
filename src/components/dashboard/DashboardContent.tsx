@@ -15,6 +15,7 @@ import { ViewSummary } from '../shared/ViewSummary';
 import { TimeAgo } from '../shared/TimeAgo';
 import { usePodWorker } from '../../hooks/usePodWorker';
 import { useResourceSorting } from '../../hooks/useResourceSorting';
+import type { PodStatusStats } from './OverviewCharts';
 
 // Resource type union matching Dashboard's handleResourceClick
 type ResourceType = 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'other';
@@ -87,6 +88,9 @@ interface DashboardContentProps {
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
     onPodWorkerCount?: (count: number) => void;
 }
+
+// Stable no-op callback to avoid breaking React.memo on child components
+const noopCallback = () => {};
 
 /**
  * Dashboard content component that renders all views
@@ -172,17 +176,44 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     // Use pod-worker data when synced, fall back to prop-passed pods
     const usePodWorkerData = activeView === 'pods' && podWorker.isSynced;
 
+    // Pre-compute pod status stats for the overview chart.
+    // This is a lightweight O(n) pass that produces a stable object reference
+    // (only changes when actual status counts change), preventing the overview
+    // from re-rendering on every pod delta in large clusters.
+    const prevStatsRef = React.useRef<PodStatusStats>({ Running: 0, Pending: 0, Failed: 0, Succeeded: 0, Unknown: 0 });
+    const podStatusStats = React.useMemo<PodStatusStats>(() => {
+        const stats: PodStatusStats = { Running: 0, Pending: 0, Failed: 0, Succeeded: 0, Unknown: 0 };
+        const source = podWorker.isSynced ? podWorker.pods : pods;
+        for (const pod of source) {
+            const status = pod.status || 'Unknown';
+            if (status in stats) {
+                stats[status as keyof PodStatusStats]++;
+            } else {
+                stats.Unknown++;
+            }
+        }
+        // Return the previous reference if counts haven't changed (stabilizes downstream renders)
+        const prev = prevStatsRef.current;
+        if (prev.Running === stats.Running && prev.Pending === stats.Pending &&
+            prev.Failed === stats.Failed && prev.Succeeded === stats.Succeeded &&
+            prev.Unknown === stats.Unknown) {
+            return prev;
+        }
+        prevStatsRef.current = stats;
+        return stats;
+    }, [podWorker.isSynced, podWorker.pods, pods]);
+
     // Overview View
     if (activeView === 'overview') {
         return (
             <div className="mb-8">
                 <OverviewView
-                    pods={pods}
+                    podStatusStats={podStatusStats}
                     deployments={deployments}
                     events={events}
-                    isLoading={loading}
+                    isLoading={loading && !podWorker.isSynced}
                     onNavigate={onNavigate}
-                    onSwitchToVisualPods={() => {/* handled by parent */ }}
+                    onSwitchToVisualPods={noopCallback}
                 />
             </div>
         );

@@ -1,9 +1,11 @@
 import React from 'react';
 import { OverviewCharts } from '../OverviewCharts';
+import type { PodStatusStats } from '../OverviewCharts';
 import { EventsTable } from '../EventsTable';
 
 interface OverviewViewProps {
-    pods: any[];
+    pods?: any[];
+    podStatusStats?: PodStatusStats;
     deployments: any[];
     events: any[];
     isLoading?: boolean;
@@ -11,7 +13,7 @@ interface OverviewViewProps {
     onSwitchToVisualPods: () => void;
 }
 
-export const OverviewView: React.FC<OverviewViewProps> = ({ pods, deployments, events, isLoading, onNavigate, onSwitchToVisualPods }) => {
+export const OverviewView: React.FC<OverviewViewProps> = React.memo(({ pods, podStatusStats, deployments, events, isLoading, onNavigate, onSwitchToVisualPods }) => {
     return (
         <div className="mb-8">
             <p className="text-sm text-gray-400 mb-6">
@@ -20,6 +22,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ pods, deployments, e
 
             <OverviewCharts
                 pods={pods}
+                podStatusStats={podStatusStats}
                 deployments={deployments}
                 isLoading={isLoading}
                 onViewDetails={() => {
@@ -33,4 +36,4 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ pods, deployments, e
             <EventsTable events={events} />
         </div>
     );
-}
+}) as React.FC<OverviewViewProps>;

@@ -2,11 +2,20 @@ import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis } from 'recharts';
 import { Box, Layers } from 'lucide-react';
 
+export interface PodStatusStats {
+    Running: number;
+    Pending: number;
+    Failed: number;
+    Succeeded: number;
+    Unknown: number;
+}
+
 interface OverviewChartsProps {
-    pods: any[];
+    pods?: any[];
+    podStatusStats?: PodStatusStats;
     deployments: any[];
     nodes?: any[];
-    isLoading?: boolean; // Add isLoading prop
+    isLoading?: boolean;
     onViewDetails?: () => void;
 }
 
@@ -18,21 +27,16 @@ const COLORS = {
     unknown: '#6b7280', // gray-500
 };
 
-export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deployments = [], isLoading, onViewDetails }) => {
-    // Throttle updates to charts to avoid animation thrashing
-    const [throttledPods, setThrottledPods] = React.useState(pods);
-    const [throttledDeployments, setThrottledDeployments] = React.useState(deployments);
-
-    React.useEffect(() => {
-        const handler = setTimeout(() => {
-            setThrottledPods(pods);
-            setThrottledDeployments(deployments);
-        }, 1000); // 1s throttle lag, or we could use Date to throttle leading edge
-
-        return () => clearTimeout(handler);
-    }, [pods, deployments]);
-
+export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], podStatusStats, deployments = [], isLoading, onViewDetails }) => {
     const podStats = useMemo(() => {
+        // Use pre-computed stats if provided (avoids iterating large arrays on every render)
+        if (podStatusStats) {
+            return Object.entries(podStatusStats)
+                .filter(([_, value]) => value > 0)
+                .map(([name, value]) => ({ name, value }));
+        }
+
+        // Fallback: compute from raw pods array
         const stats: Record<string, number> = {
             Running: 0,
             Pending: 0,
@@ -41,7 +45,7 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deplo
             Unknown: 0
         };
 
-        throttledPods.forEach(pod => {
+        pods.forEach(pod => {
             const status = pod.status || 'Unknown';
             if (stats[status] !== undefined) {
                 stats[status]++;
@@ -53,13 +57,13 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deplo
         return Object.entries(stats)
             .filter(([_, value]) => value > 0)
             .map(([name, value]) => ({ name, value }));
-    }, [throttledPods]);
+    }, [podStatusStats, pods]);
 
     const deploymentStats = useMemo(() => {
-        const total = throttledDeployments.length;
+        const total = deployments.length;
         let ready = 0;
 
-        throttledDeployments.forEach(d => {
+        deployments.forEach(d => {
             if (d.availableReplicas === d.replicas && d.replicas > 0) {
                 ready++;
             }
@@ -69,7 +73,7 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({ pods = [], deplo
             { name: 'Ready', value: ready },
             { name: 'Not Ready', value: total - ready }
         ];
-    }, [throttledDeployments]);
+    }, [deployments]);
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">

@@ -448,8 +448,24 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('aws:checkAuth', async (_, region) => {
-    const creds = store.get('awsCreds');
-    return awsService.checkAuth(region, creds);
+    const savedCreds = store.get('awsCreds') as AwsCreds | undefined;
+
+    // If manual creds are saved, use them directly
+    if (savedCreds && savedCreds.accessKeyId && savedCreds.secretAccessKey) {
+      return awsService.checkAuth(region, savedCreds);
+    }
+
+    // Otherwise, read fresh credentials from disk to avoid stale cached providers.
+    // This mirrors what getFreshCallerIdentity does and avoids the SDK's internal
+    // credential caching that causes ExpiredToken errors after profile switches.
+    const effectiveProfile = getEffectiveProfile();
+    const fileCreds = await awsService.readCredentialsFile(effectiveProfile);
+    if (fileCreds && fileCreds.accessKeyId && fileCreds.secretAccessKey) {
+      return awsService.checkAuth(region, fileCreds);
+    }
+
+    // Fall back to provider chain (no explicit creds → uses getFreshCredentialProvider)
+    return awsService.checkAuth(region, null);
   });
 
   ipcMain.handle('aws:clearCache', async () => {
@@ -1299,10 +1315,16 @@ function registerIpcHandlers() {
         let result: ReturnType<typeof streamText>;
 
         // When tools are enabled, always use messages format (required for multi-step tool calling)
-        const effectiveMessages = (messages && messages.length > 0)
-          ? messages
+        // Filter out messages with empty content — Bedrock/Anthropic rejects them with HTTP 400.
+        // Empty content can occur when an assistant response was only thinking (no visible text)
+        // or when a stream was cancelled before producing output.
+        const rawMessages = (messages && messages.length > 0)
+          ? messages.filter((m: { role: string; content: string }) => m.content && m.content.trim().length > 0)
+          : [];
+        const effectiveMessages = rawMessages.length > 0
+          ? rawMessages
           : [{ role: 'user' as const, content: actualQuery }];
-        const useMessagesFormat = (messages && messages.length > 0) || kubectlTools;
+        const useMessagesFormat = rawMessages.length > 0 || !!kubectlTools;
 
         console.log(`[AI Tools] streamText config: useMessages=${useMessagesFormat}, hasTools=${!!kubectlTools}, provider=${provider}, model=${model}, maxSteps=${kubectlTools ? KUBECTL_AGENT_MAX_STEPS : 1}`);
 
@@ -2828,12 +2850,26 @@ function getBedrockConfig(): BedrockConfig {
       config.sessionToken = savedCreds.sessionToken;
     }
   } else {
-    // Priority 2: Provider chain (reads credential_process, ~/.aws/credentials, SSO, env vars).
-    // This is the same approach AwsService.getFreshCredentialProvider() uses.
-    // A fresh provider is created each time to avoid stale cached credentials.
+    // Priority 2: Read credentials directly from ~/.aws/credentials file first.
+    // This bypasses fromNodeProviderChain's internal caching which can serve stale/expired
+    // credentials after a Granted profile switch. Only fall back to the provider chain
+    // if no file-based credentials are found (e.g., using SSO or credential_process).
     config.credentialProvider = async () => {
+      const effectiveProfile = getEffectiveProfile();
+
+      // Try file-based credentials first (always fresh from disk)
+      const fileCreds = await awsService.readCredentialsFile(effectiveProfile);
+      if (fileCreds && fileCreds.accessKeyId && fileCreds.secretAccessKey) {
+        return {
+          accessKeyId: fileCreds.accessKeyId,
+          secretAccessKey: fileCreds.secretAccessKey,
+          sessionToken: fileCreds.sessionToken,
+        };
+      }
+
+      // Fall back to provider chain (credential_process, SSO, etc.)
       const provider = fromNodeProviderChain({
-        ...(getEffectiveProfile() ? { profile: getEffectiveProfile() } : {}),
+        ...(effectiveProfile ? { profile: effectiveProfile } : {}),
         clientConfig: { region: config.region },
       });
       const creds = await provider();
