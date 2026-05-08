@@ -87,3 +87,31 @@ body {
 *.scrolling::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* Streamdown markdown table overrides for dark glassmorphism theme */
+[data-streamdown="table-wrapper"] {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-streamdown="table-header"] {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-streamdown="table-header-cell"] {
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+}
+
+[data-streamdown="table-cell"] {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+[data-streamdown="table-body"] {
+  --tw-divide-opacity: 1;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-streamdown="table-row"] {
+  border-color: rgba(255, 255, 255, 0.08);
+}
