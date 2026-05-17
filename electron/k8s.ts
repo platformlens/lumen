@@ -5,6 +5,107 @@ import * as yaml from 'js-yaml';
 import * as zlib from 'zlib';
 import { execFile } from 'child_process';
 
+/**
+ * Validates a Kubernetes API parameter (apiVersion, kind, namespace, or resource name).
+ * Rejects path traversal sequences, null bytes, and characters outside the allowed pattern.
+ *
+ * Allowed characters: alphanumeric, hyphens, dots, underscores, forward slashes (for apiVersion like `apps/v1`).
+ * Max length: 253 characters.
+ *
+ * @param paramName - The name of the parameter being validated (for error messages)
+ * @param value - The value to validate
+ * @throws Error with descriptive message if validation fails
+ */
+export function validateK8sParam(paramName: string, value: string): void {
+    if (!value || value.length === 0) {
+        throw new Error(`Invalid ${paramName}: must not be empty`);
+    }
+    if (value.length > 253) {
+        throw new Error(`Invalid ${paramName}: exceeds maximum length of 253 characters (got ${value.length})`);
+    }
+    // Reject null bytes
+    if (value.includes('\0')) {
+        throw new Error(`Invalid ${paramName}: must not contain null bytes`);
+    }
+    // Reject path traversal sequences
+    if (value.includes('..')) {
+        throw new Error(`Invalid ${paramName}: must not contain path traversal sequence '..'`);
+    }
+    if (value.includes('//')) {
+        throw new Error(`Invalid ${paramName}: must not contain path traversal sequence '//'`);
+    }
+    // Allowed characters: alphanumeric, hyphens, dots, underscores, forward slashes
+    // Must start with alphanumeric character
+    const validPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/\-]*$/;
+    if (!validPattern.test(value)) {
+        throw new Error(`Invalid ${paramName}: contains disallowed characters (allowed: alphanumeric, hyphens, dots, underscores, forward slashes; must start with alphanumeric)`);
+    }
+}
+
+/** Structured error returned from Kubernetes API requests. */
+export interface K8sRequestError {
+    status: number;
+    message: string;
+}
+
+/** Timeout for raw HTTPS requests to the Kubernetes API server (30 seconds). */
+const K8S_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Sanitize a Kubernetes API error message by stripping internal server details,
+ * stack traces, and sensitive information. Returns a clean, user-safe message.
+ */
+function sanitizeK8sErrorMessage(rawMessage: string): string {
+    if (!rawMessage || typeof rawMessage !== 'string') {
+        return 'An unknown error occurred';
+    }
+
+    // Try to parse as JSON (K8s API Status response)
+    try {
+        const parsed = JSON.parse(rawMessage);
+        if (parsed && parsed.message && typeof parsed.message === 'string') {
+            // Use the K8s API status message but strip internal details
+            return stripInternalDetails(parsed.message);
+        }
+        if (parsed && parsed.reason && typeof parsed.reason === 'string') {
+            return parsed.reason;
+        }
+    } catch {
+        // Not JSON, sanitize the raw string
+    }
+
+    return stripInternalDetails(rawMessage);
+}
+
+/**
+ * Strip internal server details from an error message:
+ * - Stack traces
+ * - File paths
+ * - Internal IP addresses
+ * - Server version info
+ */
+function stripInternalDetails(message: string): string {
+    // Truncate overly long messages
+    let sanitized = message.length > 500 ? message.slice(0, 500) : message;
+
+    // Remove stack traces (lines starting with "at " or containing file paths)
+    sanitized = sanitized.replace(/\s+at\s+.+/g, '');
+
+    // Remove file system paths
+    sanitized = sanitized.replace(/\/[a-zA-Z0-9_\-/.]+\.(go|js|ts|py):\d+/g, '[internal]');
+
+    // Remove internal IP:port patterns (but keep the general message)
+    sanitized = sanitized.replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+/g, '[server]');
+
+    // Remove goroutine/thread info
+    sanitized = sanitized.replace(/goroutine\s+\d+.*/g, '');
+
+    // Collapse multiple whitespace/newlines
+    sanitized = sanitized.replace(/\s+/g, ' ').trim();
+
+    return sanitized || 'An unknown error occurred';
+}
+
 interface ActiveForward {
     id: string;
     namespace: string;
@@ -965,7 +1066,7 @@ export class K8sService {
 
         const path = (namespaces.length === 0 || namespaces.includes('all'))
             ? '/api/v1/pods'
-            : `/api/v1/namespaces/${namespaces[0]}/pods`;
+            : `/api/v1/namespaces/${encodeURIComponent(namespaces[0])}/pods`;
 
         const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
         if (rv) queryParams.resourceVersion = rv;
@@ -1069,7 +1170,7 @@ export class K8sService {
 
         const path = (namespaces.length === 0 || namespaces.includes('all'))
             ? '/apis/apps/v1/deployments'
-            : `/apis/apps/v1/namespaces/${namespaces[0]}/deployments`;
+            : `/apis/apps/v1/namespaces/${encodeURIComponent(namespaces[0])}/deployments`;
 
         const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
         if (rv) queryParams.resourceVersion = rv;
@@ -1168,7 +1269,7 @@ export class K8sService {
 
         const path = (namespaces.length === 0 || namespaces.includes('all'))
             ? '/api/v1/secrets'
-            : `/api/v1/namespaces/${namespaces[0]}/secrets`;
+            : `/api/v1/namespaces/${encodeURIComponent(namespaces[0])}/secrets`;
 
         const queryParams: Record<string, string> = { fieldSelector: 'type=helm.sh/release.v1', allowWatchBookmarks: 'true' };
         if (rv) queryParams.resourceVersion = rv;
@@ -3295,22 +3396,29 @@ export class K8sService {
      */
     public async getResourceYaml(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<string> {
         console.log(`[k8s] getResourceYaml for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+
+        // Validate parameters against path traversal and disallowed characters
+        validateK8sParam('apiVersion', apiVersion);
+        validateK8sParam('kind', kind);
+        validateK8sParam('name', name);
+        if (namespace) {
+            validateK8sParam('namespace', namespace);
+        }
+
         this.kc.setCurrentContext(contextName);
 
         try {
             const path = await this.buildResourcePath(contextName, apiVersion, kind, name, namespace);
             console.log(`[k8s] Fetching resource from path: ${path}`);
 
-            const { statusCode, data } = await this.k8sRequest(path, 'GET');
-
-            if (statusCode >= 200 && statusCode < 300) {
-                const resource = JSON.parse(data);
-                return yaml.dump(resource);
-            } else {
-                throw new Error(`HTTP ${statusCode}: ${data}`);
-            }
+            const { data } = await this.k8sRequest(path, 'GET');
+            const resource = JSON.parse(data);
+            return yaml.dump(resource);
         } catch (error: any) {
             console.error(`Error getting resource YAML:`, error);
+            if (error && typeof error.status === 'number' && error.message) {
+                throw new Error(`Failed to get ${kind} YAML: ${error.message}`);
+            }
             throw new Error(`Failed to get ${kind} YAML: ${error.message || error}`);
         }
     }
@@ -3326,6 +3434,15 @@ export class K8sService {
      */
     public async updateResourceYaml(contextName: string, apiVersion: string, kind: string, name: string, yamlContent: string, namespace?: string): Promise<any> {
         console.log(`[k8s] updateResourceYaml for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+
+        // Validate parameters against path traversal and disallowed characters
+        validateK8sParam('apiVersion', apiVersion);
+        validateK8sParam('kind', kind);
+        validateK8sParam('name', name);
+        if (namespace) {
+            validateK8sParam('namespace', namespace);
+        }
+
         this.kc.setCurrentContext(contextName);
 
         let userObj: any;
@@ -3341,48 +3458,47 @@ export class K8sService {
 
             for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
                 const body = JSON.stringify(userObj);
-                const { statusCode, data } = await this.k8sRequest(path, 'PUT', body);
 
-                if (statusCode >= 200 && statusCode < 300) {
+                try {
+                    const { data } = await this.k8sRequest(path, 'PUT', body);
                     if (attempt > 0) {
                         console.log(`[k8s] Update succeeded after ${attempt} conflict retry(ies)`);
                     }
                     return JSON.parse(data);
+                } catch (putError: any) {
+                    // Handle 409 Conflict - stale resourceVersion
+                    if (putError && putError.status === 409 && attempt < MAX_CONFLICT_RETRIES) {
+                        console.warn(`[k8s] 409 Conflict on attempt ${attempt + 1}, re-fetching latest version...`);
+
+                        // Fetch the latest version from the server
+                        const { data: getData } = await this.k8sRequest(path, 'GET');
+                        const latestObj = JSON.parse(getData);
+
+                        // Apply the latest server-managed metadata to the user's object
+                        // This preserves the user's spec/data changes while resolving the conflict
+                        userObj.metadata.resourceVersion = latestObj.metadata.resourceVersion;
+                        // Preserve server-managed fields that cause conflicts
+                        if (latestObj.metadata.managedFields) {
+                            userObj.metadata.managedFields = latestObj.metadata.managedFields;
+                        }
+                        if (latestObj.metadata.generation !== undefined) {
+                            userObj.metadata.generation = latestObj.metadata.generation;
+                        }
+
+                        continue;
+                    }
+
+                    // Non-409 error or exhausted retries — re-throw
+                    throw putError;
                 }
-
-                // Handle 409 Conflict - stale resourceVersion
-                if (statusCode === 409 && attempt < MAX_CONFLICT_RETRIES) {
-                    console.warn(`[k8s] 409 Conflict on attempt ${attempt + 1}, re-fetching latest version...`);
-
-                    // Fetch the latest version from the server
-                    const { statusCode: getStatus, data: getData } = await this.k8sRequest(path, 'GET');
-                    if (getStatus < 200 || getStatus >= 300) {
-                        throw new Error(`Failed to re-fetch resource for conflict resolution: HTTP ${getStatus}`);
-                    }
-
-                    const latestObj = JSON.parse(getData);
-
-                    // Apply the latest server-managed metadata to the user's object
-                    // This preserves the user's spec/data changes while resolving the conflict
-                    userObj.metadata.resourceVersion = latestObj.metadata.resourceVersion;
-                    // Preserve server-managed fields that cause conflicts
-                    if (latestObj.metadata.managedFields) {
-                        userObj.metadata.managedFields = latestObj.metadata.managedFields;
-                    }
-                    if (latestObj.metadata.generation !== undefined) {
-                        userObj.metadata.generation = latestObj.metadata.generation;
-                    }
-
-                    continue;
-                }
-
-                // Non-409 error or exhausted retries
-                throw new Error(`HTTP ${statusCode}: ${data}`);
             }
 
             throw new Error('Exhausted conflict retries');
         } catch (error: any) {
             console.error(`Error updating resource YAML:`, error);
+            if (error && typeof error.status === 'number' && error.message) {
+                throw new Error(`Failed to update ${kind} YAML: ${error.message}`);
+            }
             throw new Error(`Failed to update ${kind} YAML: ${error.message || error}`);
         }
     }
@@ -3397,21 +3513,28 @@ export class K8sService {
      */
     public async deleteResource(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<boolean> {
         console.log(`[k8s] deleteResource for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+
+        // Validate parameters against path traversal and disallowed characters
+        validateK8sParam('apiVersion', apiVersion);
+        validateK8sParam('kind', kind);
+        validateK8sParam('name', name);
+        if (namespace) {
+            validateK8sParam('namespace', namespace);
+        }
+
         this.kc.setCurrentContext(contextName);
 
         try {
             const path = await this.buildResourcePath(contextName, apiVersion, kind, name, namespace);
             console.log(`[k8s] Deleting resource at path: ${path}`);
 
-            const { statusCode, data } = await this.k8sRequest(path, 'DELETE');
-
-            if (statusCode >= 200 && statusCode < 300) {
-                return true;
-            } else {
-                throw new Error(`HTTP ${statusCode}: ${data}`);
-            }
+            await this.k8sRequest(path, 'DELETE');
+            return true;
         } catch (error: any) {
             console.error(`Error deleting resource:`, error);
+            if (error && typeof error.status === 'number' && error.message) {
+                throw new Error(`Failed to delete ${kind}: ${error.message}`);
+            }
             throw new Error(`Failed to delete ${kind}: ${error.message || error}`);
         }
     }
@@ -3421,15 +3544,20 @@ export class K8sService {
      */
     private async buildResourcePath(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<string> {
         const plural = await this.getResourcePlural(contextName, apiVersion, kind);
+        const encodedName = encodeURIComponent(name);
+        const encodedPlural = encodeURIComponent(plural);
+        const encodedNamespace = namespace ? encodeURIComponent(namespace) : undefined;
 
         if (apiVersion === 'v1') {
-            return namespace
-                ? `/api/v1/namespaces/${namespace}/${plural}/${name}`
-                : `/api/v1/${plural}/${name}`;
+            return encodedNamespace
+                ? `/api/v1/namespaces/${encodedNamespace}/${encodedPlural}/${encodedName}`
+                : `/api/v1/${encodedPlural}/${encodedName}`;
         }
-        return namespace
-            ? `/apis/${apiVersion}/namespaces/${namespace}/${plural}/${name}`
-            : `/apis/${apiVersion}/${plural}/${name}`;
+        // apiVersion may be "group/version" — encode each segment separately
+        const encodedApiVersion = apiVersion.split('/').map(encodeURIComponent).join('/');
+        return encodedNamespace
+            ? `/apis/${encodedApiVersion}/namespaces/${encodedNamespace}/${encodedPlural}/${encodedName}`
+            : `/apis/${encodedApiVersion}/${encodedPlural}/${encodedName}`;
     }
 
     /**
@@ -3463,16 +3591,42 @@ export class K8sService {
                 path: url.pathname,
                 method,
                 headers,
+                timeout: K8S_REQUEST_TIMEOUT_MS,
                 ...requestOptions
             }, (res: any) => {
                 let data = '';
                 res.on('data', (chunk: string) => data += chunk);
                 res.on('end', () => {
-                    resolve({ statusCode: res.statusCode || 0, data });
+                    const statusCode = res.statusCode || 0;
+                    if (statusCode >= 400) {
+                        const error: K8sRequestError = {
+                            status: statusCode,
+                            message: sanitizeK8sErrorMessage(data)
+                        };
+                        reject(error);
+                    } else {
+                        resolve({ statusCode, data });
+                    }
                 });
             });
 
-            req.on('error', (e: Error) => reject(e));
+            req.on('timeout', () => {
+                req.destroy();
+                const error: K8sRequestError = {
+                    status: 408,
+                    message: 'Request timed out'
+                };
+                reject(error);
+            });
+
+            req.on('error', (e: Error) => {
+                const error: K8sRequestError = {
+                    status: 0,
+                    message: sanitizeK8sErrorMessage(e.message || 'Network error')
+                };
+                reject(error);
+            });
+
             if (body) req.write(body);
             req.end();
         });
@@ -3494,7 +3648,7 @@ export class K8sService {
             // Build discovery path: /api/v1 for core, /apis/<group>/<version> for others
             const discoveryPath = apiVersion === 'v1'
                 ? '/api/v1'
-                : `/apis/${apiVersion}`;
+                : `/apis/${apiVersion.split('/').map(encodeURIComponent).join('/')}`;
 
             const https = await import('https');
             const url = new URL(discoveryPath, cluster.server);
@@ -3507,6 +3661,7 @@ export class K8sService {
                     port: url.port || 443,
                     path: url.pathname,
                     method: 'GET',
+                    timeout: K8S_REQUEST_TIMEOUT_MS,
                     ...requestOptions
                 }, (res) => {
                     let body = '';
@@ -3518,6 +3673,10 @@ export class K8sService {
                             reject(new Error(`Discovery HTTP ${res.statusCode}`));
                         }
                     });
+                });
+                req.on('timeout', () => {
+                    req.destroy();
+                    reject(new Error('Discovery request timed out'));
                 });
                 req.on('error', reject);
                 req.end();

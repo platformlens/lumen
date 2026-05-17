@@ -1,4 +1,19 @@
+<div align="center">
+
 # Lumen
+
+[![Version](https://img.shields.io/badge/version-0.0.8-blue.svg)](./package.json)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-green.svg)](./LICENSE)
+[![Electron](https://img.shields.io/badge/electron-42.x-47848F.svg?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![React](https://img.shields.io/badge/react-18.x-61DAFB.svg?logo=react&logoColor=white)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/typescript-5.x-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![Security](https://img.shields.io/badge/security-context--isolation-brightgreen.svg)](./CODESIGNING.md)
+[![Build](https://img.shields.io/badge/build-vite%205.x-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev/)
+
+</div>
+
+<br/>
 
 **The Kubernetes cockpit that keeps up with you.** Lumen puts live cluster state, deep operational detail, and a context-aware AI in one polished desktop app—so you diagnose faster, collaborate cleaner, and spend less time context-switching between terminals, tabs, and cloud consoles.
 

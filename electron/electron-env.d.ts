@@ -23,7 +23,6 @@ declare namespace NodeJS {
 
 // Used in Renderer process, expose in `preload.ts`
 interface Window {
-  ipcRenderer: import('electron').IpcRenderer
   k8s: {
     // --- Credential Management ---
     forceCredentialRefresh: () => Promise<boolean>
@@ -165,7 +164,6 @@ interface Window {
       sans: string[];
     } | null>
     openExternal: (url: string) => Promise<void>
-    getApiKey: () => Promise<string>
     saveApiKey: (key: string) => Promise<void>
 
     // AI Streaming & AWS Creds
@@ -202,7 +200,6 @@ interface Window {
       onError: (error: any) => void
     ) => () => void
     saveAwsCreds: (creds: any) => Promise<void>
-    getAwsCreds: () => Promise<any>
     listModels: (provider: string) => Promise<Array<{ id: string; name: string }>>
     checkAwsAuth: () => Promise<{ isManaged: boolean; isAuthenticated: boolean; error?: string }>
 
@@ -281,6 +278,17 @@ interface Window {
       getContextConfig: () => Promise<{ tokenBudget: number; summariesEnabled: boolean; anomalyDetectionEnabled: boolean }>
       setContextConfig: (config: Partial<{ tokenBudget: number; summariesEnabled: boolean; anomalyDetectionEnabled: boolean }>) => Promise<boolean>
       setZoomFactor: (factor: number) => Promise<boolean>
+      // Masked credential metadata (never exposes raw secrets)
+      hasApiKey: () => Promise<boolean>
+      apiKeyMasked: () => Promise<string | null>
+      hasAwsCreds: () => Promise<boolean>
+      awsAccessKeyMasked: () => Promise<string | null>
+      // Safe Mode
+      getSafeMode: () => Promise<boolean>
+      setSafeMode: (enabled: boolean) => Promise<boolean>
+      // AI Data Consent
+      getAiDataConsent: () => Promise<boolean>
+      setAiDataConsent: (enabled: boolean) => Promise<boolean>
     }
 
     // --- Context Engine ---

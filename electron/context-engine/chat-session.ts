@@ -1,26 +1,46 @@
 /**
- * ChatSessionManager — manages chat sessions with clean persistence.
- * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
+ * ChatSessionManager — manages chat sessions with encrypted persistence.
+ * Requirements: 3.5, 3.6, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
  */
 
 import { ChatMessage, ChatSession } from './types';
 
 const MAX_SESSIONS = 50;
-const SESSIONS_KEY = 'aiChatSessions';
+const ENCRYPTED_SESSIONS_KEY = 'aiChatSessions_encrypted';
 const LEGACY_KEY = 'aiHistory';
 
-/** Minimal interface for electron-store (avoids importing the full module in tests). */
-export interface SessionStore {
+/** Minimal interface for EncryptedStore (avoids importing the full module in tests). */
+export interface EncryptedSessionStore {
+    encryptAndStore(key: string, data: unknown): void;
+    decryptAndRetrieve<T = unknown>(key: string): T | null;
+}
+
+/** Minimal interface for electron-store used only during legacy migration. */
+export interface LegacySessionStore {
     get(key: string): unknown;
     set(key: string, value: unknown): void;
 }
 
+/** Options for constructing a ChatSessionManager. */
+export interface ChatSessionManagerOptions {
+    /** The encrypted store backend for reading/writing sessions. */
+    encryptedStore: EncryptedSessionStore;
+    /** Optional legacy store for migration of old aiHistory data. */
+    legacyStore?: LegacySessionStore;
+    /** Getter that returns whether AI history persistence is enabled. Defaults to () => true. */
+    isHistoryEnabled?: () => boolean;
+}
+
 export class ChatSessionManager {
     private currentSession: ChatSession | null = null;
-    private store: SessionStore;
+    private encryptedStore: EncryptedSessionStore;
+    private legacyStore: LegacySessionStore | undefined;
+    private isHistoryEnabled: () => boolean;
 
-    constructor(store: SessionStore) {
-        this.store = store;
+    constructor(options: ChatSessionManagerOptions) {
+        this.encryptedStore = options.encryptedStore;
+        this.legacyStore = options.legacyStore;
+        this.isHistoryEnabled = options.isHistoryEnabled ?? (() => true);
     }
 
     /** Start a new chat session, optionally with resource context. */
@@ -51,9 +71,10 @@ export class ChatSessionManager {
         return this.currentSession;
     }
 
-    /** Persist the current session to the history store. */
+    /** Persist the current session to the history store. Skips if AI history is disabled. */
     saveCurrentSession(): void {
         if (!this.currentSession || this.currentSession.messages.length === 0) return;
+        if (!this.isHistoryEnabled()) return;
         const sessions = this.readSessions();
         // Remove existing session with same id if re-saving
         const filtered = sessions.filter(s => s.id !== this.currentSession!.id);
@@ -95,24 +116,28 @@ export class ChatSessionManager {
         };
     }
 
-    /** Delete a session by ID. */
+    /** Delete a session by ID. Skips if AI history is disabled. */
     deleteSession(id: string): void {
+        if (!this.isHistoryEnabled()) return;
         const sessions = this.readSessions();
         const filtered = sessions.filter(s => s.id !== id);
-        this.store.set(SESSIONS_KEY, filtered);
+        this.encryptedStore.encryptAndStore(ENCRYPTED_SESSIONS_KEY, filtered);
     }
 
-    /** Clear all saved sessions. */
+    /** Clear all saved sessions. Skips if AI history is disabled. */
     clearHistory(): void {
-        this.store.set(SESSIONS_KEY, []);
+        if (!this.isHistoryEnabled()) return;
+        this.encryptedStore.encryptAndStore(ENCRYPTED_SESSIONS_KEY, []);
     }
 
     /**
      * Migrate legacy aiHistory items to ChatSession format.
      * Legacy items have { id, prompt, response, timestamp, model, provider, resourceName, resourceType, conversation? }.
+     * Requires a legacyStore to be provided in the constructor options.
      */
     migrateLegacyHistory(): void {
-        const legacy = this.store.get(LEGACY_KEY) as any[] | undefined;
+        if (!this.legacyStore) return;
+        const legacy = this.legacyStore.get(LEGACY_KEY) as any[] | undefined;
         if (!legacy || !Array.isArray(legacy) || legacy.length === 0) return;
 
         const existing = this.readSessions();
@@ -161,15 +186,15 @@ export class ChatSessionManager {
         }
 
         // Clear legacy key after migration
-        this.store.set(LEGACY_KEY, []);
+        this.legacyStore.set(LEGACY_KEY, []);
     }
 
     // --- Private helpers ---
 
     private readSessions(): ChatSession[] {
-        const data = this.store.get(SESSIONS_KEY);
+        const data = this.encryptedStore.decryptAndRetrieve<ChatSession[]>(ENCRYPTED_SESSIONS_KEY);
         if (!Array.isArray(data)) return [];
-        return data as ChatSession[];
+        return data;
     }
 
     private enforceLimitAndSave(sessions: ChatSession[]): void {
@@ -178,7 +203,7 @@ export class ChatSessionManager {
             sessions.sort((a, b) => b.createdAt - a.createdAt);
             sessions.splice(MAX_SESSIONS);
         }
-        this.store.set(SESSIONS_KEY, sessions);
+        this.encryptedStore.encryptAndStore(ENCRYPTED_SESSIONS_KEY, sessions);
     }
 
     private generateId(): string {

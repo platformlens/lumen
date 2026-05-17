@@ -1,26 +1,7 @@
 import { ipcRenderer, contextBridge } from 'electron'
 import type { AiStreamUsagePayload } from '../src/utils/ai-meter'
 
-// --------- Expose some API to the Renderer process ---------
-contextBridge.exposeInMainWorld('ipcRenderer', {
-  on(...args: Parameters<typeof ipcRenderer.on>) {
-    const [channel, listener] = args
-    return ipcRenderer.on(channel, (event, ...args) => listener(event, ...args))
-  },
-  off(...args: Parameters<typeof ipcRenderer.off>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.off(channel, ...omit)
-  },
-  send(...args: Parameters<typeof ipcRenderer.send>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.send(channel, ...omit)
-  },
-  invoke(...args: Parameters<typeof ipcRenderer.invoke>) {
-    const [channel, ...omit] = args
-    return ipcRenderer.invoke(channel, ...omit)
-  },
-})
-
+// --------- Expose typed API to the Renderer process ---------
 contextBridge.exposeInMainWorld('k8s', {
   // --- Credential Management ---
   forceCredentialRefresh: () => ipcRenderer.invoke('k8s:forceCredentialRefresh'),
@@ -282,9 +263,7 @@ contextBridge.exposeInMainWorld('k8s', {
 
   // --- Settings ---
   saveApiKey: (key: string) => ipcRenderer.invoke('settings:saveApiKey', key),
-  getApiKey: () => ipcRenderer.invoke('settings:getApiKey'),
   saveAwsCreds: (creds: any) => ipcRenderer.invoke('settings:saveAwsCreds', creds),
-  getAwsCreds: () => ipcRenderer.invoke('settings:getAwsCreds'),
   listModels: (provider: string) => ipcRenderer.invoke('ai:listModels', provider),
   checkAwsAuth: () => ipcRenderer.invoke('ai:checkAwsAuth'),
   getModelSync: () => ipcRenderer.sendSync('settings:getModelSync'),
@@ -301,6 +280,17 @@ contextBridge.exposeInMainWorld('k8s', {
     getContextConfig: () => ipcRenderer.invoke('settings:getContextConfig'),
     setContextConfig: (config: any) => ipcRenderer.invoke('settings:setContextConfig', config),
     setZoomFactor: (factor: number) => ipcRenderer.invoke('settings:setZoomFactor', factor),
+    // --- Masked credential metadata (never exposes raw secrets) ---
+    hasApiKey: () => ipcRenderer.invoke('settings:hasApiKey'),
+    apiKeyMasked: () => ipcRenderer.invoke('settings:apiKeyMasked'),
+    hasAwsCreds: () => ipcRenderer.invoke('settings:hasAwsCreds'),
+    awsAccessKeyMasked: () => ipcRenderer.invoke('settings:awsAccessKeyMasked'),
+    // --- Safe Mode ---
+    getSafeMode: () => ipcRenderer.invoke('settings:getSafeMode'),
+    setSafeMode: (enabled: boolean) => ipcRenderer.invoke('settings:setSafeMode', enabled),
+    // --- AI Data Consent ---
+    getAiDataConsent: () => ipcRenderer.invoke('settings:getAiDataConsent'),
+    setAiDataConsent: (enabled: boolean) => ipcRenderer.invoke('settings:setAiDataConsent', enabled),
   },
 
   // --- AI History & Sessions ---

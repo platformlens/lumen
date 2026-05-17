@@ -145,7 +145,6 @@ declare global {
 
             // --- Settings ---
             saveApiKey: (key: string) => Promise<boolean>;
-            getApiKey: () => Promise<string>;
 
             // --- AI History & Sessions ---
             getHistory: () => Promise<any[]>;
@@ -198,7 +197,6 @@ declare global {
             listModels: (provider: string) => Promise<any[]>;
             checkAwsAuth: () => Promise<any>;
             saveAwsCreds: (creds: any) => Promise<boolean>;
-            getAwsCreds: () => Promise<any>;
             getModelSync: () => string;
             getProviderSync: () => 'google' | 'bedrock' | 'local';
             saveModelSelection: (provider: string, model: string) => Promise<boolean>;
@@ -245,6 +243,18 @@ declare global {
                 setKubeconfigPath: (p: string) => Promise<void>;
                 getContextConfig: () => Promise<any>;
                 setContextConfig: (config: any) => Promise<void>;
+                setZoomFactor: (factor: number) => Promise<boolean>;
+                // Masked credential metadata (never exposes raw secrets)
+                hasApiKey: () => Promise<boolean>;
+                apiKeyMasked: () => Promise<string | null>;
+                hasAwsCreds: () => Promise<boolean>;
+                awsAccessKeyMasked: () => Promise<string | null>;
+                // Safe Mode
+                getSafeMode: () => Promise<boolean>;
+                setSafeMode: (enabled: boolean) => Promise<boolean>;
+                // AI Data Consent
+                getAiDataConsent: () => Promise<boolean>;
+                setAiDataConsent: (enabled: boolean) => Promise<boolean>;
             };
 
             // --- Context Engine ---

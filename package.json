@@ -60,6 +60,7 @@
     "fix-path": "^5.0.0",
     "framer-motion": "^11.0.0",
     "js-yaml": "^4.1.1",
+    "keytar": "^7.9.0",
     "lucide-react": "^0.562.0",
     "motion": "^12.38.0",
     "nanoid": "^5.1.9",

@@ -6,11 +6,15 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import { K8sService } from './k8s'
-import { TerminalService } from './terminal'
+import { TerminalService, setLocalTerminalEnabled } from './terminal'
 import { AwsService } from './aws'
 import { ContextEngine } from './context-engine/context-engine'
 import { ContextEngineConfig } from './context-engine/types'
 import { ChatSessionManager } from './context-engine/chat-session'
+import { EncryptedStore } from './security/encrypted-store'
+import { isSafeExternalUrl } from './security/url-validator'
+import { getAuditLogger } from './security/audit-logger'
+import { redact } from './security/redaction'
 import { createGoogleGenerativeAI, type GoogleGenerativeAIProviderOptions } from '@ai-sdk/google';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -34,6 +38,10 @@ import {
 } from './ai-prompt-cache';
 import { AI_THINK_CLOSE, AI_THINK_OPEN } from '../src/utils/ai-thinking';
 import { geminiThinkingConfigForModel } from '../src/utils/gemini-thinking-config';
+import { getSecretStore, maskSecret } from './security/secret-store'
+import { classify, isAllowed } from './security/mutation-policy'
+import { safeHandle, safeOn } from './ipc/validation'
+import { z } from 'zod'
 import dotenv from 'dotenv'
 
 function serializeAiUsageForRenderer(u: LanguageModelUsage | undefined) {
@@ -197,6 +205,8 @@ syncLangfuseOtelWithStore();
 
 const k8sService = new K8sService()
 const terminalService = new TerminalService()
+// Initialize local terminal feature gate from store (defaults to true)
+setLocalTerminalEnabled((store.get('settings_enableLocalTerminal') as boolean) ?? true);
 const awsService = new AwsService()
 awsService.sendToAuditLogWorker = sendToAuditLogWorker;
 
@@ -230,7 +240,17 @@ const WATCH_KEY_TO_WORKER_TYPE: Record<string, string> = {
   persistentvolumes: 'persistentvolume',
   persistentvolumeclaims: 'persistentvolumeclaim',
 };
-const chatSessionManager = new ChatSessionManager(store);
+// Initialize Encrypted Store for encrypting larger data blobs (chat history) at rest
+const encryptedStore = new EncryptedStore(store);
+
+const chatSessionManager = new ChatSessionManager({
+  encryptedStore,
+  legacyStore: store,
+  isHistoryEnabled: () => (store.get('settings_enableAiHistory') as boolean) ?? true,
+});
+
+// Migrate any plaintext chat sessions to encrypted storage
+encryptedStore.migratePlaintextSessions(store);
 
 // Spawn resource transform worker once at startup
 const workerPath = path.join(__dirname, 'resource-transform-worker.js');
@@ -417,46 +437,87 @@ app.on('before-quit', () => {
 });
 
 
+/**
+ * Enforce mutation policy for a Kubernetes IPC channel.
+ * Checks Safe Mode state and logs MUTATE/DESTRUCTIVE actions via AuditLogger.
+ * Throws an error if the action is blocked by Safe Mode.
+ */
+function enforceMutationPolicy(
+  channel: string,
+  opts: { context?: string; namespace?: string; resourceName?: string; resourceKind?: string } = {}
+): void {
+  const safeModeEnabled = (store.get('settings_safeMode') as boolean) ?? false;
+  const actionClass = classify(channel);
+
+  if (actionClass === 'READ') return;
+
+  if (!isAllowed(channel, safeModeEnabled)) {
+    const auditLogger = getAuditLogger();
+    auditLogger.log({
+      action: channel,
+      category: actionClass,
+      context: opts.context,
+      namespace: opts.namespace,
+      resourceName: opts.resourceName,
+      resourceKind: opts.resourceKind,
+      result: 'blocked by safe mode',
+    });
+    throw new Error('Application is in read-only mode. Disable Safe Mode to perform this action.');
+  }
+
+  // Log allowed MUTATE/DESTRUCTIVE actions
+  const auditLogger = getAuditLogger();
+  auditLogger.log({
+    action: channel,
+    category: actionClass,
+    context: opts.context,
+    namespace: opts.namespace,
+    resourceName: opts.resourceName,
+    resourceKind: opts.resourceKind,
+    result: 'success',
+  });
+}
+
 function registerIpcHandlers() {
   // --- AWS Handlers ---
   ipcMain.handle('aws:getEksCluster', async (_, region, clusterName) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getEksCluster(region, clusterName, creds);
   });
 
   ipcMain.handle('aws:getVpcDetails', async (_, region, vpcId) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getVpcDetails(region, vpcId, creds);
   });
 
   ipcMain.handle('aws:getSubnets', async (_, region, vpcId) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getSubnets(region, vpcId, creds);
   });
 
   ipcMain.handle('aws:getInstanceDetails', async (_, region, instanceId) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getInstanceDetails(region, instanceId, creds);
   });
 
   ipcMain.handle('aws:getEc2Instances', async (_, region, vpcId, clusterName) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getEc2Instances(region, vpcId, clusterName, creds);
   });
 
   ipcMain.handle('aws:getPodIdentities', async (_, region, clusterName) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getPodIdentities(region, clusterName, creds);
   });
 
   ipcMain.handle('aws:lookupCloudTrailEvents', async (_, params) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.lookupCloudTrailEvents(params, creds);
   });
 
   ipcMain.handle('aws:queryAuditLogs', async (_, params) => {
     try {
-      const creds = store.get('awsCreds');
+      const creds = await getAwsCreds();
       return await awsService.queryAuditLogs(params, creds);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error querying audit logs';
@@ -466,7 +527,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('aws:checkAuth', async (_, region) => {
-    const savedCreds = store.get('awsCreds') as AwsCreds | undefined;
+    const savedCreds = await getAwsCreds();
 
     // If manual creds are saved, use them directly
     if (savedCreds && savedCreds.accessKeyId && savedCreds.secretAccessKey) {
@@ -618,6 +679,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:scaleDeployment', (_, contextName, namespace, name, replicas) => {
+    enforceMutationPolicy('k8s:scaleDeployment', { context: contextName, namespace, resourceName: name, resourceKind: 'Deployment' });
     return k8sService.scaleDeployment(contextName, namespace, name, replicas);
   })
 
@@ -663,14 +725,17 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:restartDeployment', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:restartDeployment', { context: contextName, namespace, resourceName: name, resourceKind: 'Deployment' });
     return k8sService.restartDeployment(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:restartDaemonSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:restartDaemonSet', { context: contextName, namespace, resourceName: name, resourceKind: 'DaemonSet' });
     return k8sService.restartDaemonSet(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:restartStatefulSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:restartStatefulSet', { context: contextName, namespace, resourceName: name, resourceKind: 'StatefulSet' });
     return k8sService.restartStatefulSet(contextName, namespace, name);
   })
 
@@ -710,6 +775,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('k8s:deleteNode', async (_event, contextName, name) => {
+    enforceMutationPolicy('k8s:deleteNode', { context: contextName, resourceName: name, resourceKind: 'Node' });
     return k8sService.deleteNode(contextName, name);
   });
 
@@ -749,6 +815,7 @@ function registerIpcHandlers() {
 
 
   ipcMain.handle('k8s:startPortForward', (_, contextName, namespace, serviceName, servicePort, localPort, resourceType) => {
+    enforceMutationPolicy('k8s:startPortForward', { context: contextName, namespace, resourceName: serviceName, resourceKind: resourceType || 'Service' });
     return k8sService.startPortForward(contextName, namespace, serviceName, servicePort, localPort, resourceType);
   })
 
@@ -765,6 +832,15 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('shell:openExternal', (_, url) => {
+    if (!isSafeExternalUrl(url)) {
+      const auditLogger = getAuditLogger();
+      auditLogger.log({
+        action: 'shell:openExternal',
+        category: 'SECURITY',
+        result: `Blocked unsafe URL: ${typeof url === 'string' ? url.slice(0, 200) : 'non-string value'}`,
+      });
+      return Promise.reject(new Error(`URL validation failed: the provided URL is not allowed to be opened externally`));
+    }
     return shell.openExternal(url);
   })
 
@@ -935,6 +1011,14 @@ function registerIpcHandlers() {
         activeExplainAbort.abort();
         activeExplainAbort = null;
       }
+
+      // Check AI data consent before proceeding
+      const aiConsent = (store.get('settings_aiDataConsent') as boolean) ?? false;
+      if (!aiConsent) {
+        event.sender.send('ai:explainResourceStream:error', 'AI data sharing is disabled. Enable it in Settings to use AI features.');
+        return;
+      }
+
       activeExplainAbort = new AbortController();
       const explainAbortSignal = activeExplainAbort.signal;
 
@@ -949,7 +1033,7 @@ function registerIpcHandlers() {
 
       if (!useLmStudioNative) {
         if (provider === 'google') {
-          const apiKey = getApiKey();
+          const apiKey = await getApiKey();
           if (!apiKey) {
             event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
             activeExplainAbort = null;
@@ -958,7 +1042,7 @@ function registerIpcHandlers() {
           const google = createGoogleGenerativeAI({ apiKey });
           aiModel = google(model);
         } else if (provider === 'bedrock') {
-          const bedrockConfig = getBedrockConfig();
+          const bedrockConfig = await getBedrockConfig();
           const bedrock = createAmazonBedrock(bedrockConfig);
           aiModel = bedrock(model);
         } else if (provider === 'local') {
@@ -1025,7 +1109,7 @@ function registerIpcHandlers() {
         ${relatedContext}
         
         Resource JSON:
-        ${JSON.stringify(stripResourceForAI(resource), null, 2)}
+        ${JSON.stringify(redact(stripResourceForAI(resource)), null, 2)}
       `;
 
       let fullResponse = '';
@@ -1166,6 +1250,13 @@ function registerIpcHandlers() {
       activeCustomPromptAbort = null;
     }
 
+    // Check AI data consent before proceeding
+    const aiConsent = (store.get('settings_aiDataConsent') as boolean) ?? false;
+    if (!aiConsent) {
+      event.sender.send('ai:customPromptStream:error', 'AI data sharing is disabled. Enable it in Settings to use AI features.');
+      return;
+    }
+
     // Create new abort controller for this stream
     activeCustomPromptAbort = new AbortController();
     const abortSignal = activeCustomPromptAbort.signal;
@@ -1183,7 +1274,7 @@ function registerIpcHandlers() {
 
       if (!useLmStudioNative) {
         if (provider === 'google') {
-          const apiKey = getApiKey();
+          const apiKey = await getApiKey();
           if (!apiKey) {
             event.sender.send('ai:customPromptStream:error', 'GEMINI_API_KEY not configured.');
             activeCustomPromptAbort = null;
@@ -1193,7 +1284,7 @@ function registerIpcHandlers() {
           const google = createGoogleGenerativeAI({ apiKey });
           aiModel = google(model);
         } else if (provider === 'bedrock') {
-          const bedrockConfig = getBedrockConfig();
+          const bedrockConfig = await getBedrockConfig();
           const bedrock = createAmazonBedrock(bedrockConfig);
           aiModel = bedrock(model);
         } else if (provider === 'local') {
@@ -1592,8 +1683,8 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:checkAwsAuth', async () => {
     try {
       const grantedCreds = awsService.getGrantedCredentials();
-      const savedCreds = getAwsCreds();
-      const config = getBedrockConfig();
+      const savedCreds = await getAwsCreds();
+      const config = await getBedrockConfig();
 
       const client = new BedrockClient({
         region: config.region,
@@ -1634,7 +1725,7 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:listModels', async (_, provider: string) => {
     if (provider === 'google') {
       try {
-        const apiKey = getApiKey();
+        const apiKey = await getApiKey();
         if (!apiKey) return [];
 
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
@@ -1658,7 +1749,7 @@ function registerIpcHandlers() {
       }
     } else if (provider === 'bedrock') {
       try {
-        const config = getBedrockConfig();
+        const config = await getBedrockConfig();
         const client = new BedrockClient({
           region: config.region,
           credentials: config.credentialProvider
@@ -1792,6 +1883,7 @@ function registerIpcHandlers() {
 
 
   ipcMain.handle('k8s:deletePod', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deletePod', { context: contextName, namespace, resourceName: name, resourceKind: 'Pod' });
     return k8sService.deletePod(contextName, namespace, name);
   })
 
@@ -2054,6 +2146,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:deleteDaemonSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteDaemonSet', { context: contextName, namespace, resourceName: name, resourceKind: 'DaemonSet' });
     return k8sService.deleteDaemonSet(contextName, namespace, name);
   })
 
@@ -2066,6 +2159,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:deleteStatefulSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteStatefulSet', { context: contextName, namespace, resourceName: name, resourceKind: 'StatefulSet' });
     return k8sService.deleteStatefulSet(contextName, namespace, name);
   })
 
@@ -2078,6 +2172,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:deleteJob', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteJob', { context: contextName, namespace, resourceName: name, resourceKind: 'Job' });
     return k8sService.deleteJob(contextName, namespace, name);
   })
 
@@ -2090,10 +2185,12 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:triggerCronJob', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:triggerCronJob', { context: contextName, namespace, resourceName: name, resourceKind: 'CronJob' });
     return k8sService.triggerCronJob(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:deleteCronJob', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteCronJob', { context: contextName, namespace, resourceName: name, resourceKind: 'CronJob' });
     return k8sService.deleteCronJob(contextName, namespace, name);
   })
 
@@ -2102,6 +2199,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:updateDeploymentYaml', (_, contextName, namespace, name, yaml) => {
+    enforceMutationPolicy('k8s:updateDeploymentYaml', { context: contextName, namespace, resourceName: name, resourceKind: 'Deployment' });
     return k8sService.updateDeploymentYaml(contextName, namespace, name, yaml);
   })
 
@@ -2130,60 +2228,81 @@ function registerIpcHandlers() {
     });
   });
 
-  // --- Terminal ---
-  ipcMain.on('terminal:create', (event, id, cols, rows) => {
+  // --- Terminal (validated with zod schemas) ---
+  safeOn('terminal:create', z.tuple([
+    z.string().max(128),
+    z.number().int().min(1).max(1000),
+    z.number().int().min(1).max(500),
+  ]), (event, [id, cols, rows]) => {
     terminalService.createTerminal(event.sender, id, cols, rows);
   })
 
-  ipcMain.on('terminal:createExec', (event, id, cols, rows, context, namespace, podName, containerName) => {
+  safeOn('terminal:createExec', z.tuple([
+    z.string().max(128),
+    z.number().int().min(1).max(1000),
+    z.number().int().min(1).max(500),
+    z.string().max(253),
+    z.string().max(253),
+    z.string().max(253),
+  ]).rest(z.string().max(253).optional()), (event, args) => {
+    const [id, cols, rows, context, namespace, podName, containerName] = args as [string, number, number, string, string, string, string | undefined];
     terminalService.createExecTerminal(event.sender, id, cols, rows, context, namespace, podName, containerName);
   })
 
-  ipcMain.on('terminal:write', (_, id, data) => {
+  safeOn('terminal:write', z.tuple([
+    z.string().max(128),
+    z.string().max(65536),
+  ]), (_event, [id, data]) => {
     terminalService.write(id, data);
   })
 
-  ipcMain.on('terminal:resize', (_, id, cols, rows) => {
+  safeOn('terminal:resize', z.tuple([
+    z.string().max(128),
+    z.number().int().min(1).max(1000),
+    z.number().int().min(1).max(500),
+  ]), (_event, [id, cols, rows]) => {
     terminalService.resize(id, cols, rows);
   })
 
-  ipcMain.on('terminal:dispose', (_, id) => {
+  safeOn('terminal:dispose', z.tuple([
+    z.string().max(128),
+  ]), (_event, [id]) => {
     terminalService.dispose(id);
   })
 
   // --- Network ---
   ipcMain.handle('k8s:getEndpointSlices', (_, contextName, namespaces) => { return k8sService.getEndpointSlices(contextName, namespaces); });
   ipcMain.handle('k8s:getEndpointSlice', (_, contextName, namespace, name) => { return k8sService.getEndpointSlice(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteEndpointSlice', (_, contextName, namespace, name) => { return k8sService.deleteEndpointSlice(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteEndpointSlice', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteEndpointSlice', { context: contextName, namespace, resourceName: name, resourceKind: 'EndpointSlice' }); return k8sService.deleteEndpointSlice(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getEndpoints', (_, contextName, namespaces) => { return k8sService.getEndpoints(contextName, namespaces); });
   ipcMain.handle('k8s:getEndpoint', (_, contextName, namespace, name) => { return k8sService.getEndpoint(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteEndpoint', (_, contextName, namespace, name) => { return k8sService.deleteEndpoint(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteEndpoint', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteEndpoint', { context: contextName, namespace, resourceName: name, resourceKind: 'Endpoint' }); return k8sService.deleteEndpoint(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getIngresses', (_, contextName, namespaces) => { return k8sService.getIngresses(contextName, namespaces); });
   ipcMain.handle('k8s:getIngress', (_, contextName, namespace, name) => { return k8sService.getIngress(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteIngress', (_, contextName, namespace, name) => { return k8sService.deleteIngress(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteIngress', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteIngress', { context: contextName, namespace, resourceName: name, resourceKind: 'Ingress' }); return k8sService.deleteIngress(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getIngressClasses', (_, contextName) => { return k8sService.getIngressClasses(contextName); });
   ipcMain.handle('k8s:getIngressClass', (_, contextName, name) => { return k8sService.getIngressClass(contextName, name); });
-  ipcMain.handle('k8s:deleteIngressClass', (_, contextName, name) => { return k8sService.deleteIngressClass(contextName, name); });
+  ipcMain.handle('k8s:deleteIngressClass', (_, contextName, name) => { enforceMutationPolicy('k8s:deleteIngressClass', { context: contextName, resourceName: name, resourceKind: 'IngressClass' }); return k8sService.deleteIngressClass(contextName, name); });
 
   ipcMain.handle('k8s:getNetworkPolicies', (_, contextName, namespaces) => { return k8sService.getNetworkPolicies(contextName, namespaces); });
   ipcMain.handle('k8s:getNetworkPolicy', (_, contextName, namespace, name) => { return k8sService.getNetworkPolicy(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteNetworkPolicy', (_, contextName, namespace, name) => { return k8sService.deleteNetworkPolicy(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteNetworkPolicy', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteNetworkPolicy', { context: contextName, namespace, resourceName: name, resourceKind: 'NetworkPolicy' }); return k8sService.deleteNetworkPolicy(contextName, namespace, name); });
 
   // --- Storage ---
   ipcMain.handle('k8s:getPersistentVolumeClaims', (_, contextName, namespaces) => { return k8sService.getPersistentVolumeClaims(contextName, namespaces); });
   ipcMain.handle('k8s:getPersistentVolumeClaim', (_, contextName, namespace, name) => { return k8sService.getPersistentVolumeClaim(contextName, namespace, name); });
-  ipcMain.handle('k8s:deletePersistentVolumeClaim', (_, contextName, namespace, name) => { return k8sService.deletePersistentVolumeClaim(contextName, namespace, name); });
+  ipcMain.handle('k8s:deletePersistentVolumeClaim', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deletePersistentVolumeClaim', { context: contextName, namespace, resourceName: name, resourceKind: 'PersistentVolumeClaim' }); return k8sService.deletePersistentVolumeClaim(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getPersistentVolumes', (_, contextName) => { return k8sService.getPersistentVolumes(contextName); });
   ipcMain.handle('k8s:getPersistentVolume', (_, contextName, name) => { return k8sService.getPersistentVolume(contextName, name); });
-  ipcMain.handle('k8s:deletePersistentVolume', (_, contextName, name) => { return k8sService.deletePersistentVolume(contextName, name); });
+  ipcMain.handle('k8s:deletePersistentVolume', (_, contextName, name) => { enforceMutationPolicy('k8s:deletePersistentVolume', { context: contextName, resourceName: name, resourceKind: 'PersistentVolume' }); return k8sService.deletePersistentVolume(contextName, name); });
 
   ipcMain.handle('k8s:getStorageClasses', (_, contextName) => { return k8sService.getStorageClasses(contextName); });
   ipcMain.handle('k8s:getStorageClass', (_, contextName, name) => { return k8sService.getStorageClass(contextName, name); });
-  ipcMain.handle('k8s:deleteStorageClass', (_, contextName, name) => { return k8sService.deleteStorageClass(contextName, name); });
+  ipcMain.handle('k8s:deleteStorageClass', (_, contextName, name) => { enforceMutationPolicy('k8s:deleteStorageClass', { context: contextName, resourceName: name, resourceKind: 'StorageClass' }); return k8sService.deleteStorageClass(contextName, name); });
 
   // --- Config ---
   ipcMain.handle('k8s:getConfigMaps', (_, contextName, namespaces) => { return k8sService.getConfigMaps(contextName, namespaces); });
@@ -2198,12 +2317,12 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getPodDisruptionBudgets', (_, contextName, namespaces) => { return k8sService.getPodDisruptionBudgets(contextName, namespaces); });
   ipcMain.handle('k8s:getPodDisruptionBudget', (_, contextName, namespace, name) => { return k8sService.getPodDisruptionBudget(contextName, namespace, name); });
   ipcMain.handle('k8s:getPdbYaml', (_, contextName, namespace, name) => { return k8sService.getPdbYaml(contextName, namespace, name); });
-  ipcMain.handle('k8s:updatePdbYaml', (_, contextName, namespace, name, yamlContent) => { return k8sService.updatePdbYaml(contextName, namespace, name, yamlContent); });
+  ipcMain.handle('k8s:updatePdbYaml', (_, contextName, namespace, name, yamlContent) => { enforceMutationPolicy('k8s:updatePdbYaml', { context: contextName, namespace, resourceName: name, resourceKind: 'PodDisruptionBudget' }); return k8sService.updatePdbYaml(contextName, namespace, name, yamlContent); });
 
   // Generic resource YAML operations
   ipcMain.handle('k8s:getResourceYaml', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.getResourceYaml(contextName, apiVersion, kind, name, namespace); });
-  ipcMain.handle('k8s:updateResourceYaml', (_, contextName, apiVersion, kind, name, yamlContent, namespace) => { return k8sService.updateResourceYaml(contextName, apiVersion, kind, name, yamlContent, namespace); });
-  ipcMain.handle('k8s:deleteResource', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.deleteResource(contextName, apiVersion, kind, name, namespace); });
+  ipcMain.handle('k8s:updateResourceYaml', (_, contextName, apiVersion, kind, name, yamlContent, namespace) => { enforceMutationPolicy('k8s:updateResourceYaml', { context: contextName, namespace, resourceName: name, resourceKind: kind }); return k8sService.updateResourceYaml(contextName, apiVersion, kind, name, yamlContent, namespace); });
+  ipcMain.handle('k8s:deleteResource', (_, contextName, apiVersion, kind, name, namespace) => { enforceMutationPolicy('k8s:deleteResource', { context: contextName, namespace, resourceName: name, resourceKind: kind }); return k8sService.deleteResource(contextName, apiVersion, kind, name, namespace); });
 
   ipcMain.handle('k8s:getMutatingWebhookConfigurations', (_, contextName) => { return k8sService.getMutatingWebhookConfigurations(contextName); });
   ipcMain.handle('k8s:getMutatingWebhookConfiguration', (_, contextName, name) => { return k8sService.getMutatingWebhookConfiguration(contextName, name); });
@@ -2250,7 +2369,11 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('settings:setContextConfig', async (_, config: Partial<ContextEngineConfig>) => {
+  safeHandle('settings:setContextConfig', z.object({
+    tokenBudget: z.number().int().min(100).max(100000).optional(),
+    summariesEnabled: z.boolean().optional(),
+    anomalyDetectionEnabled: z.boolean().optional(),
+  }), async (_event, config) => {
     const current = (store.get('contextEngineConfig') as ContextEngineConfig) || {
       tokenBudget: 2000,
       summariesEnabled: true,
@@ -2262,23 +2385,57 @@ function registerIpcHandlers() {
     return true;
   });
 
-  // Handlers
-  ipcMain.handle('settings:saveApiKey', async (_, apiKey) => {
-    store.set('geminiApiKey', apiKey);
-    return true;
+  // Handlers (validated with zod schemas)
+  safeHandle('settings:saveApiKey', z.string().max(1048576), async (_event, apiKey) => {
+    const secretStore = getSecretStore();
+    const success = await secretStore.setSecret('geminiApiKey', apiKey);
+    return success;
   });
 
-  ipcMain.handle('settings:getApiKey', async () => {
-    return (store.get('geminiApiKey') as string) || '';
+  safeHandle('settings:saveAwsCreds', z.object({
+    accessKeyId: z.string().max(255).optional(),
+    secretAccessKey: z.string().max(255).optional(),
+    sessionToken: z.string().max(4096).optional(),
+  }), async (_event, creds) => {
+    const secretStore = getSecretStore();
+    const results: boolean[] = [];
+    if (creds.accessKeyId) {
+      results.push(await secretStore.setSecret('awsAccessKeyId', creds.accessKeyId));
+    }
+    if (creds.secretAccessKey) {
+      results.push(await secretStore.setSecret('awsSecretAccessKey', creds.secretAccessKey));
+    }
+    if (creds.sessionToken) {
+      results.push(await secretStore.setSecret('awsSessionToken', creds.sessionToken));
+    }
+    return results.every(r => r);
   });
 
-  ipcMain.handle('settings:saveAwsCreds', async (_, creds) => {
-    store.set('awsCreds', creds);
-    return true;
+  // --- Masked metadata IPC handlers (never expose raw secrets) ---
+  ipcMain.handle('settings:hasApiKey', async () => {
+    const secretStore = getSecretStore();
+    const key = await secretStore.getSecret('geminiApiKey');
+    return key !== null && key.length > 0;
   });
 
-  ipcMain.handle('settings:getAwsCreds', async () => {
-    return (store.get('awsCreds') as Record<string, string>) || {};
+  ipcMain.handle('settings:apiKeyMasked', async () => {
+    const secretStore = getSecretStore();
+    const key = await secretStore.getSecret('geminiApiKey');
+    if (!key || key.length === 0) return '';
+    return maskSecret(key);
+  });
+
+  ipcMain.handle('settings:hasAwsCreds', async () => {
+    const secretStore = getSecretStore();
+    const accessKeyId = await secretStore.getSecret('awsAccessKeyId');
+    return accessKeyId !== null && accessKeyId.length > 0;
+  });
+
+  ipcMain.handle('settings:awsAccessKeyMasked', async () => {
+    const secretStore = getSecretStore();
+    const accessKeyId = await secretStore.getSecret('awsAccessKeyId');
+    if (!accessKeyId || accessKeyId.length === 0) return '';
+    return maskSecret(accessKeyId);
   });
 
   // --- Auth Session Persistence ---
@@ -2454,21 +2611,39 @@ function registerIpcHandlers() {
     event.returnValue = store.get('k8ptain_provider') || 'google';
   });
 
-  ipcMain.handle('settings:saveModelSelection', (_event, provider, model) => {
+  safeHandle('settings:saveModelSelection', z.tuple([
+    z.string().max(255),
+    z.string().max(255),
+  ]), async (_event, [provider, model]) => {
     store.set('k8ptain_provider', provider);
     store.set('k8ptain_model', model);
     return true;
   });
 
-  // --- General Settings ---
-  ipcMain.handle('settings:get', async (_, key: string) => {
+  // --- General Settings (validated with allowlist) ---
+  const SETTINGS_ALLOWLIST = [
+    'refreshInterval', 'defaultNamespace', 'showSystemNamespaces',
+    'enableNotifications', 'maxLogLines', 'editorFontSize',
+    'editorWordWrap', 'terminalFontSize', 'kubeconfigPath',
+    'enableLocalTerminal', 'enableAiHistory', 'zoomFactor',
+    'fontFamily', 'tableFontSize', 'sidebarFontSize',
+    'pinnedFontSize', 'headingSize', 'dateFormat', 'aiTraceAnalytics',
+  ] as const;
+
+  safeHandle('settings:get', z.enum(SETTINGS_ALLOWLIST), async (_event, key) => {
     return store.get(`settings_${key}`) ?? null;
   });
 
-  ipcMain.handle('settings:set', async (_, key: string, value: string | number | boolean) => {
+  safeHandle('settings:set', z.tuple([
+    z.enum(SETTINGS_ALLOWLIST),
+    z.union([z.string().max(1024), z.number(), z.boolean()]),
+  ]), async (_event, [key, value]) => {
     store.set(`settings_${key}`, value);
     if (key === 'aiTraceAnalytics') {
       syncLangfuseOtelWithStore();
+    }
+    if (key === 'enableLocalTerminal') {
+      setLocalTerminalEnabled(value as boolean);
     }
     return true;
   });
@@ -2493,7 +2668,7 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('settings:setZoomFactor', async (_, factor: number) => {
+  safeHandle('settings:setZoomFactor', z.number().min(25).max(500), async (_event, factor) => {
     store.set('settings_zoomFactor', factor);
     if (win) {
       win.webContents.setZoomFactor(factor / 100);
@@ -2507,8 +2682,42 @@ function registerIpcHandlers() {
     return path.join(os.homedir(), '.kube', 'config');
   });
 
-  ipcMain.handle('settings:setKubeconfigPath', async (_, kubeconfigPath: string) => {
+  safeHandle('settings:setKubeconfigPath', z.string().max(1024), async (_event, kubeconfigPath) => {
     store.set('settings_kubeconfigPath', kubeconfigPath);
+    return true;
+  });
+
+  // --- AI Data Consent ---
+  ipcMain.handle('settings:getAiDataConsent', async () => {
+    return (store.get('settings_aiDataConsent') as boolean) ?? false;
+  });
+
+  safeHandle('settings:setAiDataConsent', z.boolean(), async (_event, enabled) => {
+    const previous = (store.get('settings_aiDataConsent') as boolean) ?? false;
+    store.set('settings_aiDataConsent', enabled);
+    const auditLogger = getAuditLogger();
+    auditLogger.log({
+      action: 'settings:setAiDataConsent',
+      category: 'SECURITY',
+      result: `AI data consent changed from ${previous} to ${enabled}`,
+    });
+    return true;
+  });
+
+  // --- Safe Mode ---
+  ipcMain.handle('settings:getSafeMode', async () => {
+    return (store.get('settings_safeMode') as boolean) ?? false;
+  });
+
+  ipcMain.handle('settings:setSafeMode', async (_, enabled: boolean) => {
+    const previous = (store.get('settings_safeMode') as boolean) ?? false;
+    store.set('settings_safeMode', enabled);
+    const auditLogger = getAuditLogger();
+    auditLogger.log({
+      action: 'settings:setSafeMode',
+      category: 'SECURITY',
+      result: `Safe Mode changed from ${previous} to ${enabled}`,
+    });
     return true;
   });
 
@@ -2830,8 +3039,9 @@ function extractAiErrorInfo(error: unknown): { message: string; isAccessDenied: 
   return { message, isAccessDenied };
 }
 
-function getApiKey(): string {
-  const key = store.get('geminiApiKey') as string;
+async function getApiKey(): Promise<string> {
+  const secretStore = getSecretStore();
+  const key = await secretStore.getSecret('geminiApiKey');
   return key || process.env.GEMINI_API_KEY || '';
 }
 
@@ -2842,8 +3052,18 @@ interface AwsCreds {
   region?: string;
 }
 
-function getAwsCreds(): AwsCreds {
-  return (store.get('awsCreds') as AwsCreds) || {};
+async function getAwsCreds(): Promise<AwsCreds> {
+  const secretStore = getSecretStore();
+  const [accessKeyId, secretAccessKey, sessionToken] = await Promise.all([
+    secretStore.getSecret('awsAccessKeyId'),
+    secretStore.getSecret('awsSecretAccessKey'),
+    secretStore.getSecret('awsSessionToken'),
+  ]);
+  const creds: AwsCreds = {};
+  if (accessKeyId) creds.accessKeyId = accessKeyId;
+  if (secretAccessKey) creds.secretAccessKey = secretAccessKey;
+  if (sessionToken) creds.sessionToken = sessionToken;
+  return creds;
 }
 
 /**
@@ -2864,8 +3084,8 @@ interface BedrockConfig {
   credentialProvider?: () => Promise<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string }>;
 }
 
-function getBedrockConfig(): BedrockConfig {
-  const savedCreds = getAwsCreds();
+async function getBedrockConfig(): Promise<BedrockConfig> {
+  const savedCreds = await getAwsCreds();
   const grantedCreds = awsService.getGrantedCredentials();
 
   const config: BedrockConfig = {
@@ -2921,6 +3141,12 @@ function getEffectiveProfile(): string | undefined {
 
 registerIpcHandlers()
 
+// Initialize Secret Store and migrate legacy plaintext secrets to OS keychain
+const secretStore = getSecretStore();
+secretStore.migrateLegacySecrets(store).catch((err) => {
+  console.error('[main] Secret store migration failed:', err);
+});
+
 // Initialize AWS profile from stored settings
 const savedProfile = (store.get('awsProfile') as string) || 'default';
 if (savedProfile && savedProfile !== 'default') {
@@ -2960,8 +3186,29 @@ function createWindow() {
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
   })
+
+  // Navigation guard: block navigation to URLs outside the application origin
+  win.webContents.on('will-navigate', (event, url) => {
+    const allowed = VITE_DEV_SERVER_URL
+      ? url.startsWith(VITE_DEV_SERVER_URL)
+      : url.startsWith('file://');
+    if (!allowed) {
+      console.warn(`[security] Blocked navigation to: ${url}`);
+      event.preventDefault();
+    }
+  });
+
+  // Deny all new window creation requests (window.open, target="_blank", etc.)
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    console.warn(`[security] Denied new window request for: ${url}`);
+    return { action: 'deny' };
+  });
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {

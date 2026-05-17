@@ -39,13 +39,16 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   // Google State
   const [inputKey, setInputKey] = useState('');
-  const [savedKey, setSavedKey] = useState('');
+  const [hasApiKeyStored, setHasApiKeyStored] = useState(false);
+  const [maskedApiKey, setMaskedApiKey] = useState('');
 
   // AWS State
   const [awsAccessKey, setAwsAccessKey] = useState('');
   const [awsSecretKey, setAwsSecretKey] = useState('');
   const [awsRegion, setAwsRegion] = useState('us-east-1');
   const [awsSessionToken, setAwsSessionToken] = useState('');
+  const [hasAwsCredsStored, setHasAwsCredsStored] = useState(false);
+  const [maskedAwsAccessKey, setMaskedAwsAccessKey] = useState('');
   const [awsProfiles, setAwsProfiles] = useState<string[]>([]);
   const [selectedAwsProfile, setSelectedAwsProfile] = useState('default');
   const [grantedInfo, setGrantedInfo] = useState<{ active: boolean; configured: boolean; envProfile?: string; configProfiles: string[] }>({ active: false, configured: false, configProfiles: [] });
@@ -69,6 +72,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   /** Trusted command prefixes for auto-approval */
   const [trustedCommands, setTrustedCommands] = useState<string[]>([]);
+
+  /** AI data consent: opt-in required before sending resource data to AI providers */
+  const [aiDataConsent, setAiDataConsent] = useState(false);
 
   const [awsAuthType, setAwsAuthType] = useState<'none' | 'manual' | 'managed'>('none');
   const [forceManualAws, setForceManualAws] = useState(false);
@@ -99,6 +105,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   // Theme State
   const [appTheme, setAppTheme] = useState<'blue' | 'charcoal' | 'red'>('charcoal');
 
+  // Safe Mode State
+  const [safeModeEnabled, setSafeModeEnabled] = useState(false);
+
   // Context Engine State
   const [tokenBudget, setTokenBudget] = useState(2000);
   const [summariesEnabled, setSummariesEnabled] = useState(true);
@@ -128,6 +137,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         try { localStorage.setItem('lumen_dateFormat', s.dateFormat); } catch { /* ignore */ }
       }
     });
+    window.k8s.settings.getSafeMode().then((enabled: boolean) => {
+      setSafeModeEnabled(enabled);
+    }).catch(() => { });
     window.k8s.settings.get('theme').then((saved: string | null) => {
       if (saved === 'blue' || saved === 'charcoal' || saved === 'red') setAppTheme(saved);
     }).catch(() => { });
@@ -149,6 +161,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     window.k8s.settings.get('aiTrustedCommands').then((saved: string[] | null) => {
       if (Array.isArray(saved)) setTrustedCommands(saved);
     }).catch(() => { });
+    window.k8s.settings.getAiDataConsent().then((enabled) => {
+      setAiDataConsent(enabled);
+    }).catch(() => { });
     window.k8s.settings.getKubeconfigPath().then(setKubeconfigPath);
 
     // Context Engine config
@@ -163,9 +178,12 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
       if (status) setContextStatus(status);
     });
 
-    // AI settings
-    window.k8s.getApiKey().then(key => {
-      if (key) setSavedKey(key);
+    // AI settings — load masked metadata (never raw secrets)
+    window.k8s.settings.hasApiKey().then(has => {
+      setHasApiKeyStored(has);
+      if (has) {
+        window.k8s.settings.apiKeyMasked().then(masked => setMaskedApiKey(masked || ''));
+      }
     });
 
     // AWS Auth
@@ -178,12 +196,13 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         setAwsAuthType('none');
       }
 
-      window.k8s.getAwsCreds().then(creds => {
-        if (creds && creds.accessKeyId) {
-          setAwsAccessKey(creds.accessKeyId);
-          setAwsSecretKey(creds.secretAccessKey);
-          setAwsRegion(creds.region);
-          setAwsSessionToken(creds.sessionToken || '');
+      // AWS credentials — load masked metadata only
+      window.k8s.settings.hasAwsCreds().then(has => {
+        setHasAwsCredsStored(has);
+        if (has) {
+          window.k8s.settings.awsAccessKeyMasked().then(masked => {
+            setMaskedAwsAccessKey(masked || '');
+          });
           if (!result.isManaged) setAwsAuthType('manual');
         }
       });
@@ -247,9 +266,9 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     return cleanup;
   }, []);
 
-  // Fetch Google models when key changes
+  // Fetch Google models when key is available
   useEffect(() => {
-    if (savedKey) {
+    if (hasApiKeyStored) {
       window.k8s.listModels('google').then(models => {
         if (models && models.length > 0) {
           setGoogleModels(models);
@@ -262,7 +281,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         }
       });
     }
-  }, [savedKey]);
+  }, [hasApiKeyStored]);
 
   // Fetch Bedrock models when auth changes
   useEffect(() => {
@@ -297,7 +316,10 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
   const handleSaveApiKey = async () => {
     if (!inputKey) return;
     await window.k8s.saveApiKey(inputKey);
-    setSavedKey(inputKey);
+    setHasApiKeyStored(true);
+    // Refresh the masked preview from the backend
+    const masked = await window.k8s.settings.apiKeyMasked();
+    setMaskedApiKey(masked || '');
     setInputKey('');
     setEditMode(false);
     showSavedFeedback();
@@ -310,6 +332,14 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
       region: awsRegion,
       sessionToken: awsSessionToken
     });
+    // Refresh masked metadata after saving
+    setHasAwsCredsStored(true);
+    const masked = await window.k8s.settings.awsAccessKeyMasked();
+    setMaskedAwsAccessKey(masked || '');
+    // Clear raw input fields after save
+    setAwsAccessKey('');
+    setAwsSecretKey('');
+    setAwsSessionToken('');
     showSavedFeedback();
   };
 
@@ -325,12 +355,6 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     window.dispatchEvent(new CustomEvent('aiModelChanged', {
       detail: { provider, model: modelId }
     }));
-  };
-
-  const getMaskedKey = (key: string) => {
-    if (!key) return '';
-    if (key.length <= 6) return key;
-    return '•'.repeat(key.length - 6) + key.slice(-6);
   };
 
   const handleSaveGeneralSettings = async () => {
@@ -507,6 +531,26 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         </SettingRow>
       </Section>
 
+      {/* Security */}
+      <Section title="Security" accent="bg-red-500">
+        <SettingRow label="Safe Mode" description="Block all mutating and destructive Kubernetes operations (read-only mode)">
+          <Toggle
+            checked={safeModeEnabled}
+            onChange={async (v) => {
+              setSafeModeEnabled(v);
+              await window.k8s.settings.setSafeMode(v);
+              showSavedFeedback();
+            }}
+          />
+        </SettingRow>
+        {safeModeEnabled && (
+          <div className="flex items-center gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/10 rounded-lg px-3 py-2">
+            <Shield size={12} />
+            <span>Safe Mode is active. All mutating and destructive operations (delete, scale, restart, apply) are blocked.</span>
+          </div>
+        )}
+      </Section>
+
       <div className="flex justify-end">
         <GlassButton
           onClick={handleSaveGeneralSettings}
@@ -542,18 +586,24 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
         {selectedProvider === 'google' && (
           <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
             <p className="text-sm text-gray-400">
-              Enter your Gemini API Key here. {savedKey ? "A key is currently saved." : "No key is currently saved."}
+              Enter your Gemini API Key here. {hasApiKeyStored ? "A key is currently saved." : "No key is currently saved."}
             </p>
+            {hasApiKeyStored && !editMode && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 bg-black/20 rounded-lg px-3 py-2 font-mono">
+                <Shield size={12} className="text-green-400" />
+                <span className="text-gray-300">{maskedApiKey || '••••••••'}</span>
+              </div>
+            )}
             <div className="flex gap-3">
               <div className="flex-1 relative">
                 <input
                   type="text"
-                  value={editMode ? inputKey : getMaskedKey(savedKey)}
+                  value={inputKey}
                   onChange={(e) => setInputKey(e.target.value)}
                   onFocus={() => setEditMode(true)}
                   onBlur={() => { if (!inputKey) setEditMode(false); }}
-                  placeholder={editMode ? "Enter new API Key..." : "Enter your API Key..."}
-                  className={`w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/50 focus:bg-black/60 transition-all placeholder:text-gray-600 ${!editMode && savedKey ? 'font-mono tracking-widest text-gray-300' : ''}`}
+                  placeholder={hasApiKeyStored ? "Enter new API Key to replace..." : "Enter your API Key..."}
+                  className={`w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/50 focus:bg-black/60 transition-all placeholder:text-gray-600`}
                 />
               </div>
               <GlassButton
@@ -818,6 +868,41 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
               }}
             />
           </SettingRow>
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <div className="w-1 h-6 bg-red-500 rounded-full" />
+            AI Data Sharing
+          </h3>
+        </div>
+        <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
+          <p className="text-sm text-gray-400 leading-relaxed">
+            When enabled, Lumen sends Kubernetes resource data to the configured AI provider for analysis.
+            <strong className="text-gray-300 font-medium"> Sensitive fields are automatically redacted</strong> (secrets, tokens, credentials)
+            before any data leaves your machine.
+          </p>
+          <SettingRow
+            label="Allow AI data sharing"
+            description="Allow sending Kubernetes resource data to AI providers for analysis. Sensitive fields are automatically redacted."
+          >
+            <Toggle
+              checked={aiDataConsent}
+              onChange={async (v) => {
+                setAiDataConsent(v);
+                await window.k8s.settings.setAiDataConsent(v);
+                showSavedFeedback();
+              }}
+            />
+          </SettingRow>
+          {!aiDataConsent && (
+            <div className="flex items-center gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/10 rounded-lg px-3 py-2">
+              <Shield size={12} />
+              <span>AI features that require sending resource data to external providers are currently blocked. Enable this toggle to use AI analysis.</span>
+            </div>
+          )}
         </div>
       </section>
     </div>
@@ -1211,6 +1296,13 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
           {(awsAuthType !== 'managed' || forceManualAws) && (
             <>
+              {/* Masked credentials preview */}
+              {hasAwsCredsStored && maskedAwsAccessKey && (
+                <div className="flex items-center gap-2 text-xs text-gray-500 bg-black/20 rounded-lg px-3 py-2 font-mono">
+                  <Shield size={12} className="text-green-400" />
+                  <span className="text-gray-300">Access Key: {maskedAwsAccessKey}</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-1 space-y-1">
                   <label className="text-xs text-gray-500">Region</label>
