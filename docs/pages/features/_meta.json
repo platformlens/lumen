@@ -1,0 +1,11 @@
+{
+  "index": "Overview",
+  "ai-assistant": "AI Assistant",
+  "cluster-management": "Cluster Management",
+  "resource-monitoring": "Resource Monitoring",
+  "log-viewer": "Log Viewer",
+  "terminal": "Integrated Terminal",
+  "yaml-editor": "YAML Editor",
+  "port-forwarding": "Port Forwarding",
+  "topology": "Resource Topology"
+}

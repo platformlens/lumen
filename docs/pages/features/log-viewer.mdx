@@ -1,0 +1,26 @@
+# Log Viewer
+
+Lumen includes a multi-tab log viewer for streaming container logs in real-time.
+
+## Features
+
+- **Multi-tab support** — View logs from multiple pods simultaneously
+- **Container selection** — Choose which container to stream logs from in multi-container pods
+- **Real-time streaming** — Logs stream as they're produced
+- **Buffered output** — Configurable max log lines (default: 1000) to manage memory
+- **Search** — Filter log output by keyword
+
+## Usage
+
+1. Select a pod in the resource list
+2. Click **View Logs** or use the logs action in the detail drawer
+3. Select the container if the pod has multiple containers
+4. Logs begin streaming immediately
+
+## Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| Max Log Lines | 1000 | Maximum lines kept in the buffer per stream |
+
+Configure in **Settings → General**.

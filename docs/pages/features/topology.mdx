@@ -1,0 +1,24 @@
+# Resource Topology
+
+Lumen provides a visual graph of resource relationships using flow diagrams.
+
+## Features
+
+- **Relationship visualization** — See how resources relate to each other (Deployments → ReplicaSets → Pods)
+- **Interactive graph** — Pan, zoom, and click nodes for details
+- **Pod visualizer** — Visual representation of pod status and distribution
+
+## Supported Relationships
+
+The topology view maps relationships including:
+
+- Deployment → ReplicaSet → Pod
+- Service → Pod (via selectors)
+- Ingress → Service
+- Job → Pod
+- DaemonSet → Pod
+- StatefulSet → Pod
+
+## Usage
+
+Open the topology view from the resource detail drawer or the view selector in the dashboard header.

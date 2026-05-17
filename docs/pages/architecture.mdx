@@ -1,0 +1,82 @@
+# Architecture
+
+Lumen is built on Electron with a clear separation between the main process and the renderer process.
+
+## Process Model
+
+```
+┌─────────────────────────────────────────────┐
+│              Electron Main Process           │
+│                                             │
+│  ┌─────────┐  ┌─────────┐  ┌───────────┐  │
+│  │  k8s.ts │  │  aws.ts │  │ terminal  │  │
+│  │         │  │         │  │           │  │
+│  │ K8s API │  │ AWS SDK │  │  node-pty │  │
+│  └─────────┘  └─────────┘  └───────────┘  │
+│                                             │
+│              preload.ts (IPC bridge)        │
+└─────────────────────────────────────────────┘
+                      │
+                      │ IPC
+                      │
+┌─────────────────────────────────────────────┐
+│            Renderer Process (React)          │
+│                                             │
+│  ┌──────────────────────────────────────┐   │
+│  │           App.tsx (State)            │   │
+│  │                                      │   │
+│  │  ┌──────────┐  ┌────────────────┐   │   │
+│  │  │ Sidebar  │  │   Dashboard    │   │   │
+│  │  │          │  │                │   │   │
+│  │  │ Clusters │  │  Resource Views│   │   │
+│  │  │ Nav      │  │  Detail Drawer │   │   │
+│  │  └──────────┘  └────────────────┘   │   │
+│  │                                      │   │
+│  │  ┌──────────────────────────────┐    │   │
+│  │  │       Bottom Panel           │    │   │
+│  │  │  Logs │ Terminal │ YAML      │    │   │
+│  │  └──────────────────────────────┘    │   │
+│  └──────────────────────────────────────┘   │
+└─────────────────────────────────────────────┘
+```
+
+## Main Process
+
+The main process handles all system-level operations:
+
+- **Kubernetes API** — All cluster communication via `@kubernetes/client-node`
+- **AWS SDK** — EC2, EKS, STS, CloudTrail, and Bedrock clients
+- **Terminal** — PTY management via `node-pty`
+- **AI** — Prompt execution and streaming via Vercel AI SDK
+- **Storage** — Persistent settings via `electron-store`
+
+## Renderer Process
+
+The renderer is a React application that handles UI only:
+
+- **State Management** — Hoisted state in App.tsx, passed via props
+- **Real-time Updates** — Kubernetes watchers with batched updates (650ms debounce)
+- **Virtualized Lists** — `react-virtualized` for large resource lists
+- **Animations** — Framer Motion for smooth transitions
+
+## IPC Communication
+
+All communication between processes goes through the preload bridge:
+
+- **Renderer → Main** — Async calls via `window.k8s.*` API
+- **Main → Renderer** — Event emitters for streaming data (logs, watchers, AI)
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Electron 40.x |
+| Frontend | React 18.x + TypeScript 5.x |
+| Build | Vite 5.x |
+| Styling | Tailwind CSS |
+| Animations | Framer Motion |
+| Icons | Lucide React |
+| Charts | Recharts |
+| Topology | @xyflow/react |
+| Editor | Monaco Editor |
+| Terminal | XTerm.js + node-pty |

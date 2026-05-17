@@ -1,0 +1,27 @@
+# YAML Editor
+
+Lumen includes a Monaco-based YAML editor for viewing and editing Kubernetes resource manifests.
+
+## Features
+
+- **Syntax highlighting** — Full YAML syntax support via Monaco Editor
+- **Diff view** — Compare your changes against the live resource state
+- **Apply changes** — Apply edited YAML directly to the cluster
+- **Word wrap** — Configurable word wrap for long lines
+- **Configurable font size** — Adjust editor font size in Settings
+
+## Usage
+
+1. Select any resource and click **Edit YAML** in the detail drawer
+2. Make your changes in the editor
+3. Use the diff view to review changes
+4. Click **Apply** to update the resource in the cluster
+
+## Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| Font Size | 14 | Editor font size in pixels |
+| Word Wrap | Enabled | Wrap long lines |
+
+Configure in **Settings → General**.

@@ -1,0 +1,61 @@
+# Resource Monitoring
+
+Lumen provides real-time monitoring for all major Kubernetes resource types with live updates via watchers.
+
+## Supported Resources
+
+### Workloads
+- Pods
+- Deployments
+- StatefulSets
+- DaemonSets
+- ReplicaSets
+- Jobs
+- CronJobs
+
+### Networking
+- Services
+- Ingresses
+
+### Storage
+- PersistentVolumes
+- PersistentVolumeClaims
+
+### Configuration
+- ConfigMaps
+- Secrets
+
+### Access Control
+- ServiceAccounts
+- Roles & ClusterRoles
+- RoleBindings & ClusterRoleBindings
+
+### Custom Resources
+- CRDs and their instances
+- Cert-manager resources
+- NodePools (Karpenter)
+
+## Real-time Updates
+
+Lumen uses Kubernetes watchers to receive live updates. Changes are batched with a 650ms debounce window to prevent excessive re-renders while keeping the UI responsive.
+
+## Resource Details
+
+Click any resource to open the detail drawer, which shows:
+
+- Full resource metadata
+- Status and conditions
+- Events related to the resource
+- Related resources (e.g., pods owned by a deployment)
+- Actions (scale, restart, delete, edit YAML)
+
+## Resource Actions
+
+| Action | Available On | Description |
+|---|---|---|
+| Scale | Deployments, StatefulSets | Adjust replica count |
+| Restart | Deployments, DaemonSets, StatefulSets | Rolling restart |
+| Delete | All resources | Delete with confirmation |
+| Edit YAML | All resources | Open in YAML editor |
+| View Logs | Pods | Open log viewer |
+| Port Forward | Pods, Services | Start port forwarding |
