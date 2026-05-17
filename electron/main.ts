@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess, nativeImage } from 'electron'
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import fixPath from 'fix-path';
 import { fileURLToPath } from 'node:url'
@@ -168,6 +168,24 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 /** App/window/dock icon: `public/` in dev, Vite `dist/` in packaged builds. */
 const APP_LOGO_PNG = path.join(process.env.VITE_PUBLIC, 'logo-new.png')
+
+/**
+ * On macOS, the dock icon comes from the .icns embedded in the app bundle (via electron-builder).
+ * We only need to set it manually during development. For Windows/Linux, the PNG is used directly.
+ */
+function getAppIcon(): Electron.NativeImage | string | undefined {
+  if (process.platform === 'darwin') {
+    // In packaged builds, macOS uses the .icns from the app bundle automatically.
+    // In dev, we create a properly sized nativeImage so the dock icon looks correct.
+    if (VITE_DEV_SERVER_URL) {
+      const image = nativeImage.createFromPath(APP_LOGO_PNG)
+      // Resize to standard macOS icon size to avoid oversized dock icon
+      return image.resize({ width: 512, height: 512 })
+    }
+    return undefined // Let macOS use the bundled .icns
+  }
+  return APP_LOGO_PNG
+}
 
 const store = new Store();
 
@@ -2937,7 +2955,7 @@ function createWindow() {
     height: 720,
     minWidth: 1024,
     minHeight: 576,
-    icon: APP_LOGO_PNG,
+    ...(process.platform !== 'darwin' && { icon: APP_LOGO_PNG }),
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
@@ -3010,10 +3028,14 @@ app.whenReady().then(() => {
     if (startupDeepLink) queueOAuthDeepLink(startupDeepLink)
   }
   if (process.platform === 'darwin') {
-    try {
-      app.dock?.setIcon(APP_LOGO_PNG);
-    } catch (e) {
-      console.error('Failed to set dock icon:', e);
+    // Only set dock icon manually in dev — packaged builds use the bundled .icns
+    if (VITE_DEV_SERVER_URL) {
+      try {
+        const icon = getAppIcon()
+        if (icon) app.dock?.setIcon(icon as Electron.NativeImage);
+      } catch (e) {
+        console.error('Failed to set dock icon:', e);
+      }
     }
   }
   createWindow();
