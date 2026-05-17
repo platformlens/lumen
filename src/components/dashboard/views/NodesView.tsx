@@ -1,11 +1,12 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Server, Zap, AlertCircle, CheckCircle, BarChart2, Shield, Cpu, MemoryStick } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Server, Zap, AlertCircle, CheckCircle, BarChart2, Shield, Cpu, MemoryStick, Trash2, Ban, PlayCircle, ArrowDownCircle, X } from 'lucide-react';
 import { TableVirtuoso } from 'react-virtuoso';
 import { getNodeProviderInfo } from '../../../utils/cluster-utils';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { StatusBadge } from '../../shared/StatusBadge';
 import { Tooltip as LumenTooltip } from '../../shared/Tooltip';
+import { ConfirmModal } from '../../shared/ConfirmModal';
 import {
     BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
     PieChart, Pie, Cell
@@ -67,6 +68,58 @@ const tableStyles = `
   .nodes-table-container td.compact-column {
     padding: 0.5rem 0.5rem;
     text-align: center;
+  }
+  .nodes-table-container td.checkbox-column,
+  .nodes-table-container th.checkbox-column {
+    padding: 0.5rem 0.75rem;
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    text-align: center;
+  }
+  .nodes-table-container input[type="checkbox"] {
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    position: relative;
+    transition: all 0.15s ease;
+  }
+  .nodes-table-container input[type="checkbox"]:hover {
+    border-color: rgba(59, 130, 246, 0.5);
+    background: rgba(59, 130, 246, 0.1);
+  }
+  .nodes-table-container input[type="checkbox"]:checked {
+    background: rgba(59, 130, 246, 0.6);
+    border-color: rgba(59, 130, 246, 0.8);
+  }
+  .nodes-table-container input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 5px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .nodes-table-container input[type="checkbox"].indeterminate {
+    background: rgba(59, 130, 246, 0.4);
+    border-color: rgba(59, 130, 246, 0.6);
+  }
+  .nodes-table-container input[type="checkbox"].indeterminate::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 3px;
+    width: 8px;
+    height: 2px;
+    background: white;
+    border-radius: 1px;
   }
   .column-resize-handle {
     position: absolute;
@@ -187,6 +240,11 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerWidth, setContainerWidth] = useState(0);
 
+    // Multi-select state
+    const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
+    const [bulkActionModal, setBulkActionModal] = useState<{ action: 'delete' | 'cordon' | 'uncordon' | 'drain'; } | null>(null);
+    const [bulkActionLoading, setBulkActionLoading] = useState(false);
+
     // Track container width via ResizeObserver
     useEffect(() => {
         const el = containerRef.current;
@@ -244,7 +302,7 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
         return result;
     }, [columnWidths, containerWidth]);
 
-    const effectiveTotalWidth = useMemo(() => Object.values(effectiveWidths).reduce((a, b) => a + b, 0), [effectiveWidths]);
+    const effectiveTotalWidth = useMemo(() => Object.values(effectiveWidths).reduce((a, b) => a + b, 0) + 40, [effectiveWidths]);
 
     // Fetch real-time node metrics from metrics-server
     const [nodeMetrics, setNodeMetrics] = useState<Record<string, { cpu: string; memory: string }>>({});
@@ -389,6 +447,70 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
         });
     }, []);
 
+    // Selection handlers
+    const toggleNodeSelection = useCallback((nodeName: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        setSelectedNodes(prev => {
+            const next = new Set(prev);
+            if (next.has(nodeName)) next.delete(nodeName);
+            else next.add(nodeName);
+            return next;
+        });
+    }, []);
+
+    const toggleSelectAll = useCallback(() => {
+        setSelectedNodes(prev => {
+            if (prev.size === sortedNodes.length) return new Set();
+            return new Set(sortedNodes.map(n => n.metadata?.name || n.name));
+        });
+    }, [sortedNodes]);
+
+    const clearSelection = useCallback(() => {
+        setSelectedNodes(new Set());
+    }, []);
+
+    // Clear selection when nodes list changes significantly (cluster switch, filter change)
+    useEffect(() => {
+        setSelectedNodes(prev => {
+            const validNames = new Set(sortedNodes.map(n => n.metadata?.name || n.name));
+            const filtered = new Set([...prev].filter(name => validNames.has(name)));
+            if (filtered.size !== prev.size) return filtered;
+            return prev;
+        });
+    }, [sortedNodes]);
+
+    // Bulk action execution
+    const executeBulkAction = useCallback(async () => {
+        if (!bulkActionModal || selectedNodes.size === 0) return;
+        setBulkActionLoading(true);
+        try {
+            const nodeNames = Array.from(selectedNodes);
+            const results = await Promise.allSettled(
+                nodeNames.map(name => {
+                    switch (bulkActionModal.action) {
+                        case 'delete': return window.k8s.deleteNode(clusterName, name);
+                        case 'cordon': return window.k8s.cordonNode(clusterName, name);
+                        case 'uncordon': return window.k8s.uncordonNode(clusterName, name);
+                        case 'drain': return window.k8s.drainNode(clusterName, name);
+                    }
+                })
+            );
+            const failures = results.filter(r => r.status === 'rejected');
+            if (failures.length > 0) {
+                console.error(`${failures.length}/${nodeNames.length} node operations failed`, failures);
+            }
+            setSelectedNodes(new Set());
+        } catch (err) {
+            console.error('Bulk action failed:', err);
+        } finally {
+            setBulkActionLoading(false);
+            setBulkActionModal(null);
+        }
+    }, [bulkActionModal, selectedNodes, clusterName]);
+
+    const isAllSelected = sortedNodes.length > 0 && selectedNodes.size === sortedNodes.length;
+    const isIndeterminate = selectedNodes.size > 0 && selectedNodes.size < sortedNodes.length;
+
     // Refs for stable TableVirtuoso component callbacks
     const effectiveTotalWidthRef = useRef(effectiveTotalWidth);
     effectiveTotalWidthRef.current = effectiveTotalWidth;
@@ -500,6 +622,15 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
     // Header row renderer
     const fixedHeaderContent = useCallback(() => (
         <tr>
+            <th className="checkbox-column">
+                <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    className={isIndeterminate ? 'indeterminate' : ''}
+                    onChange={toggleSelectAll}
+                    onClick={(e) => e.stopPropagation()}
+                />
+            </th>
             {NODE_COLUMNS.map((col, colIdx) => (
                 <th
                     key={col.key}
@@ -527,14 +658,24 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
                 </th>
             ))}
         </tr>
-    ), [effectiveWidths, columnWidths, handleSort, sortConfig, resizing]);
+    ), [effectiveWidths, columnWidths, handleSort, sortConfig, resizing, isAllSelected, isIndeterminate, toggleSelectAll]);
 
     // Row content renderer
     const rowContent = useCallback((index: number) => {
         const node = sortedNodes[index];
         if (!node) return null;
+        const nodeName = node.metadata?.name || node.name;
+        const isSelected = selectedNodes.has(nodeName);
         return (
             <>
+                <td className="checkbox-column">
+                    <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}}
+                        onClick={(e) => toggleNodeSelection(nodeName, e)}
+                    />
+                </td>
                 {NODE_COLUMNS.map(col => (
                     <td
                         key={col.key}
@@ -546,7 +687,7 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
                 ))}
             </>
         );
-    }, [sortedNodes, effectiveWidths, columnWidths, renderCell]);
+    }, [sortedNodes, effectiveWidths, columnWidths, renderCell, selectedNodes, toggleNodeSelection]);
 
     // Calculate Stats based on sorted (filtered) nodes
     const { stats, chartData } = useMemo(() => {
@@ -774,6 +915,59 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
                 </motion.div>
             )}
 
+            {/* Bulk Action Toolbar */}
+            <AnimatePresence>
+                {selectedNodes.size > 0 && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="flex items-center gap-3 mb-4 px-4 py-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex-none"
+                    >
+                        <span className="text-sm text-blue-400 font-medium">
+                            {selectedNodes.size} node{selectedNodes.size > 1 ? 's' : ''} selected
+                        </span>
+                        <div className="w-px h-5 bg-white/10" />
+                        <button
+                            onClick={() => setBulkActionModal({ action: 'cordon' })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/20 transition-colors"
+                        >
+                            <Ban size={13} />
+                            Cordon
+                        </button>
+                        <button
+                            onClick={() => setBulkActionModal({ action: 'uncordon' })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors"
+                        >
+                            <PlayCircle size={13} />
+                            Uncordon
+                        </button>
+                        <button
+                            onClick={() => setBulkActionModal({ action: 'drain' })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-orange-500/10 text-orange-400 border border-orange-500/20 hover:bg-orange-500/20 transition-colors"
+                        >
+                            <ArrowDownCircle size={13} />
+                            Drain
+                        </button>
+                        <button
+                            onClick={() => setBulkActionModal({ action: 'delete' })}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors"
+                        >
+                            <Trash2 size={13} />
+                            Delete
+                        </button>
+                        <div className="flex-1" />
+                        <button
+                            onClick={clearSelection}
+                            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        >
+                            <X size={13} />
+                            Clear
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Table */}
             <div className="flex-1 min-h-0">
                 <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] nodes-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
@@ -788,6 +982,36 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
                     />
                 </div>
             </div>
+
+            {/* Bulk Action Confirm Modal */}
+            <ConfirmModal
+                isOpen={!!bulkActionModal}
+                onClose={() => setBulkActionModal(null)}
+                onConfirm={executeBulkAction}
+                title={
+                    bulkActionModal?.action === 'delete' ? 'Delete Nodes' :
+                    bulkActionModal?.action === 'cordon' ? 'Cordon Nodes' :
+                    bulkActionModal?.action === 'uncordon' ? 'Uncordon Nodes' :
+                    'Drain Nodes'
+                }
+                message={
+                    bulkActionModal?.action === 'delete'
+                        ? `Are you sure you want to delete ${selectedNodes.size} node${selectedNodes.size > 1 ? 's' : ''}? This action cannot be undone and will remove the node${selectedNodes.size > 1 ? 's' : ''} from the cluster.`
+                    : bulkActionModal?.action === 'cordon'
+                        ? `This will mark ${selectedNodes.size} node${selectedNodes.size > 1 ? 's' : ''} as unschedulable. No new pods will be placed on ${selectedNodes.size > 1 ? 'these nodes' : 'this node'}.`
+                    : bulkActionModal?.action === 'uncordon'
+                        ? `This will mark ${selectedNodes.size} node${selectedNodes.size > 1 ? 's' : ''} as schedulable again, allowing new pods to be placed on ${selectedNodes.size > 1 ? 'them' : 'it'}.`
+                    : `This will cordon and evict all pods from ${selectedNodes.size} node${selectedNodes.size > 1 ? 's' : ''}. DaemonSet pods will not be evicted.`
+                }
+                confirmText={
+                    bulkActionModal?.action === 'delete' ? 'Delete' :
+                    bulkActionModal?.action === 'cordon' ? 'Cordon' :
+                    bulkActionModal?.action === 'uncordon' ? 'Uncordon' :
+                    'Drain'
+                }
+                variant={bulkActionModal?.action === 'delete' ? 'danger' : 'warning'}
+                isLoading={bulkActionLoading}
+            />
         </motion.div>
     );
 };

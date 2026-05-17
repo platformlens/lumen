@@ -124,6 +124,9 @@ interface Window {
     getNodes: (contextName: string) => Promise<any[]>
     getNode: (contextName: string, name: string) => Promise<any>
     deleteNode: (contextName: string, name: string) => Promise<any>
+    cordonNode: (contextName: string, name: string) => Promise<any>
+    uncordonNode: (contextName: string, name: string) => Promise<any>
+    drainNode: (contextName: string, name: string) => Promise<any>
     getCRDs: (contextName: string) => Promise<any[]>
     getCRD: (contextName: string, name: string) => Promise<any>
     listCustomObjects: (contextName: string, group: string, version: string, plural: string, namespace?: string) => Promise<any[]>

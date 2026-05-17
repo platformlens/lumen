@@ -1909,6 +1909,77 @@ export class K8sService {
         }
     }
 
+    async cordonNode(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+        try {
+            await k8sCoreApi.patchNode({ name, body: { spec: { unschedulable: true } } }, { headers: { 'Content-Type': 'application/strategic-merge-patch+json' } } as any);
+            return { success: true };
+        } catch (err) {
+            console.error(`Error cordoning Node ${name}:`, err);
+            throw err;
+        }
+    }
+
+    async uncordonNode(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+        try {
+            await k8sCoreApi.patchNode({ name, body: { spec: { unschedulable: false } } }, { headers: { 'Content-Type': 'application/strategic-merge-patch+json' } } as any);
+            return { success: true };
+        } catch (err) {
+            console.error(`Error uncordoning Node ${name}:`, err);
+            throw err;
+        }
+    }
+
+    async drainNode(contextName: string, name: string) {
+        this.kc.setCurrentContext(contextName);
+        const k8sCoreApi = this.kc.makeApiClient(CoreV1Api);
+        try {
+            // Step 1: Cordon the node
+            await k8sCoreApi.patchNode({ name, body: { spec: { unschedulable: true } } }, { headers: { 'Content-Type': 'application/strategic-merge-patch+json' } } as any);
+
+            // Step 2: Evict all non-DaemonSet pods on the node
+            const podsRes = await k8sCoreApi.listPodForAllNamespaces({ fieldSelector: `spec.nodeName=${name}` });
+            const pods = podsRes.items || [];
+
+            const evictionPromises = pods
+                .filter((pod: any) => {
+                    // Skip DaemonSet-owned pods and mirror pods
+                    const owners = pod.metadata?.ownerReferences || [];
+                    const isDaemonSet = owners.some((o: any) => o.kind === 'DaemonSet');
+                    const isMirror = !!pod.metadata?.annotations?.['kubernetes.io/config.mirror'];
+                    return !isDaemonSet && !isMirror;
+                })
+                .map((pod: any) => {
+                    const eviction = {
+                        apiVersion: 'policy/v1',
+                        kind: 'Eviction',
+                        metadata: {
+                            name: pod.metadata.name,
+                            namespace: pod.metadata.namespace,
+                        },
+                    };
+                    return k8sCoreApi.createNamespacedPodEviction({
+                        name: pod.metadata.name,
+                        namespace: pod.metadata.namespace,
+                        body: eviction as any,
+                    }).catch((err: any) => {
+                        // 404 means pod already gone — that's fine
+                        if (err?.statusCode === 404 || err?.response?.statusCode === 404) return;
+                        throw err;
+                    });
+                });
+
+            await Promise.allSettled(evictionPromises);
+            return { success: true };
+        } catch (err) {
+            console.error(`Error draining Node ${name}:`, err);
+            throw err;
+        }
+    }
+
     async startNodeWatch(contextName: string, onEvent: (event: string, node: any) => void) {
         this.stopNodeWatch();
 

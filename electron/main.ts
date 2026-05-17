@@ -695,6 +695,18 @@ function registerIpcHandlers() {
     return k8sService.deleteNode(contextName, name);
   });
 
+  ipcMain.handle('k8s:cordonNode', async (_event, contextName, name) => {
+    return k8sService.cordonNode(contextName, name);
+  });
+
+  ipcMain.handle('k8s:uncordonNode', async (_event, contextName, name) => {
+    return k8sService.uncordonNode(contextName, name);
+  });
+
+  ipcMain.handle('k8s:drainNode', async (_event, contextName, name) => {
+    return k8sService.drainNode(contextName, name);
+  });
+
   ipcMain.handle('k8s:getCRDs', (_, contextName) => {
     return k8sService.getCRDs(contextName);
   })
