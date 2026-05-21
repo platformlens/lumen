@@ -25,7 +25,7 @@ export default defineConfig({
                 'audit-log-worker': 'electron/audit-log-worker.ts',
                 'k8s-pod-worker': 'electron/k8s-pod-worker.ts',
               },
-              external: ['bufferutil', 'utf-8-validate', 'node-pty'],
+              external: ['bufferutil', 'utf-8-validate', 'node-pty', 'keytar'],
             },
           },
         },
