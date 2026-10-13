@@ -1,9 +1,15 @@
 import { KubeConfig, AppsV1Api, CoreV1Api, RbacAuthorizationV1Api, ApiextensionsV1Api, CustomObjectsApi, BatchV1Api, NetworkingV1Api, StorageV1Api, DiscoveryV1Api, PortForward, Watch, Log, AutoscalingV2Api, PolicyV1Api, AdmissionregistrationV1Api, SchedulingV1Api, NodeV1Api } from '@kubernetes/client-node';
 import * as net from 'net';
 import * as crypto from 'crypto';
+import * as os from 'os';
+import { resolveKubeconfigFiles, resolveCustomKubeconfigPath, hashKubeconfigFiles, contextsSignature, renameContextInFiles } from './kubeconfig-files';
+import type { ClusterContextInfo, ContextsChangedPayload } from '../src/types/cluster-context';
 import * as yaml from 'js-yaml';
 import * as zlib from 'zlib';
 import { execFile } from 'child_process';
+import { fetchDeploymentFullDetails } from './deployment-full-details';
+import { KubeconfigLoadError, UnknownContextError } from './resource-cache/kinds';
+import type { DeploymentFullDetailsResponse } from '../src/types/deployment-details';
 
 /**
  * Validates a Kubernetes API parameter (apiVersion, kind, namespace, or resource name).
@@ -55,7 +61,7 @@ const K8S_REQUEST_TIMEOUT_MS = 30_000;
  * Sanitize a Kubernetes API error message by stripping internal server details,
  * stack traces, and sensitive information. Returns a clean, user-safe message.
  */
-function sanitizeK8sErrorMessage(rawMessage: string): string {
+export function sanitizeK8sErrorMessage(rawMessage: string): string {
     if (!rawMessage || typeof rawMessage !== 'string') {
         return 'An unknown error occurred';
     }
@@ -164,14 +170,137 @@ export class K8sService {
     // Generation counter per watcher — incremented on every start/stop to invalidate stale reconnect timers
     private watchGenerations: Map<string, number> = new Map();
 
-    constructor() {
+    // Custom kubeconfig path (settings_kubeconfigPath); empty means KUBECONFIG / ~/.kube/config
+    private customKubeconfigPath: string = '';
+    // Hash of the kubeconfig file(s) content last loaded, and signature of the context list last emitted
+    private kubeconfigHash: string = '';
+    private contextsSig: string = '';
+    private contextNames: Set<string> = new Set();
+    private kubeconfigListeners: Set<(payload: ContextsChangedPayload) => void> = new Set();
+
+    constructor(customKubeconfigPath?: string) {
+        this.customKubeconfigPath = (customKubeconfigPath ?? '').trim();
         this.kc = new KubeConfig();
         try {
-            this.kc.loadFromDefault();
+            this.kubeconfigHash = hashKubeconfigFiles(this.getKubeconfigFiles());
+            this.kc = this.loadKubeConfig();
             this.lastReloadTime = Date.now();
-            console.log('KubeConfig loaded from default.');
+            this.captureContexts(this.kc);
+            console.log('KubeConfig loaded.');
         } catch (err) {
             console.error('Error loading KubeConfig:', err);
+        }
+    }
+
+    /** Kubeconfig file(s) currently in use (custom path if it exists, else KUBECONFIG, else ~/.kube/config). */
+    public getKubeconfigFiles(): string[] {
+        return resolveKubeconfigFiles({
+            customPath: this.customKubeconfigPath,
+            env: process.env,
+            homedir: os.homedir(),
+        });
+    }
+
+    /** The custom kubeconfig path only when it is set AND exists (what the pod worker should load). */
+    public getCustomKubeconfigPath(): string | undefined {
+        return resolveCustomKubeconfigPath(this.customKubeconfigPath, os.homedir());
+    }
+
+    /** Create a fresh KubeConfig from the configured location. Throws on parse errors. */
+    private loadKubeConfig(): KubeConfig {
+        const kc = new KubeConfig();
+        const custom = this.getCustomKubeconfigPath();
+        if (custom) {
+            kc.loadFromFile(custom);
+        } else {
+            kc.loadFromDefault();
+        }
+        return kc;
+    }
+
+    private captureContexts(kc: KubeConfig) {
+        const contexts = kc.getContexts();
+        this.contextNames = new Set(contexts.map(c => c.name));
+        this.contextsSig = contextsSignature(contexts);
+    }
+
+    private toClusterInfo(kc: KubeConfig): ClusterContextInfo[] {
+        return kc.getContexts().map(ctx => ({
+            name: ctx.name,
+            cluster: ctx.cluster,
+            user: ctx.user,
+            ...(ctx.namespace ? { namespace: ctx.namespace } : {}),
+        }));
+    }
+
+    /** Subscribe to context-list changes detected on disk. Returns an unsubscribe function. */
+    public onKubeconfigChanged(cb: (payload: ContextsChangedPayload) => void): () => void {
+        this.kubeconfigListeners.add(cb);
+        return () => { this.kubeconfigListeners.delete(cb); };
+    }
+
+    /** Point the service at a different kubeconfig (empty = default resolution) and reload. */
+    public setKubeconfigPath(p?: string) {
+        this.customKubeconfigPath = (p ?? '').trim();
+        this.refreshKubeConfig({ force: true });
+    }
+
+    /**
+     * Re-read the kubeconfig if its content changed on disk (or `force`). Keeps the old config on parse
+     * errors, preserves the in-memory active context, and only stops watchers when the active context
+     * was removed. Emits `onKubeconfigChanged` listeners when the context list changed (unless `silent`).
+     */
+    public refreshKubeConfig(opts: { force?: boolean; silent?: boolean } = {}): void {
+        const hash = hashKubeconfigFiles(this.getKubeconfigFiles());
+        if (!opts.force && hash === this.kubeconfigHash) return;
+
+        let next: KubeConfig;
+        try {
+            next = this.loadKubeConfig();
+        } catch (err) {
+            // Likely mid-edit: keep the old config and retry on the next change/fetch
+            console.warn('[k8s] Kubeconfig changed but could not be parsed; keeping previous config:', err);
+            return;
+        }
+
+        this.clearExecTokenCache();
+        const previousNames = this.contextNames;
+        const previousSig = this.contextsSig;
+        const nextNames = new Set(next.getContexts().map(c => c.name));
+
+        let activeRemoved = false;
+        if (this.currentContext) {
+            if (nextNames.has(this.currentContext)) {
+                next.setCurrentContext(this.currentContext);
+            } else {
+                activeRemoved = true;
+            }
+        }
+
+        this.kc = next;
+        this.lastReloadTime = Date.now();
+        this.kubeconfigHash = hash;
+        this.captureContexts(next);
+
+        if (activeRemoved) {
+            console.log(`[k8s] Active context '${this.currentContext}' was removed from kubeconfig; stopping watchers`);
+            this.stopAllWatchers();
+            this.currentContext = '';
+        }
+
+        if (opts.silent || this.contextsSig === previousSig) return;
+
+        const payload: ContextsChangedPayload = {
+            contexts: this.toClusterInfo(next),
+            added: [...nextNames].filter(n => !previousNames.has(n)),
+            removed: [...previousNames].filter(n => !nextNames.has(n)),
+        };
+        for (const cb of this.kubeconfigListeners) {
+            try {
+                cb(payload);
+            } catch (err) {
+                console.error('[k8s] kubeconfig listener failed:', err);
+            }
         }
     }
 
@@ -237,10 +366,9 @@ export class K8sService {
             this.clearExecTokenCache();
 
             // Create a completely new KubeConfig instance to avoid any caching
-            this.kc = new KubeConfig();
-            this.kc.loadFromDefault();
+            this.kc = this.loadKubeConfig();
             this.lastReloadTime = Date.now();
-            console.log('[k8s] KubeConfig reloaded from default with new instance.');
+            console.log('[k8s] KubeConfig reloaded with new instance.');
         } catch (err) {
             console.error('[k8s] Error reloading KubeConfig:', err);
         }
@@ -531,14 +659,62 @@ export class K8sService {
         return true;
     }
 
-    getClusters() {
-        const contexts = this.kc.getContexts();
-        console.log(`Found ${contexts.length} contexts.`);
-        return contexts.map(ctx => ({
-            name: ctx.name,
-            cluster: ctx.cluster,
-            user: ctx.user,
-        }));
+    /**
+     * Isolated KubeConfig for one context (Crossplane view). Never touches this.kc, so long-running
+     * Crossplane scans cannot hit the wrong cluster after a context switch.
+     */
+    public createContextKubeConfig(contextName: string): KubeConfig {
+        const kc = this.loadKubeConfig();
+        if (!kc.getContexts().some(c => c.name === contextName)) {
+            throw new Error(`Unknown kube context: ${contextName}`);
+        }
+        kc.setCurrentContext(contextName);
+        return kc;
+    }
+
+    /** Returns true when `name` is a context in the loaded kubeconfig. */
+    hasContext(name: string): boolean {
+        if (this.kc.getContexts().some(c => c.name === name)) return true;
+        // Miss: the kubeconfig may have changed on disk since it was cached
+        this.refreshKubeConfig();
+        return this.kc.getContexts().some(c => c.name === name);
+    }
+
+    getClusters(): ClusterContextInfo[] {
+        this.refreshKubeConfig();
+        return this.toClusterInfo(this.kc);
+    }
+
+    /**
+     * Renames a kube context on disk (like `kubectl config rename-context`) and migrates in-memory state.
+     * Throws KubeconfigRenameError when the rename is rejected; the kubeconfig is untouched in that case.
+     */
+    renameContext(oldName: string, newName: string): { newName: string; clusters: ClusterContextInfo[] } {
+        const result = renameContextInFiles(this.getKubeconfigFiles(), oldName, newName);
+        const target = result.newName;
+
+        if (this.currentContext === oldName) {
+            // Watchers' reconnect closures capture the old name; the renderer restarts them with the new one
+            this.stopAllWatchers();
+            this.currentContext = target;
+        }
+
+        const prefix = `${oldName}::`;
+        for (const [key, value] of [...this.resourcePluralCache]) {
+            if (key.startsWith(prefix)) {
+                this.resourcePluralCache.delete(key);
+                this.resourcePluralCache.set(`${target}::${key.slice(prefix.length)}`, value);
+            }
+        }
+
+        try {
+            // Silent + forced: our own write must update the stored hash without emitting contextsChanged
+            this.refreshKubeConfig({ force: true, silent: true });
+        } catch (err) {
+            console.warn('[k8s] Reload after rename failed; the rename itself succeeded:', err);
+        }
+
+        return { newName: target, clusters: this.getClusters() };
     }
 
     async getNamespaces(contextName: string) {
@@ -1048,311 +1224,6 @@ export class K8sService {
         }
     }
 
-    async startPodWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, pod: any) => void) {
-        // Stop existing watcher if any to avoid duplicates
-        this.stopPodWatch();
-
-        const watcherKey = 'pods';
-        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
-        this.watchGenerations.set(watcherKey, gen);
-
-        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        const rv = this.watchResourceVersions.get(watcherKey);
-        if (!rv) {
-            console.log(`[k8s] Starting watch for pods in ${activeWatchersKey(namespaces)} [gen=${gen}] (FRESH — no resourceVersion)`);
-        }
-        await this.setContextWithSmartReload(contextName);
-        const watch = new Watch(this.kc);
-
-        const path = (namespaces.length === 0 || namespaces.includes('all'))
-            ? '/api/v1/pods'
-            : `/api/v1/namespaces/${encodeURIComponent(namespaces[0])}/pods`;
-
-        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
-        if (rv) queryParams.resourceVersion = rv;
-
-        try {
-            const req = await watch.watch(
-                path,
-                queryParams,
-                (type, apiObj, _watchObj) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    const objRv = apiObj?.metadata?.resourceVersion;
-                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
-                    this.watchReconnectAttempts.delete(watcherKey);
-
-                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                        if (!apiObj || !apiObj.metadata) return;
-                        onEvent(type, apiObj);
-                    }
-                },
-                (err) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
-                        console.log('[k8s] Pod watch aborted (expected)');
-                        return;
-                    }
-
-                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
-                    const hasRv = this.watchResourceVersions.has(watcherKey);
-                    // Normal server-side close with a valid rv — quiet reconnect
-                    const isNormalClose = !err && hasRv;
-
-                    if (!isNormalClose) {
-                        console.error(`[k8s] Pod watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
-                    }
-
-                    // Detect 410 Gone — the resourceVersion is too old
-                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
-                    if (is410) {
-                        console.log('[k8s] Pod watch rv expired (410 Gone), clearing for fresh re-list');
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    // If we've failed 3+ times with the same rv, it's probably stale — clear it
-                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
-                    if (attempts >= 3 && hasRv) {
-                        console.log(`[k8s] Pod watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    if (this.activeWatchers.has(watcherKey)) {
-                        // Use a short delay for normal closes (server just rotated the connection)
-                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
-                        if (!isNormalClose) {
-                            console.log(`[k8s] Pod watch reconnecting in ${delay}ms... [gen=${gen}]`);
-                        }
-                        this.activeWatchers.delete(watcherKey);
-                        setTimeout(() => {
-                            if (gen !== this.watchGenerations.get(watcherKey)) return;
-                            this.startPodWatch(contextName, namespaces, onEvent);
-                        }, delay);
-                    }
-                }
-            );
-
-            if (gen === this.watchGenerations.get(watcherKey)) {
-                this.activeWatchers.set(watcherKey, req);
-            } else {
-                req?.abort?.();
-            }
-        } catch (err) {
-            console.error('[k8s] Failed to start pod watch:', err);
-        }
-    }
-
-    stopPodWatch() {
-        const watcherKey = 'pods';
-        // Bump generation to invalidate any pending reconnect timers
-        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
-        if (this.activeWatchers.has(watcherKey)) {
-            console.log('[k8s] Stopping pod watch (preserving resourceVersion for resume)');
-            const req = this.activeWatchers.get(watcherKey);
-            if (req && req.abort) req.abort();
-            this.activeWatchers.delete(watcherKey);
-            // Keep watchResourceVersions so the next start resumes instead of re-listing
-            this.watchReconnectAttempts.delete(watcherKey);
-        }
-    }
-
-    async startDeploymentWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, deployment: any) => void) {
-        this.stopDeploymentWatch();
-
-        const watcherKey = 'deployments';
-        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
-        this.watchGenerations.set(watcherKey, gen);
-
-        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        const rv = this.watchResourceVersions.get(watcherKey);
-        console.log(`[k8s] Starting watch for deployments in ${activeWatchersKey(namespaces)}${rv ? ` (resuming from rv=${rv})` : ''}`);
-        await this.setContextWithSmartReload(contextName);
-        const watch = new Watch(this.kc);
-
-        const path = (namespaces.length === 0 || namespaces.includes('all'))
-            ? '/apis/apps/v1/deployments'
-            : `/apis/apps/v1/namespaces/${encodeURIComponent(namespaces[0])}/deployments`;
-
-        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
-        if (rv) queryParams.resourceVersion = rv;
-
-        try {
-            const req = await watch.watch(
-                path,
-                queryParams,
-                (type, apiObj, _watchObj) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    const objRv = apiObj?.metadata?.resourceVersion;
-                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
-                    this.watchReconnectAttempts.delete(watcherKey);
-
-                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                        if (!apiObj || !apiObj.metadata) return;
-                        onEvent(type, apiObj);
-                    }
-                },
-                (err) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
-                        console.log('[k8s] Deployment watch aborted (expected)');
-                        return;
-                    }
-
-                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
-                    const hasRv = this.watchResourceVersions.has(watcherKey);
-                    const isNormalClose = !err && hasRv;
-
-                    if (!isNormalClose) {
-                        console.error(`[k8s] Deployment watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
-                    }
-
-                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
-                    if (is410) {
-                        console.log('[k8s] Deployment watch rv expired (410 Gone), clearing for fresh re-list');
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
-                    if (attempts >= 3 && hasRv) {
-                        console.log(`[k8s] Deployment watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    if (this.activeWatchers.has(watcherKey)) {
-                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
-                        if (!isNormalClose) {
-                            console.log(`[k8s] Deployment watch reconnecting in ${delay}ms... [gen=${gen}]`);
-                        }
-                        this.activeWatchers.delete(watcherKey);
-                        setTimeout(() => {
-                            if (gen !== this.watchGenerations.get(watcherKey)) return;
-                            this.startDeploymentWatch(contextName, namespaces, onEvent);
-                        }, delay);
-                    }
-                }
-            );
-
-            if (gen === this.watchGenerations.get(watcherKey)) {
-                this.activeWatchers.set(watcherKey, req);
-            } else {
-                req?.abort?.();
-            }
-        } catch (err) {
-            console.error('[k8s] Failed to start deployment watch:', err);
-        }
-    }
-
-    stopDeploymentWatch() {
-        const watcherKey = 'deployments';
-        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
-        if (this.activeWatchers.has(watcherKey)) {
-            console.log('[k8s] Stopping deployment watch');
-            const req = this.activeWatchers.get(watcherKey);
-            if (req && req.abort) req.abort();
-            this.activeWatchers.delete(watcherKey);
-            this.watchResourceVersions.delete(watcherKey);
-            this.watchReconnectAttempts.delete(watcherKey);
-        }
-    }
-
-    async startHelmReleaseWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, secret: any) => void) {
-        this.stopHelmReleaseWatch();
-
-        const watcherKey = 'helm-releases';
-        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
-        this.watchGenerations.set(watcherKey, gen);
-
-        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        const rv = this.watchResourceVersions.get(watcherKey);
-        console.log(`[k8s] Starting watch for helm releases in ${activeWatchersKey(namespaces)}${rv ? ` (resuming from rv=${rv})` : ''}`);
-        await this.setContextWithSmartReload(contextName);
-        const watch = new Watch(this.kc);
-
-        const path = (namespaces.length === 0 || namespaces.includes('all'))
-            ? '/api/v1/secrets'
-            : `/api/v1/namespaces/${encodeURIComponent(namespaces[0])}/secrets`;
-
-        const queryParams: Record<string, string> = { fieldSelector: 'type=helm.sh/release.v1', allowWatchBookmarks: 'true' };
-        if (rv) queryParams.resourceVersion = rv;
-
-        try {
-            const req = await watch.watch(
-                path,
-                queryParams,
-                (type, apiObj, _watchObj) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    const objRv = apiObj?.metadata?.resourceVersion;
-                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
-                    this.watchReconnectAttempts.delete(watcherKey);
-
-                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                        if (!apiObj || !apiObj.metadata) return;
-                        onEvent(type, apiObj);
-                    }
-                },
-                (err) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
-                        console.log('[k8s] Helm release watch aborted (expected)');
-                        return;
-                    }
-
-                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
-                    const hasRv = this.watchResourceVersions.has(watcherKey);
-                    const isNormalClose = !err && hasRv;
-
-                    if (!isNormalClose) {
-                        console.error(`[k8s] Helm release watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
-                    }
-
-                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
-                    if (is410) {
-                        console.log('[k8s] Helm release watch rv expired (410 Gone), clearing for fresh re-list');
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
-                    if (attempts >= 3 && hasRv) {
-                        console.log(`[k8s] Helm release watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    if (this.activeWatchers.has(watcherKey)) {
-                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
-                        if (!isNormalClose) {
-                            console.log(`[k8s] Helm release watch reconnecting in ${delay}ms... [gen=${gen}]`);
-                        }
-                        this.activeWatchers.delete(watcherKey);
-                        setTimeout(() => {
-                            if (gen !== this.watchGenerations.get(watcherKey)) return;
-                            this.startHelmReleaseWatch(contextName, namespaces, onEvent);
-                        }, delay);
-                    }
-                }
-            );
-
-            if (gen === this.watchGenerations.get(watcherKey)) {
-                this.activeWatchers.set(watcherKey, req);
-            } else {
-                req?.abort?.();
-            }
-        } catch (err) {
-            console.error('[k8s] Failed to start helm release watch:', err);
-        }
-    }
-
-    stopHelmReleaseWatch() {
-        const watcherKey = 'helm-releases';
-        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
-        if (this.activeWatchers.has(watcherKey)) {
-            console.log('[k8s] Stopping helm release watch');
-            const req = this.activeWatchers.get(watcherKey);
-            if (req && req.abort) req.abort();
-            this.activeWatchers.delete(watcherKey);
-            this.watchResourceVersions.delete(watcherKey);
-            this.watchReconnectAttempts.delete(watcherKey);
-        }
-    }
-
     /**
      * Stop all active watchers. Called on app quit to prevent reconnection loops.
      */
@@ -1441,6 +1312,23 @@ export class K8sService {
             console.error('Error fetching deployment revisions:', error);
             return [];
         }
+    }
+
+    /**
+     * Aggregated, RBAC-tolerant details for the Deployment Full View (one IPC round trip).
+     * Clients are created inside the retry closure so a 401 retry rebuilds them with refreshed credentials.
+     */
+    async getDeploymentFullDetails(contextName: string, namespace: string, name: string): Promise<DeploymentFullDetailsResponse> {
+        console.log(`[k8s] getDeploymentFullDetails ${namespace}/${name}`);
+        await this.setContextWithSmartReload(contextName);
+        return this.withAuthRetry(contextName, () => fetchDeploymentFullDetails({
+            apps: this.kc.makeApiClient(AppsV1Api),
+            core: this.kc.makeApiClient(CoreV1Api),
+            networking: this.kc.makeApiClient(NetworkingV1Api),
+            autoscaling: this.kc.makeApiClient(AutoscalingV2Api),
+            policy: this.kc.makeApiClient(PolicyV1Api),
+            getPodMetrics: () => this.getPodMetrics(contextName, [namespace]),
+        }, contextName, namespace, name));
     }
 
     async restartDeployment(contextName: string, namespace: string, deploymentName: string) {
@@ -2295,7 +2183,45 @@ export class K8sService {
         }
     }
 
+    /**
+     * Final cleanup for a generic watch key (design §5.3). Unlike stopGenericWatch (which the
+     * internal reconnect path also calls), this deletes the key from every per-watch map, so
+     * per-switch unique keys cannot grow them. Late callbacks compare against `undefined` and drop.
+     */
+    disposeGenericWatch(resourceType: string) {
+        this.stopGenericWatch(resourceType);
+        const key = `generic:${resourceType}`;
+        this.watchGenerations.delete(key);
+        this.watchResourceVersions.delete(key);
+        this.watchReconnectAttempts.delete(key);
+    }
 
+    /** Sizes of the legacy per-watch maps, for resource-cache diagnostics. */
+    getLegacyMapSizes(): { activeWatchers: number; watchGenerations: number; watchResourceVersions: number } {
+        return {
+            activeWatchers: this.activeWatchers.size,
+            watchGenerations: this.watchGenerations.size,
+            watchResourceVersions: this.watchResourceVersions.size,
+        };
+    }
+
+    /**
+     * Build a NEW KubeConfig for a resource-cache session (design §3.1), from the same location
+     * K8sService loads (custom path or default resolution). The session owns the instance, so
+     * other calls switching the shared `this.kc` context cannot affect a live watch.
+     * Throws KubeconfigLoadError (fixed message, no cause attached) or UnknownContextError.
+     */
+    createKubeConfig(contextName: string): KubeConfig {
+        let kc: KubeConfig;
+        try {
+            kc = this.loadKubeConfig();
+        } catch {
+            throw new KubeconfigLoadError();
+        }
+        if (!kc.getContextObject(contextName)) throw new UnknownContextError();
+        kc.setCurrentContext(contextName);
+        return kc;
+    }
 
     async getCRDs(contextName: string) {
         console.log(`Getting CRDs for ${contextName}`);

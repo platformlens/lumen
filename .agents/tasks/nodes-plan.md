@@ -1,0 +1,29 @@
+# Implementation Plan
+
+## Findings and implementation decisions
+
+- `NodesView.tsx` already derives the four summary cards and `chartData.capacity`, `chartData.zones`, and `chartData.types` from `sortedNodes` in one `useMemo`. Extend that same pass so architecture statistics respect the current Nodes search/filter and do not add another traversal or render-time allocation.
+- Normalize architecture metadata in a small pure utility because current-label precedence, legacy-label fallback, missing values, case normalization, and ARM-family classification are independently testable rules. Resolve `kubernetes.io/arch` first, then `beta.kubernetes.io/arch`, then `unknown`; classify any normalized value starting with `arm` as ARM, a known non-ARM value as non-ARM, and `unknown` separately.
+- Add one architecture donut to the existing expanded charts grid rather than a separate section. Keep raw architecture names such as `arm64`, `arm`, and `amd64` in the legend/tooltip while using family-consistent colors and compact ARM/non-ARM/unknown totals to make the requested split immediately visible.
+- The small-window bug is caused by `NodesView` using `h-full overflow-hidden`: expanded fixed-size stats plus the table's inner `min-h-[400px]` exceed that fixed box, but the excess is clipped and does not enlarge `Dashboard`'s `overflow-y-auto` scroll range. Let the Nodes root grow from `min-h-full`, give the virtualized table region a real 400px minimum instead of allowing its wrapper to shrink to zero, and ensure the dashboard flex scroll area has `min-h-0`; keep `TableVirtuoso` as the row-scrolling owner and preserve its sticky header.
+- Use existing React 18, strict TypeScript, Tailwind, Recharts, and Framer Motion patterns only. Add no dependencies, retain virtualization/memoization, follow the dark glass styles already in the stats block, and do not create commits.
+
+- [ ] 1. Add and unit-test pure node architecture resolution and classification helpers.
+      Create helpers that accept node labels, prefer `kubernetes.io/arch` over `beta.kubernetes.io/arch`, trim and lowercase values, return `unknown` for missing/empty labels, and classify normalized values into `arm`, `non-arm`, or `unknown` using the required `startsWith('arm')` rule. Cover current-label precedence, legacy fallback, `arm64`, `arm`, another ARM-prefixed value, `amd64`, another known non-ARM value, mixed case/whitespace, and missing/empty metadata.
+      Files: `src/utils/node-architecture.ts`, `src/utils/node-architecture.test.ts`
+      Verify: `npx vitest run src/utils/node-architecture.test.ts` — all architecture utility tests pass; `npx tsc --noEmit` — strict TypeScript compilation succeeds.
+
+- [ ] 2. Extend the existing Nodes stats derivation and expanded charts block with architecture distribution.
+      Import the new helpers into `NodesView.tsx`; in the existing `{ stats, chartData }` `useMemo`, aggregate raw normalized architecture counts plus ARM, non-ARM, and unknown totals while iterating `sortedNodes`, then expose a sorted `chartData.architectures` series containing each detailed label and family. Add a fourth glass-styled Recharts donut card to the existing chart grid, use orange for ARM-family slices, blue for non-ARM slices, and gray for unknown, retain raw labels in the legend/tooltip, and show the family totals in compact text; make the four-chart grid responsive at narrower widths without introducing a disconnected section or new dependencies.
+      Files: `src/components/dashboard/views/NodesView.tsx`
+      Verify: `npx vitest run src/utils/node-architecture.test.ts` — utility behavior remains covered; `npm run lint` — ESLint completes with zero warnings; `npx tsc --noEmit` — the extended memo and Recharts props type-check successfully.
+
+- [ ] 3. Repair the vertical overflow chain so expanded stats cannot hide the Nodes table.
+      Change the Nodes page root from a fixed, clipping `h-full overflow-hidden` box to a growing `min-h-full` flex column, and put the 400px minimum on the table flex region so the stats plus table contribute to the parent scroll height while the existing `TableVirtuoso` still owns row virtualization and its sticky header. Add `min-h-0` to `Dashboard.tsx`'s `flex-1 overflow-y-auto` content area so it can shrink inside the dashboard flex column and remain the page-level vertical scroller.
+      Files: `src/components/dashboard/views/NodesView.tsx`, `src/components/Dashboard.tsx`
+      Verify: `npm run dev` — with the Electron window reduced to a constrained height, open Nodes, expand **Show Stats**, scroll the dashboard to reach the complete table, then scroll table rows and confirm the sticky header and virtualization still work; collapse/reopen stats and confirm the table remains reachable. Also run `npm run lint` and `npx tsc --noEmit` — both complete successfully.
+
+- [ ] 4. Run final integrated validation for the Nodes page changes.
+      Exercise architecture data containing `arm64`, `arm`, `amd64`, a legacy-only architecture label, and an unlabeled node; confirm the chart totals match the filtered Nodes list, raw labels remain visible, ARM and non-ARM are visually distinct, unknown nodes are not misclassified, and search updates every existing and new statistic together. Repeat the constrained-height scroll check with stats open and with enough rows to exercise Virtuoso.
+      Files: `src/utils/node-architecture.ts`, `src/utils/node-architecture.test.ts`, `src/components/dashboard/views/NodesView.tsx`, `src/components/Dashboard.tsx`
+      Verify: `npx vitest run src/utils/node-architecture.test.ts && npm run lint && npm run build` — unit tests and lint pass, TypeScript/Vite build succeeds, and Electron Builder completes without errors; `npm run dev` — the manual chart/filter and constrained-height scrolling scenarios above pass with no console errors.

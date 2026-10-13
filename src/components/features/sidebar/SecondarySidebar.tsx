@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { Tooltip } from '../../shared/Tooltip';
+import { RenameClusterModal } from '../../shared/RenameClusterModal';
 import {
     LayoutGrid,
     Box,
@@ -32,16 +33,19 @@ import {
     ChevronLeft,
     Loader2,
     Pin,
+    Pencil,
     Brain,
     Anchor,
     Package,
     PenTool,
     FilePlus,
     FolderOpen,
-    Zap
+    Zap,
+    Boxes
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useOrgStore } from '../../../stores/orgStore';
+import type { ClusterContextInfo } from '../../../types/cluster-context';
 
 interface SecondarySidebarProps {
     mode: 'clusters' | 'resources' | 'settings' | 'editor' | 'user';
@@ -57,11 +61,16 @@ interface SecondarySidebarProps {
     isEks?: boolean;
     hasCertManager?: boolean;
     hasKarpenter?: boolean;
+    hasCrossplane?: boolean;
+    // Kube contexts shown in cluster mode (shared list from App, live-updated from the kubeconfig)
+    clusters?: ClusterContextInfo[];
     // Pinned Clusters
     pinnedClusters?: string[];
     onTogglePin?: (clusterName: string) => void;
+    // Rename a kube context; resolves null on success or an error message
+    onRenameCluster?: (oldName: string, newName: string) => Promise<string | null>;
     // Editor mode
-    yamlTabs?: Array<{ id: string; title: string; subtitle?: string }>;
+    yamlTabs?: Array<{ id: string; title: string; subtitle?: string; isDirty?: boolean }>;
     activeYamlTabId?: string | null;
     onSelectYamlTab?: (tabId: string) => void;
     onCloseYamlTab?: (tabId: string) => void;
@@ -131,8 +140,11 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     isEks,
     hasCertManager,
     hasKarpenter,
+    hasCrossplane,
+    clusters = [],
     pinnedClusters = [],
     onTogglePin,
+    onRenameCluster,
     yamlTabs = [],
     activeYamlTabId,
     onSelectYamlTab,
@@ -141,6 +153,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
     onOpenYamlFile,
 }) => {
     const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; cluster: string } | null>(null);
+    const [renameTarget, setRenameTarget] = useState<string | null>(null);
     const teams = useOrgStore((s) => s.teams);
     const userTeamRoute = activeView?.match(/^user-team:(.+)$/);
     const userTeamPageTeam = userTeamRoute ? teams.find((t) => t.id === userTeamRoute[1]) : null;
@@ -157,7 +170,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
 
         // Menu dimensions
         const menuWidth = 160;
-        const menuHeight = 50;
+        const menuHeight = 84; // two items (Pin + Rename)
 
         // Calculate position - position close to cursor with smart flipping
         let x = e.clientX + 2; // Small offset from cursor
@@ -190,7 +203,6 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
         'helm': false,
         'crd': false
     });
-    const [clusters, setClusters] = useState<any[]>([]);
     const [crds, setCrds] = useState<any[]>([]);
     const [loadingCrds, setLoadingCrds] = useState(false);
     const [expandedApiGroups, setExpandedApiGroups] = useState<{ [key: string]: boolean }>({});
@@ -203,11 +215,6 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
         }));
     };
 
-    useEffect(() => {
-        if (mode === 'clusters') {
-            window.k8s.getClusters().then(setClusters).catch(console.error);
-        }
-    }, [mode]);
 
     useEffect(() => {
         if (openGroups['crd'] && crds.length === 0 && selectedCluster) {
@@ -353,6 +360,7 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
         });
     }
 
+
     // Filter CRDs
     const filteredCrds = crds.filter(crd =>
         filterMatches(crd.name) ||
@@ -483,6 +491,14 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                         label="Karpenter"
                                         active={activeView === 'karpenter'}
                                         onClick={() => onSelectView('karpenter')}
+                                    />
+                                )}
+                                {hasCrossplane && (!searchQuery || filterMatches('Crossplane')) && (
+                                    <NavItem
+                                        icon={<Boxes size={18} />}
+                                        label="Crossplane"
+                                        active={activeView.startsWith('crossplane-')}
+                                        onClick={() => onSelectView('crossplane-overview')}
                                     />
                                 )}
                             </div>
@@ -725,6 +741,9 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                                                     <div className="truncate text-[10px] text-gray-500">{tab.subtitle}</div>
                                                 )}
                                             </div>
+                                            {tab.isDirty && (
+                                                <span className="w-2 h-2 rounded-full bg-yellow-500 shrink-0" title="Unsaved changes" />
+                                            )}
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); onCloseYamlTab?.(tab.id); }}
                                                 className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-white/10 hover:text-red-400 rounded transition-all shrink-0"
@@ -761,10 +780,37 @@ export const SecondarySidebar: React.FC<SecondarySidebarProps> = ({
                             <Pin size={14} className={pinnedClusters.includes(contextMenu.cluster) ? "fill-current" : ""} />
                             {pinnedClusters.includes(contextMenu.cluster) ? "Unpin Cluster" : "Pin Cluster"}
                         </button>
+                        {onRenameCluster && (
+                            <button
+                                className="w-full text-left px-3 py-1.5 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center gap-2"
+                                onClick={() => {
+                                    setRenameTarget(contextMenu.cluster);
+                                    setContextMenu(null);
+                                }}
+                            >
+                                <Pencil size={14} />
+                                Rename
+                            </button>
+                        )}
                     </div>,
                     document.body
                 )
             }
+
+            {onRenameCluster && (
+                <RenameClusterModal
+                    isOpen={renameTarget !== null}
+                    currentName={renameTarget ?? ''}
+                    existingNames={clusters.map(c => c.name)}
+                    onConfirm={async (newName) => {
+                        if (renameTarget === null) return null;
+                        const error = await onRenameCluster(renameTarget, newName);
+                        if (error === null) setRenameTarget(null);
+                        return error;
+                    }}
+                    onCancel={() => setRenameTarget(null)}
+                />
+            )}
         </>
     );
 };

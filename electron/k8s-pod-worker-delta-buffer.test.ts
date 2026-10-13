@@ -225,4 +225,19 @@ describe('DeltaBatchBuffer', () => {
 
     buffer.destroy();
   });
+
+  it('clear() discards pending deltas; the next tick posts nothing and later pushes still flush', () => {
+    const onFlush = vi.fn();
+    const buffer = new DeltaBatchBuffer({ onFlush });
+    buffer.push({ action: 'add', pod: makePod('a') });
+    buffer.push({ action: 'delete', uid: 'b' });
+    buffer.clear();
+    vi.advanceTimersByTime(150);
+    expect(onFlush).not.toHaveBeenCalled();
+    buffer.push({ action: 'add', pod: makePod('c') });
+    vi.advanceTimersByTime(150);
+    expect(onFlush).toHaveBeenCalledOnce();
+    expect(onFlush.mock.calls[0][0]).toEqual([{ action: 'add', pod: expect.objectContaining({ uid: 'c' }) }]);
+    buffer.destroy();
+  });
 });

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Server, Zap, AlertCircle, CheckCircle, BarChart2, Shield, Cpu, MemoryStick, Trash2, Ban, PlayCircle, ArrowDownCircle, X } from 'lucide-react';
 import { TableVirtuoso } from 'react-virtuoso';
 import { getNodeProviderInfo } from '../../../utils/cluster-utils';
+import { getNodeArchitecture, NodeArchitectureFamily } from '../../../utils/node-architecture';
 import { TimeAgo } from '../../shared/TimeAgo';
 import { StatusBadge } from '../../shared/StatusBadge';
 import { Tooltip as LumenTooltip } from '../../shared/Tooltip';
@@ -700,6 +701,8 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
 
         const zoneMap = new Map<string, number>();
         const typeMap = new Map<string, number>();
+        const architectureMap = new Map<string, { count: number; family: NodeArchitectureFamily }>();
+        const architectureFamilies = { arm: 0, nonArm: 0, unknown: 0 };
 
         sortedNodes.forEach(node => {
             const info = getNodeProviderInfo(node);
@@ -722,6 +725,13 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
 
             const type = info.instanceType || 'Unknown';
             typeMap.set(type, (typeMap.get(type) || 0) + 1);
+
+            const { architecture, family } = getNodeArchitecture(node.metadata?.labels);
+            const architectureCount = architectureMap.get(architecture)?.count || 0;
+            architectureMap.set(architecture, { count: architectureCount + 1, family });
+            if (family === 'arm') architectureFamilies.arm++;
+            else if (family === 'non-arm') architectureFamilies.nonArm++;
+            else architectureFamilies.unknown++;
         });
 
         const capacityData = [
@@ -738,9 +748,19 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
             .sort((a, b) => b.count - a.count)
             .slice(0, 10);
 
+        const architectureData = Array.from(architectureMap.entries())
+            .map(([name, { count, family }]) => ({ name, value: count, family }))
+            .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+
         return {
             stats: { onDemand, spot, ready, notReady, totalCpuMillis, totalMemoryBytes },
-            chartData: { capacity: capacityData, zones: zoneData, types: typeData }
+            chartData: {
+                capacity: capacityData,
+                zones: zoneData,
+                types: typeData,
+                architectures: architectureData,
+                architectureFamilies,
+            }
         };
     }, [sortedNodes, nodeUtilization]);
 
@@ -750,7 +770,7 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
         <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex flex-col h-full overflow-hidden"
+            className="flex h-full flex-col"
         >
             <div className="flex items-center justify-between mb-4 flex-none">
                 <div className="flex items-center gap-2">
@@ -844,7 +864,7 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
                     </div>
 
                     {/* Charts */}
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                         {/* Capacity Distribution */}
                         <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
                             <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Capacity Distribution</h4>
@@ -911,6 +931,49 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
                                 </ResponsiveContainer>
                             </div>
                         </div>
+
+                        {/* Architecture Distribution */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col h-64">
+                            <div className="flex items-start justify-between gap-4 mb-2">
+                                <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Architecture Distribution</h4>
+                                <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-[10px] font-medium">
+                                    <span className="text-orange-400">ARM {chartData.architectureFamilies.arm}</span>
+                                    <span className="text-blue-400">Non-ARM {chartData.architectureFamilies.nonArm}</span>
+                                    {chartData.architectureFamilies.unknown > 0 && (
+                                        <span className="text-gray-400">Unknown {chartData.architectureFamilies.unknown}</span>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex-1 w-full min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={chartData.architectures}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={40}
+                                            outerRadius={70}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                            nameKey="name"
+                                        >
+                                            {chartData.architectures.map(entry => (
+                                                <Cell
+                                                    key={entry.name}
+                                                    fill={entry.family === 'arm' ? '#f97316' : entry.family === 'non-arm' ? '#3b82f6' : '#6b7280'}
+                                                    stroke="rgba(0,0,0,0.2)"
+                                                />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip
+                                            contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
+                                            itemStyle={{ color: '#E5E7EB' }}
+                                        />
+                                        <Legend />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
                     </div>
                 </motion.div>
             )}
@@ -969,8 +1032,8 @@ const NodesViewInner: React.FC<NodesViewProps> = ({ nodes, clusterName, onRowCli
             </AnimatePresence>
 
             {/* Table */}
-            <div className="flex-1 min-h-0">
-                <div ref={containerRef} className="relative flex-1 h-full w-full min-h-[400px] nodes-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
+            <div className="flex-1 min-h-[400px]">
+                <div ref={containerRef} className="relative h-full w-full nodes-table-container rounded-t-lg" style={{ overflowClipMargin: 0, overflow: 'clip' }}>
                     <style>{tableStyles}</style>
                     <TableVirtuoso
                         totalCount={sortedNodes.length}

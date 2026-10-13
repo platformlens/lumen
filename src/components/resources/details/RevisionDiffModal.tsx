@@ -1,61 +1,29 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom';
 import { DiffEditor } from '@monaco-editor/react';
 import { X, GitCompare } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import * as jsYaml from 'js-yaml';
 
-interface Revision {
-    name: string;
-    revision: string;
-    creationTimestamp: string;
-    images: string[];
-    spec: any;
-    metadata: any;
-    status: any;
+/** One side of a revision diff. `label` is the full display string (e.g. "Revision 7"). */
+export interface RevisionDiffSide {
+    label: string;
+    createdAt: string;
+    yaml: string;
 }
 
 interface RevisionDiffModalProps {
     isOpen: boolean;
     onClose: () => void;
-    leftRevision: Revision;
-    rightRevision: Revision;
-}
-
-function revisionToYaml(rev: Revision): string {
-    // Build a clean object showing the meaningful parts of the revision
-    const clean: any = {
-        revision: rev.revision,
-        name: rev.name,
-        createdAt: rev.creationTimestamp,
-        replicas: rev.spec?.replicas,
-        template: {
-            labels: rev.spec?.template?.metadata?.labels,
-            annotations: rev.spec?.template?.metadata?.annotations,
-            spec: rev.spec?.template?.spec,
-        },
-        selector: rev.spec?.selector,
-    };
-
-    // Remove undefined values for cleaner YAML
-    return jsYaml.dump(clean, {
-        indent: 2,
-        lineWidth: 120,
-        noRefs: true,
-        skipInvalid: true,
-        sortKeys: false,
-    });
+    left: RevisionDiffSide;
+    right: RevisionDiffSide;
 }
 
 export const RevisionDiffModal: React.FC<RevisionDiffModalProps> = ({
     isOpen,
     onClose,
-    leftRevision,
-    rightRevision,
+    left,
+    right,
 }) => {
-    const leftYaml = useMemo(() => revisionToYaml(leftRevision), [leftRevision]);
-    const rightYaml = useMemo(() => revisionToYaml(rightRevision), [rightRevision]);
-
     if (!isOpen) return null;
 
     return ReactDOM.createPortal(
@@ -86,7 +54,7 @@ export const RevisionDiffModal: React.FC<RevisionDiffModalProps> = ({
                                 <div>
                                     <h2 className="text-lg font-bold text-white">Compare Revisions</h2>
                                     <p className="text-xs text-gray-400">
-                                        Revision {leftRevision.revision} → Revision {rightRevision.revision}
+                                        {left.label} → {right.label}
                                     </p>
                                 </div>
                             </div>
@@ -104,6 +72,7 @@ export const RevisionDiffModal: React.FC<RevisionDiffModalProps> = ({
                                 </div>
                                 <button
                                     onClick={onClose}
+                                    aria-label="Close revision diff"
                                     className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
                                 >
                                     <X size={18} />
@@ -115,18 +84,18 @@ export const RevisionDiffModal: React.FC<RevisionDiffModalProps> = ({
                         <div className="flex-none grid grid-cols-2 border-b border-white/10 bg-[#0d0d0d]">
                             <div className="px-6 py-2 border-r border-white/10">
                                 <span className="text-xs font-medium text-red-400/80">
-                                    Revision {leftRevision.revision}
+                                    {left.label}
                                 </span>
                                 <span className="text-xs text-gray-500 ml-2">
-                                    {new Date(leftRevision.creationTimestamp).toLocaleString()}
+                                    · {new Date(left.createdAt).toLocaleString()}
                                 </span>
                             </div>
                             <div className="px-6 py-2">
                                 <span className="text-xs font-medium text-green-400/80">
-                                    Revision {rightRevision.revision}
+                                    {right.label}
                                 </span>
                                 <span className="text-xs text-gray-500 ml-2">
-                                    {new Date(rightRevision.creationTimestamp).toLocaleString()}
+                                    · {new Date(right.createdAt).toLocaleString()}
                                 </span>
                             </div>
                         </div>
@@ -137,8 +106,8 @@ export const RevisionDiffModal: React.FC<RevisionDiffModalProps> = ({
                                 height="100%"
                                 language="yaml"
                                 theme="vs-dark"
-                                original={leftYaml}
-                                modified={rightYaml}
+                                original={left.yaml}
+                                modified={right.yaml}
                                 options={{
                                     renderSideBySide: true,
                                     readOnly: true,

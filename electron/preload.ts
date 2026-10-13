@@ -1,5 +1,45 @@
 import { ipcRenderer, contextBridge } from 'electron'
 import type { AiStreamUsagePayload } from '../src/utils/ai-meter'
+import type { ContextsChangedPayload, RenameClusterResult } from '../src/types/cluster-context'
+import type { CrossplaneObjectRef, CrossplaneScanProgress } from '../src/types/crossplane'
+import type { EnsureFreshResult, ResourceBatch, ResourceCacheDiagnostics, ResourceSnapshot, StartSessionArgs } from '../src/types/resource-cache'
+
+// Crossplane IPC: one object argument per call; undefined option keys are omitted.
+function crossplaneArgs<T extends Record<string, unknown>>(base: T, opts?: Record<string, unknown>): T {
+  const out: Record<string, unknown> = { ...base }
+  for (const [k, v] of Object.entries(opts ?? {})) if (v !== undefined) out[k] = v
+  return out as T
+}
+
+// --------- Terminal event demultiplexing ---------
+// One ipcRenderer listener per channel (registered lazily) routes events to the
+// callbacks of the matching terminal id, so each session only sees its own IO.
+type TerminalSubs<T> = Map<string, Set<(payload: T) => void>>
+const terminalDataSubs: TerminalSubs<string> = new Map()
+const terminalExitSubs: TerminalSubs<number> = new Map()
+const registeredTerminalChannels = new Set<string>()
+
+function subscribeTerminal<T>(subs: TerminalSubs<T>, channel: string, id: string, callback: (payload: T) => void): () => void {
+  if (!registeredTerminalChannels.has(channel)) {
+    registeredTerminalChannels.add(channel)
+    ipcRenderer.on(channel, (_event, termId: unknown, payload: T) => {
+      if (typeof termId !== 'string') return
+      subs.get(termId)?.forEach(cb => cb(payload))
+    })
+  }
+  let set = subs.get(id)
+  if (!set) {
+    set = new Set()
+    subs.set(id, set)
+  }
+  set.add(callback)
+  return () => {
+    const current = subs.get(id)
+    if (!current) return
+    current.delete(callback)
+    if (current.size === 0) subs.delete(id)
+  }
+}
 
 // --------- Expose typed API to the Renderer process ---------
 contextBridge.exposeInMainWorld('k8s', {
@@ -7,6 +47,12 @@ contextBridge.exposeInMainWorld('k8s', {
   forceCredentialRefresh: () => ipcRenderer.invoke('k8s:forceCredentialRefresh'),
 
   getClusters: () => ipcRenderer.invoke('k8s:getClusters'),
+  onContextsChanged: (callback: (payload: ContextsChangedPayload) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, payload: ContextsChangedPayload) => callback(payload);
+    ipcRenderer.on('k8s:contextsChanged', listener);
+    return () => { ipcRenderer.off('k8s:contextsChanged', listener); };
+  },
+  renameCluster: (oldName: string, newName: string): Promise<RenameClusterResult> => ipcRenderer.invoke('k8s:renameContext', { oldName, newName }),
   getNamespaces: (contextName: string) => ipcRenderer.invoke('k8s:getNamespaces', contextName),
   getNamespacesDetails: (contextName: string) => ipcRenderer.invoke('k8s:getNamespacesDetails', contextName),
   getDeployments: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getDeployments', contextName, namespaces),
@@ -22,6 +68,7 @@ contextBridge.exposeInMainWorld('k8s', {
   getPod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getPod', contextName, namespace, name),
   getReplicaSets: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getReplicaSets', contextName, namespaces),
   getDeploymentRevisions: (contextName: string, namespace: string, deploymentName: string) => ipcRenderer.invoke('k8s:getDeploymentRevisions', contextName, namespace, deploymentName),
+  getDeploymentFullDetails: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getDeploymentFullDetails', contextName, namespace, name),
   restartDeployment: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:restartDeployment', contextName, namespace, name),
   getReplicaSet: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:getReplicaSet', contextName, namespace, name),
   getServices: (contextName: string, namespaces?: string[]) => ipcRenderer.invoke('k8s:getServices', contextName, namespaces),
@@ -204,10 +251,6 @@ contextBridge.exposeInMainWorld('k8s', {
   decodeCertificate: (certData: string) => ipcRenderer.invoke('k8s:decodeCertificate', certData),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   deletePod: (contextName: string, namespace: string, name: string) => ipcRenderer.invoke('k8s:deletePod', contextName, namespace, name),
-  watchPods: (contextName: string, namespaces: string[]) => ipcRenderer.send('k8s:watchPods', contextName, namespaces),
-  stopWatchPods: () => ipcRenderer.send('k8s:stopWatchPods'),
-  watchDeployments: (contextName: string, namespaces: string[]) => ipcRenderer.send('k8s:watchDeployments', contextName, namespaces),
-  stopWatchDeployments: () => ipcRenderer.send('k8s:stopWatchDeployments'),
   watchNodes: (contextName: string) => ipcRenderer.send('k8s:watchNodes', contextName),
   stopWatchNodes: () => ipcRenderer.send('k8s:stopWatchNodes'),
   watchGenericResource: (contextName: string, resourceType: string, apiPath: string) => ipcRenderer.send('k8s:watchGenericResource', contextName, resourceType, apiPath),
@@ -221,27 +264,6 @@ contextBridge.exposeInMainWorld('k8s', {
     const listener = (_: any, resourceType: string, events: Array<{ type: string; resource: any }>) => callback(resourceType, events);
     ipcRenderer.on('k8s:genericResourceBatchChange', listener);
     return () => ipcRenderer.off('k8s:genericResourceBatchChange', listener);
-  },
-  onDeploymentChange: (callback: (type: string, deployment: any) => void) => {
-    const listener = (_: any, type: string, deployment: any) => callback(type, deployment);
-    ipcRenderer.on('k8s:deploymentChange', listener);
-    return () => ipcRenderer.off('k8s:deploymentChange', listener);
-  },
-  onDeploymentBatchChange: (callback: (events: Array<{ type: string; deployment: any }>) => void) => {
-    const listener = (_: any, events: Array<{ type: string; deployment: any }>) => callback(events);
-    ipcRenderer.on('k8s:deploymentBatchChange', listener);
-    return () => ipcRenderer.off('k8s:deploymentBatchChange', listener);
-  },
-  onPodChange: (callback: (type: string, pod: any) => void) => {
-    const listener = (_: any, type: string, pod: any) => callback(type, pod);
-    ipcRenderer.on('k8s:podChange', listener);
-    // Return unsubscribe function
-    return () => ipcRenderer.off('k8s:podChange', listener);
-  },
-  onPodBatchChange: (callback: (events: Array<{ type: string; pod: any }>) => void) => {
-    const listener = (_: any, events: Array<{ type: string; pod: any }>) => callback(events);
-    ipcRenderer.on('k8s:podBatchChange', listener);
-    return () => ipcRenderer.off('k8s:podBatchChange', listener);
   },
   onNodeChange: (callback: (type: string, node: any) => void) => {
     const listener = (_: any, type: string, node: any) => callback(type, node);
@@ -335,21 +357,22 @@ contextBridge.exposeInMainWorld('k8s', {
 
   // --- Terminal ---
   terminal: {
-    create: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:create', id, cols, rows),
+    create: (id: string, cols: number, rows: number, context?: string) => {
+      // Only send the context when set so the optional zod rest arg stays absent
+      if (context !== undefined) {
+        ipcRenderer.send('terminal:create', id, cols, rows, context);
+      } else {
+        ipcRenderer.send('terminal:create', id, cols, rows);
+      }
+    },
     createExec: (id: string, cols: number, rows: number, context: string, namespace: string, podName: string, containerName?: string) => ipcRenderer.send('terminal:createExec', id, cols, rows, context, namespace, podName, containerName),
     write: (id: string, data: string) => ipcRenderer.send('terminal:write', id, data),
     resize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', id, cols, rows),
     dispose: (id: string) => ipcRenderer.send('terminal:dispose', id),
-    onData: (callback: (id: string, data: string) => void) => {
-      const listener = (_: any, id: string, data: string) => callback(id, data);
-      ipcRenderer.on('terminal:data', listener);
-      return () => ipcRenderer.off('terminal:data', listener);
-    },
-    onExit: (callback: (id: string, exitCode: number) => void) => {
-      const listener = (_: any, id: string, exitCode: number) => callback(id, exitCode);
-      ipcRenderer.on('terminal:exit', listener);
-      return () => ipcRenderer.off('terminal:exit', listener);
-    }
+    /** Subscribe to output of ONE terminal session. Returns an unsubscribe function. */
+    onData: (id: string, callback: (data: string) => void) => subscribeTerminal(terminalDataSubs, 'terminal:data', id, callback),
+    /** Subscribe to the exit of ONE terminal session. Returns an unsubscribe function. */
+    onExit: (id: string, callback: (exitCode: number) => void) => subscribeTerminal(terminalExitSubs, 'terminal:exit', id, callback),
   },
 
   // --- AWS ---
@@ -384,11 +407,10 @@ contextBridge.exposeInMainWorld('k8s', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     isPackaged: () => ipcRenderer.invoke('app:isPackaged'),
     onWindowFocused: (callback: () => void) => {
-      ipcRenderer.on('app:windowFocused', () => {
-        console.log('[preload] Received app:windowFocused from main');
-        callback();
-      });
-      return () => { ipcRenderer.removeAllListeners('app:windowFocused'); };
+      // Named listener: the disposer removes only this subscriber (D6)
+      const listener = () => callback();
+      ipcRenderer.on('app:windowFocused', listener);
+      return () => { ipcRenderer.off('app:windowFocused', listener); };
     },
   },
 
@@ -404,19 +426,39 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.invoke('helm:uninstallRelease', contextName, namespace, name),
     rollbackRelease: (contextName: string, namespace: string, name: string, revision: number) =>
       ipcRenderer.invoke('helm:rollbackRelease', contextName, namespace, name, revision),
-    watchHelmReleases: (contextName: string, namespaces: string[]) =>
-      ipcRenderer.send('k8s:watchHelmReleases', contextName, namespaces),
-    stopWatchHelmReleases: () =>
-      ipcRenderer.send('k8s:stopWatchHelmReleases'),
-    onHelmReleaseBatchChange: (callback: (events: Array<{ type: string; resource: any }>) => void) => {
-      const listener = (_: any, events: Array<{ type: string; resource: any }>) => callback(events);
-      ipcRenderer.on('k8s:helmReleaseBatchChange', listener);
-      return () => ipcRenderer.off('k8s:helmReleaseBatchChange', listener);
-    },
     listRepos: () => ipcRenderer.invoke('helm:listRepos'),
     updateRepos: () => ipcRenderer.invoke('helm:updateRepos'),
     addRepo: (name: string, url: string) => ipcRenderer.invoke('helm:addRepo', name, url),
     getCatalog: (opts?: { force?: boolean }) => ipcRenderer.invoke('helm:getCatalog', opts),
+  },
+
+  // --- Crossplane (read-only) ---
+  crossplane: {
+    detect: (context: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:detect', crossplaneArgs({ context }, opts)),
+    getPackages: (context: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:getPackages', crossplaneArgs({ context }, opts)),
+    getDefinitions: (context: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:getDefinitions', crossplaneArgs({ context }, opts)),
+    getComposites: (context: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:getComposites', crossplaneArgs({ context }, opts)),
+    getManagedKinds: (context: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:getManagedKinds', crossplaneArgs({ context }, opts)),
+    scanManaged: (context: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:scanManaged', crossplaneArgs({ context }, opts)),
+    getManagedItems: (context: string, kindKeys: string[], opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:getManagedItems', crossplaneArgs({ context, kindKeys }, opts)),
+    getWarningEvents: (context: string, opts?: { limit?: number; force?: boolean }) =>
+      ipcRenderer.invoke('crossplane:getWarningEvents', crossplaneArgs({ context }, opts)),
+    getResource: (context: string, ref: CrossplaneObjectRef) =>
+      ipcRenderer.invoke('crossplane:getResource', { context, ref }),
+    getTree: (context: string, ref: CrossplaneObjectRef) =>
+      ipcRenderer.invoke('crossplane:getTree', { context, ref }),
+    onScanProgress: (callback: (p: CrossplaneScanProgress) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: CrossplaneScanProgress) => callback(p);
+      ipcRenderer.on('crossplane:scanProgress', listener);
+      return () => { ipcRenderer.removeListener('crossplane:scanProgress', listener); };
+    },
   },
 
   artifactHub: {
@@ -424,29 +466,21 @@ contextBridge.exposeInMainWorld('k8s', {
       ipcRenderer.invoke('artifacthub:fetch', pathAndQuery, options),
   },
 
-  // --- Pod Worker ---
-  podWorker: {
-    startInformer: (context: string, namespaces: string[]) =>
-      ipcRenderer.invoke('start-pod-informer', context, namespaces),
-    stopInformer: () =>
-      ipcRenderer.invoke('stop-pod-informer'),
-    getPodsChunk: (offset: number, limit: number) =>
-      ipcRenderer.invoke('get-pods-chunk', { offset, limit }),
-    onDeltaBatch: (callback: (deltas: any[]) => void) => {
-      const listener = (_: any, deltas: any[]) => callback(deltas);
-      ipcRenderer.on('k8s-pod-delta-batch', listener);
-      return () => ipcRenderer.off('k8s-pod-delta-batch', listener);
+  // --- Background resource cache (core kinds) ---
+  resources: {
+    startSession: (args: StartSessionArgs): Promise<ResourceSnapshot> => ipcRenderer.invoke('resources:startSession', args),
+    subscribe: (): Promise<ResourceSnapshot | null> => ipcRenderer.invoke('resources:subscribe'),
+    stopSession: (): Promise<true> => ipcRenderer.invoke('resources:stopSession'),
+    setNamespaces: (namespaces: string[]): Promise<true> => ipcRenderer.invoke('resources:setNamespaces', { namespaces }),
+    ensureFresh: (): Promise<EnsureFreshResult> => ipcRenderer.invoke('resources:ensureFresh'),
+    getDiagnostics: (): Promise<ResourceCacheDiagnostics | null> => ipcRenderer.invoke('resources:getDiagnostics'),
+    onBatch: (cb: (batch: ResourceBatch) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, batch: ResourceBatch) => cb(batch);
+      ipcRenderer.on('resources:batch', listener);
+      return () => { ipcRenderer.off('resources:batch', listener); };
     },
-    onSynced: (callback: (data: { count: number }) => void) => {
-      const listener = (_: any, data: { count: number }) => callback(data);
-      ipcRenderer.on('k8s-pod-informer-synced', listener);
-      return () => ipcRenderer.off('k8s-pod-informer-synced', listener);
-    },
-    onError: (callback: (data: { error: string; recoverable: boolean }) => void) => {
-      const listener = (_: any, data: { error: string; recoverable: boolean }) => callback(data);
-      ipcRenderer.on('k8s-pod-informer-error', listener);
-      return () => ipcRenderer.off('k8s-pod-informer-error', listener);
-    },
+    /** Diagnostics only: fixed channel. */
+    listenerCount: (): number => ipcRenderer.listenerCount('resources:batch'),
   },
 
   // --- Onboarding ---

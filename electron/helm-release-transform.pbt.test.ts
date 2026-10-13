@@ -282,3 +282,37 @@ describe('Property 3: Batch error resilience', () => {
         );
     });
 });
+
+// ---------------------------------------------------------------------------
+// Real worker handler: correlation fields and per-event failures
+// ---------------------------------------------------------------------------
+import { handleRequest } from './resource-transform-worker';
+
+describe('resource-transform-worker helmrelease contract', () => {
+    const release = { name: 'app', version: 3, info: { status: 'deployed' }, chart: { metadata: { name: 'c', version: '1.0.0' } } };
+    const secret = (uid: string, rv: string, blob: string) => ({
+        metadata: { uid, resourceVersion: rv, name: `sh.helm.release.v1.app.v3`, namespace: 'ns' },
+        data: { release: blob },
+    });
+
+    it('helm output carries secretUid and secretResourceVersion', () => {
+        const res = handleRequest({ id: 'r1', resourceType: 'helmrelease', events: [{ type: 'ADDED', resource: secret('u1', '7', encodeRelease(release, true)) }] });
+        expect(res.events).toHaveLength(1);
+        expect(res.events[0].resource).toMatchObject({ secretUid: 'u1', secretResourceVersion: '7', revision: 3, name: 'app' });
+        expect(res.failures).toBeUndefined();
+    });
+
+    it('a corrupt blob yields a failures[] entry with the uid and keeps the good events', () => {
+        const res = handleRequest({
+            id: 'r2',
+            resourceType: 'helmrelease',
+            events: [
+                { type: 'ADDED', resource: secret('good', '1', encodeRelease(release, false)) },
+                { type: 'ADDED', resource: secret('bad', '2', 'bm90LWd6aXA=') },
+            ],
+        });
+        expect(res.events).toHaveLength(1);
+        expect(res.error).toBeDefined();
+        expect(res.failures).toEqual([expect.objectContaining({ index: 1, uid: 'bad' })]);
+    });
+});

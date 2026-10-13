@@ -1,0 +1,11 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    "[non-blocking, confirmed] YamlEditor memo defeated by inline closures: LogViewer.tsx (~L529) and App.tsx editor view (~L1735) pass a fresh onDraftChange arrow every render, so the active YAML editor re-renders on every onPodLogChunk batch. Pass a stable callback (e.g. tabId prop + stable (tabId, draft) handler).",
+    "[non-blocking, confirmed] Duplicate YAML tab id after pop-out + reopen: handleOpenYaml (App.tsx ~L1182) checks only panelTabs, so re-opening a popped-out resource creates a second tab with the same id; both editors can be mounted and share one draft slot, and closing one closes both and discards the draft. Also check editorTabsByClusterRef and focus the existing editor tab.",
+    "[non-blocking, confirmed limitation, disclosed] Shell rc files that export KUBECONFIG silently drop the per-terminal override while the badge/banner still show the bound context. Consider a startup check (compare kubectl config current-context) and warn on mismatch.",
+    "[non-blocking, likely] PTYs leak on renderer reload/crash (same webContents, no 'destroyed') and now count toward MAX_TERMINALS=32, so new terminals can fail until quit. Call disposeForSender on main-frame did-start-navigation and render-process-gone.",
+    "[non-blocking, confirmed] PtySession.ownerId is recorded but terminal:write/resize/dispose do not check event.sender.id. Low risk with one window; enforce ownership now that the data exists."
+  ],
+  "reviewDoc": "/Users/MohammedRashid.Matin/Development/lumen/.agents/tasks/lumen-three-bug-fixes/review.md"
+}

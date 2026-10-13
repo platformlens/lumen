@@ -1,5 +1,6 @@
-import { KubeConfig, CoreV1Api, makeInformer, type V1Pod, type Informer } from '@kubernetes/client-node';
-import type { LightweightPod, ContainerStatus, PodDelta, WorkerInbound, WorkerOutbound } from '../src/types/pod-worker';
+import { KubeConfig, CoreV1Api, makeInformer, type V1Pod } from '@kubernetes/client-node';
+import type { LightweightPod, ContainerStatus, PodDelta, WorkerInboundV2, WorkerOutboundV2 } from '../src/types/pod-worker';
+import { createPodWorkerCore } from './pod-worker-core';
 
 /**
  * Transforms a raw Kubernetes V1Pod into a LightweightPod for IPC transfer.
@@ -105,6 +106,14 @@ export class DeltaBatchBuffer {
     this.onFlush(deltas);
   }
 
+  /**
+   * Drop pending deltas without posting (generation change, design §3.6 / D5).
+   * The module-lifetime flush interval keeps running; with an empty map it is a no-op.
+   */
+  clear(): void {
+    this.buffer.clear();
+  }
+
   destroy(): void {
     clearInterval(this.flushTimer);
     this.flush();
@@ -113,129 +122,35 @@ export class DeltaBatchBuffer {
 
 
 // ---------------------------------------------------------------------------
-// Worker state and message handler (runs inside Electron utilityProcess)
+// Worker entry (runs inside Electron utilityProcess). The lifecycle logic lives in
+// pod-worker-core.ts (protocol v2, design §3.6); this file only wires parentPort.
 // ---------------------------------------------------------------------------
 // Guard: only initialize when running as a utilityProcess (parentPort exists).
 // This allows the file to be imported in tests without side effects.
 
 if (process.parentPort) {
-  const podCache = new Map<string, LightweightPod>();
-  let activeInformer: Informer<V1Pod> | null = null;
+  const port = process.parentPort;
+  const core = createPodWorkerCore<KubeConfig, V1Pod>({
+    makeInformer: (kc, path, namespace) => {
+      const api = kc.makeApiClient(CoreV1Api);
+      const listFn = namespace === null ? () => api.listPodForAllNamespaces() : () => api.listNamespacedPod({ namespace });
+      return makeInformer(kc, path, listFn);
+    },
+    buildKc: (context, kubeconfigPath) => {
+      const kc = new KubeConfig();
+      if (kubeconfigPath) kc.loadFromFile(kubeconfigPath);
+      else kc.loadFromDefault();
+      if (!kc.getContextObject(context)) throw new Error('Unknown kube context');
+      kc.setCurrentContext(context);
+      return kc;
+    },
+    post: (msg: WorkerOutboundV2) => port.postMessage(msg),
+    mapPod: mapLightweightPod,
+    uidOf: (raw) => raw.metadata?.uid,
+    createDeltaBuffer: (onFlush) => new DeltaBatchBuffer({ flushIntervalMs: 150, onFlush }),
+  });
 
-  function postMessage(msg: WorkerOutbound): void {
-    process.parentPort!.postMessage(msg);
-  }
-
-  function onFlush(deltas: PodDelta[]): void {
-    postMessage({ type: 'pod-delta-batch', deltas });
-  }
-
-  const deltaBatch = new DeltaBatchBuffer({ flushIntervalMs: 150, onFlush });
-
-  process.parentPort.on('message', async (event: Electron.MessageEvent) => {
-    const msg = event.data as WorkerInbound;
-
-    switch (msg.type) {
-      case 'start-informer': {
-        try {
-          // 1. Stop existing informer if running
-          if (activeInformer) {
-            await activeInformer.stop();
-            podCache.clear();
-            deltaBatch.flush();
-            activeInformer = null;
-          }
-
-          // 2. Load kubeconfig and set context
-          const kc = new KubeConfig();
-          if (msg.kubeconfigPath) {
-            kc.loadFromFile(msg.kubeconfigPath);
-          } else {
-            kc.loadFromDefault();
-          }
-          kc.setCurrentContext(msg.context);
-          const k8sApi = kc.makeApiClient(CoreV1Api);
-
-          // 3. Build list function and path based on namespace scope
-          const isAllNamespaces = msg.namespaces.length === 0 || msg.namespaces.includes('all');
-          const isSingleNamespace = !isAllNamespaces && msg.namespaces.length === 1;
-          const path = isAllNamespaces || !isSingleNamespace
-            ? '/api/v1/pods'
-            : `/api/v1/namespaces/${msg.namespaces[0]}/pods`;
-
-          const listFn = isAllNamespaces || !isSingleNamespace
-            ? () => k8sApi.listPodForAllNamespaces()
-            : () => k8sApi.listNamespacedPod({ namespace: msg.namespaces[0] });
-
-          // 4. Create and wire informer
-          const informer = makeInformer(kc, path, listFn);
-
-          informer.on('add', (obj: V1Pod) => {
-            const pod = mapLightweightPod(obj);
-            podCache.set(pod.uid, pod);
-            deltaBatch.push({ action: 'add', pod });
-          });
-
-          informer.on('update', (obj: V1Pod) => {
-            const pod = mapLightweightPod(obj);
-            podCache.set(pod.uid, pod);
-            deltaBatch.push({ action: 'update', pod });
-          });
-
-          informer.on('delete', (obj: V1Pod) => {
-            const uid = obj.metadata?.uid;
-            if (uid) {
-              podCache.delete(uid);
-              deltaBatch.push({ action: 'delete', uid });
-            }
-          });
-
-          informer.on('error', (err: unknown) => {
-            postMessage({
-              type: 'informer-error',
-              error: String(err).slice(0, 500),
-              recoverable: true,
-            });
-          });
-
-          activeInformer = informer;
-
-          // 5. Start and notify when initial list is synced
-          await informer.start();
-          postMessage({ type: 'informer-synced', count: podCache.size });
-        } catch (err) {
-          postMessage({
-            type: 'informer-error',
-            error: `Failed to start informer: ${String(err).slice(0, 450)}`,
-            recoverable: false,
-          });
-        }
-        break;
-      }
-
-      case 'stop-informer': {
-        if (activeInformer) {
-          await activeInformer.stop();
-          activeInformer = null;
-        }
-        podCache.clear();
-        deltaBatch.flush();
-        postMessage({ type: 'informer-stopped' });
-        break;
-      }
-
-      case 'get-pods-chunk': {
-        const { requestId, offset, limit } = msg;
-        const allPods = Array.from(podCache.values());
-        const chunk = allPods.slice(offset, offset + limit);
-        postMessage({ type: 'pods-chunk-reply', requestId, payload: chunk });
-        break;
-      }
-
-      case 'get-pod-count': {
-        postMessage({ type: 'pod-count-reply', count: podCache.size });
-        break;
-      }
-    }
+  port.on('message', (event: Electron.MessageEvent) => {
+    core.handle(event.data as WorkerInboundV2);
   });
 }

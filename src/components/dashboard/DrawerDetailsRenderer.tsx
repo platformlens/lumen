@@ -30,6 +30,8 @@ import { ScaledObjectDetails } from '../resources/details/ScaledObjectDetails';
 import { CertificateDetails } from '../resources/details/CertificateDetails';
 import { ExternalSecretDetails } from '../resources/details/ExternalSecretDetails';
 import { ClusterSecretStoreDetails } from '../resources/details/ClusterSecretStoreDetails';
+import { CrossplaneResourceDetails } from '../resources/details/CrossplaneResourceDetails';
+import type { CrossplaneObjectRef } from '../../types/crossplane';
 
 interface DrawerDetailsRendererProps {
     selectedResource: any;
@@ -43,6 +45,7 @@ interface DrawerDetailsRendererProps {
     onTriggerCronJob?: () => void;
     onCordonDrain?: (nodeName: string) => void;
     onDeleteNode?: (nodeName: string) => void;
+    onOpenCrossplaneResource?: (ref: CrossplaneObjectRef) => void;
 }
 
 export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
@@ -56,7 +59,8 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
     onOpenYaml,
     onTriggerCronJob,
     onCordonDrain,
-    onDeleteNode
+    onDeleteNode,
+    onOpenCrossplaneResource
 }) => {
     if (!selectedResource || !detailedResource) return null;
 
@@ -340,6 +344,17 @@ export const DrawerDetailsRenderer: React.FC<DrawerDetailsRendererProps> = ({
                     instance={detailedResource}
                     node={detailedResource._matchedNode}
                     clusterName={clusterName}
+                />
+            );
+        case 'crossplane':
+            return (
+                <CrossplaneResourceDetails
+                    clusterName={clusterName}
+                    object={detailedResource}
+                    refHint={selectedResource}
+                    onOpenResource={(ref) => onOpenCrossplaneResource?.(ref)}
+                    onExplain={handleExplain}
+                    onOpenYaml={handleOpenYaml}
                 />
             );
         default:

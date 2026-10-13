@@ -1,17 +1,26 @@
 /// <reference types="vite/client" />
 
 import type { HelmCatalogSection } from './lib/helm-catalog-types';
+import type {
+    CrossplaneCompositesPayload, CrossplaneDefinitionsPayload, CrossplaneDetection, CrossplaneObjectRef,
+    CrossplanePackagesPayload, CrossplaneScanProgress, CrossplaneTree, CrossplaneWarningEventsPayload,
+    ManagedItemsPayload, ManagedKindsPayload, ManagedScanSummary,
+} from './types/crossplane';
 
 export { };
 
 declare global {
     interface Window {
+        /** Dev-only leak diagnostics helper (registered by useResourceSync under import.meta.env.DEV). */
+        __lumenDiag?: () => Promise<{ main: import('./types/resource-cache').ResourceCacheDiagnostics | null; batchListeners: number; dropped: number }>;
         __APP_VERSION__?: string;
         k8s: {
             // --- Credential Management ---
             forceCredentialRefresh: () => Promise<boolean>;
 
-            getClusters: () => Promise<any[]>;
+            getClusters: () => Promise<import('./types/cluster-context').ClusterContextInfo[]>;
+            onContextsChanged: (callback: (payload: import('./types/cluster-context').ContextsChangedPayload) => void) => () => void;
+            renameCluster: (oldName: string, newName: string) => Promise<import('./types/cluster-context').RenameClusterResult>;
             getNamespaces: (contextName: string) => Promise<string[]>;
             getNamespacesDetails: (contextName: string) => Promise<any[]>;
             getDeployments: (contextName: string, namespaces?: string[]) => Promise<any[]>;
@@ -119,6 +128,7 @@ declare global {
             getRoles: (contextName: string, namespaces?: string[]) => Promise<any[]>;
             getRole: (contextName: string, namespace: string, name: string) => Promise<any>;
             getReplicaSet: (contextName: string, namespace: string, name: string) => Promise<any>;
+            getDeploymentFullDetails: (contextName: string, namespace: string, name: string) => Promise<import('./types/deployment-details').DeploymentFullDetailsResponse>;
             scaleDeployment: (contextName: string, namespace: string, name: string, replicas: number) => Promise<void>;
             getDeploymentYaml: (contextName: string, namespace: string, name: string) => Promise<string>;
             updateDeploymentYaml: (contextName: string, namespace: string, name: string, yamlContent: string) => Promise<any>;
@@ -129,12 +139,6 @@ declare global {
             explainResource: (resource: any, model?: string) => Promise<string>;
             openExternal: (url: string) => Promise<void>;
             deletePod: (contextName: string, namespace: string, name: string) => Promise<boolean>;
-            watchPods: (contextName: string, namespaces?: string[]) => void;
-            stopWatchPods: () => void;
-            onPodChange: (callback: (type: string, pod: any) => void) => () => void;
-            watchDeployments: (contextName: string, namespaces?: string[]) => void;
-            stopWatchDeployments: () => void;
-            onDeploymentChange: (callback: (type: string, deployment: any) => void) => () => void;
             watchNodes: (contextName: string) => void;
             stopWatchNodes: () => void;
             onNodeChange: (callback: (type: string, node: any) => void) => () => void;
@@ -209,12 +213,16 @@ declare global {
 
             // --- Terminal ---
             terminal: {
-                create: (id: string, cols: number, rows: number) => void;
+                /** Spawn a local shell. `context` binds it to a kube context without changing the global kubeconfig. */
+                create: (id: string, cols: number, rows: number, context?: string) => void;
+                createExec: (id: string, cols: number, rows: number, context: string, namespace: string, podName: string, containerName?: string) => void;
                 write: (id: string, data: string) => void;
                 resize: (id: string, cols: number, rows: number) => void;
                 dispose: (id: string) => void;
-                onData: (callback: (id: string, data: string) => void) => () => void;
-                onExit: (callback: (id: string, exitCode: number) => void) => () => void;
+                /** Output of the terminal with this id only. Returns an unsubscribe function. */
+                onData: (id: string, callback: (data: string) => void) => () => void;
+                /** Exit of the terminal with this id only (-1 when creation failed). Returns an unsubscribe function. */
+                onExit: (id: string, callback: (exitCode: number) => void) => () => void;
             };
 
             aws: {
@@ -287,13 +295,37 @@ declare global {
                 getReleaseHistory: (contextName: string, namespace: string, name: string) => Promise<any[]>;
                 uninstallRelease: (contextName: string, namespace: string, name: string) => Promise<any>;
                 rollbackRelease: (contextName: string, namespace: string, name: string, revision: number) => Promise<any>;
-                watchHelmReleases: (contextName: string, namespaces: string[]) => void;
-                stopWatchHelmReleases: () => void;
-                onHelmReleaseBatchChange: (callback: (events: Array<{ type: string; resource: any }>) => void) => () => void;
                 listRepos: () => Promise<Array<{ name: string; url: string }>>;
                 updateRepos: () => Promise<string>;
                 addRepo: (name: string, url: string) => Promise<void>;
                 getCatalog: (opts?: { force?: boolean }) => Promise<HelmCatalogSection[]>;
+            };
+
+            // --- Crossplane (read-only) ---
+            crossplane: {
+                detect: (context: string, opts?: { force?: boolean }) => Promise<CrossplaneDetection>;
+                getPackages: (context: string, opts?: { force?: boolean }) => Promise<CrossplanePackagesPayload>;
+                getDefinitions: (context: string, opts?: { force?: boolean }) => Promise<CrossplaneDefinitionsPayload>;
+                getComposites: (context: string, opts?: { force?: boolean }) => Promise<CrossplaneCompositesPayload>;
+                getManagedKinds: (context: string, opts?: { force?: boolean }) => Promise<ManagedKindsPayload>;
+                scanManaged: (context: string, opts?: { force?: boolean }) => Promise<ManagedScanSummary>;
+                getManagedItems: (context: string, kindKeys: string[], opts?: { force?: boolean }) => Promise<ManagedItemsPayload>;
+                getWarningEvents: (context: string, opts?: { limit?: number; force?: boolean }) => Promise<CrossplaneWarningEventsPayload>;
+                getResource: (context: string, ref: CrossplaneObjectRef) => Promise<Record<string, unknown>>;
+                getTree: (context: string, ref: CrossplaneObjectRef) => Promise<CrossplaneTree>;
+                onScanProgress: (callback: (p: CrossplaneScanProgress) => void) => () => void;
+            };
+
+            // --- Background resource cache (core kinds) ---
+            resources: {
+                startSession: (args: import('./types/resource-cache').StartSessionArgs) => Promise<import('./types/resource-cache').ResourceSnapshot>;
+                subscribe: () => Promise<import('./types/resource-cache').ResourceSnapshot | null>;
+                stopSession: () => Promise<true>;
+                setNamespaces: (namespaces: string[]) => Promise<true>;
+                ensureFresh: () => Promise<import('./types/resource-cache').EnsureFreshResult>;
+                getDiagnostics: () => Promise<import('./types/resource-cache').ResourceCacheDiagnostics | null>;
+                onBatch: (cb: (batch: import('./types/resource-cache').ResourceBatch) => void) => () => void;
+                listenerCount: () => number;
             };
 
             artifactHub: {

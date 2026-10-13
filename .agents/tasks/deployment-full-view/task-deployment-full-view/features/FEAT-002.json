@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Analysis pure utilities (plan.md items 8-11): security-posture-utils (runs-as-root truth table, PSS Baseline/Restricted approximation), pod-distribution-utils (node/zone grouping + skew/risk flags), container-insights-utils (image parsing, ports, env masking, probes, flags), networking-utils (service port mapping, ingress routes, network policy summary), each with unit tests. Depends on FEAT-001 types and sensitive-value-utils.",
+  "status": "completed",
+  "steps": [
+    "Read design.md §5.3, §5.4, §5.6, §5.7, §9 and plan.md items 8-11 plus the 'Unit test list'. Read FEAT-001 findings.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/security-posture-utils.ts (+ .test.ts) per §5.3: constants, resolveEffectiveSecurityContext (container over pod, AppArmor annotation fallback, cap normalization, sidecar = init with restartPolicy Always), evaluateRunAsRoot (6 rows, first match), evaluateAddedCapability, all other checks in the §5.3 table, computePssLevel from pssViolation only, evaluateSecurityPosture with counts. If >500 lines, split evaluators into /Users/MohammedRashid.Matin/Development/lumen/src/utils/security-checks.ts.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/pod-distribution-utils.ts (+ .test.ts) per §5.4 with all 8 risk ids.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/container-insights-utils.ts (+ .test.ts) per §5.6 using isSensitiveEnv/MASK from src/utils/sensitive-value-utils.ts.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/networking-utils.ts (+ .test.ts) per §5.7.",
+    "Write every test case listed for these modules in plan.md 'Unit test list'."
+  ],
+  "acceptance_criteria": [
+    "npx vitest run src/utils/security-posture-utils.test.ts src/utils/pod-distribution-utils.test.ts src/utils/container-insights-utils.test.ts src/utils/networking-utils.test.ts passes",
+    "All 6 runAsRoot truth-table rows are covered by tests",
+    "npx tsc --noEmit exits 0",
+    "eslint on the new files passes with --max-warnings 0; every file < 500 lines"
+  ],
+  "verification": [
+    "npx vitest run src/utils",
+    "npx tsc --noEmit",
+    "npx eslint src/utils/security-posture-utils.ts src/utils/pod-distribution-utils.ts src/utils/container-insights-utils.ts src/utils/networking-utils.ts --max-warnings 0"
+  ],
+  "blocked_reason": null,
+  "findings": "4 modules + tests created, no split needed (security-posture-utils.ts 305 lines, so no security-checks.ts). Tests: 4 new files / 57 tests; full suite 38 files / 311 tests pass; tsc exit 0; eslint clean (sources + tests). Exports match the design signatures. Extra export: container-insights-utils `volumeTypeOf(volume)` (first non-'name' key of a pod volume, else 'unknown'); security-posture-utils imports it, and ConfigStorageSection (FEAT-023) can reuse it for the volumes summary. Notes for UI FEATs: (1) SecurityCheck ids: container-scope 'run-as-root','run-as-group','privileged','allow-privilege-escalation','read-only-root-fs','capabilities-drop','capabilities-add' (one per added cap, all share this id; when none added one pass/pss:null check 'No capabilities added'),'seccomp','apparmor','selinux','proc-mount','host-port'; pod-scope (container null) 'host-network','host-pid','host-ipc','host-path','volume-types','sysctls','automount-sa-token','service-account','image-pull-secrets','irsa' (irsa only when the SA has a role ARN). checks = pod checks first, then per container in init/sidecar/main spec order; report.containers in the same order. The 'Added capabilities' matrix row = checks with id 'capabilities-add' per container. (2) Distribution: zone groups sort by podCount desc, null (unknown) zone after known zones on ties. node-concentration also fires alongside single-node when n>=3 (literal rule; UI may hide it if single-node present). spread-skew may appear once per matching TSC; maxSkew defaults to 1 if missing. zone-unknown fires whenever nodesAvailable is false. readyPods counts pods with readyContainers===totalContainers>0 (terminating included; only risk math excludes them). (3) Container insights: returned order initContainers (init/sidecar) then main. Probe flags (no-readiness/no-liveness/no-startup) only for kind 'main'; resource flags for all kinds. ProbeSummary defaults 0/10/1/3/1. Lifecycle hook strings: 'exec: ...', 'GET http://:port/path', 'TCP :port', 'sleep Ns'. Env displays: secretKeyRef 'secret <name> / <key>', configMapKeyRef 'configmap <name> / <key>', fieldRef = fieldPath, resourceFieldRef = resource (+ ' (container)'). isUntagged = no tag AND no digest. (4) Networking: mapServicePorts searches main containers then sidecar init containers; numeric targetPort must match containerPort AND protocol (default TCP), named matches ports[].name; targetPort is String(targetPort ?? port). Ingress default backend route = host '*', path '(default backend)', pathType 'Default', tls false; rule without host = '*'; className = spec.ingressClassName ?? annotation kubernetes.io/ingress.class; TLS detection supports exact and single-label '*.domain' wildcards. describeNetworkPolicy defaults policyTypes to ['Ingress'] (+ 'Egress' when spec.egress present)."
+}

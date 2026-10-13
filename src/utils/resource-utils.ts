@@ -1,3 +1,9 @@
+import type { CoreKind } from '../types/resource-cache';
+import type { PodStatusStats } from '../components/dashboard/OverviewCharts';
+
+
+
+
 export const RESOURCE_TYPE_MAP: Record<string, { apiVersion: string; kind: string; namespaced: boolean }> = {
     'deployment': { apiVersion: 'apps/v1', kind: 'Deployment', namespaced: true },
     'daemonset': { apiVersion: 'apps/v1', kind: 'DaemonSet', namespaced: true },
@@ -102,4 +108,66 @@ export function formatDeleteMessage(kind: string, name: string, namespace?: stri
         return `Are you sure you want to delete ${kind} ${name} in namespace ${namespace}?`;
     }
     return `Are you sure you want to delete ${kind} ${name}? This is a cluster-scoped resource.`;
+}
+
+// ---------------------------------------------------------------------------
+// Background resource cache helpers (pure; design §6.3, §7)
+// ---------------------------------------------------------------------------
+
+/** Namespace of any core-kind item ('' for cluster-scoped / missing). */
+export const nsOf = (item: { namespace?: string }): string => item.namespace ?? '';
+
+/** Client-side namespace filter. `['all']` (or empty) keeps everything. */
+export function filterByNamespaces<T extends { namespace?: string }>(items: T[], namespaces: string[]): T[] {
+    if (namespaces.length === 0 || namespaces.includes('all')) return items;
+    const set = new Set(namespaces);
+    return items.filter((it) => set.has(nsOf(it)));
+}
+
+/** Count of items in the selected namespaces. `nsKey` is `selectedNamespaces.join(',')`. */
+export function countInNamespaces(byId: ReadonlyMap<string, { namespace?: string }>, nsKey: string): number {
+    const namespaces = nsKey.split(',');
+    if (nsKey === '' || namespaces.includes('all')) return byId.size;
+    const set = new Set(namespaces);
+    let n = 0;
+    for (const it of byId.values()) if (set.has(nsOf(it))) n++;
+    return n;
+}
+
+const VIEW_TO_CORE_KIND: Readonly<Record<string, CoreKind>> = {
+    deployments: 'deployments',
+    pods: 'pods',
+    secrets: 'secrets',
+    configmaps: 'configmaps',
+    services: 'services',
+    'helm-releases': 'helmreleases',
+};
+
+/** Dashboard view id → core kind, or null (overview and non-core views). */
+export const coreKindForView = (view: string): CoreKind | null =>
+    Object.prototype.hasOwnProperty.call(VIEW_TO_CORE_KIND, view) ? VIEW_TO_CORE_KIND[view] : null;
+
+/**
+ * Overview pod status counts for the selected namespaces. Returns `prev` when the counts are
+ * unchanged so downstream memoized charts do not re-render on every pod delta.
+ */
+export function computePodStatusStats(
+    byId: ReadonlyMap<string, { namespace: string; status: string }>,
+    namespaces: string[],
+    prev: PodStatusStats,
+): PodStatusStats {
+    const stats: PodStatusStats = { Running: 0, Pending: 0, Failed: 0, Succeeded: 0, Unknown: 0 };
+    const all = namespaces.length === 0 || namespaces.includes('all');
+    const set = new Set(namespaces);
+    for (const pod of byId.values()) {
+        if (!all && !set.has(pod.namespace)) continue;
+        const status = pod.status || 'Unknown';
+        if (status in stats) stats[status as keyof PodStatusStats]++;
+        else stats.Unknown++;
+    }
+    if (prev.Running === stats.Running && prev.Pending === stats.Pending && prev.Failed === stats.Failed &&
+        prev.Succeeded === stats.Succeeded && prev.Unknown === stats.Unknown) {
+        return prev;
+    }
+    return stats;
 }

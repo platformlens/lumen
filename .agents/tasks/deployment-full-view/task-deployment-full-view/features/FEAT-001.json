@@ -1,0 +1,33 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Shared cross-process types and the foundation pure utilities (plan.md items 1-7, 12, 13): src/types/deployment-details.ts, sensitive-value-utils, label-selector-utils, view-labels deployment-detail helpers, deployment-rollout-utils, pod-template-diff-utils, deployment-history-utils, deployment-log-utils, and src/hooks/live-refresh-decision.ts, each with unit tests. No UI, no IPC. Everything later depends on this.",
+  "status": "completed",
+  "steps": [
+    "Read design.md §3.1, §3.2, §2.1, §4 (decideLiveRefresh/shouldApplyResponse), §5.1, §5.2, §5.5, §5.8, §6.1 'Logs', §9 and plan.md items 1-7, 12, 13 plus the 'Unit test list'.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/types/deployment-details.ts exactly per §3.1 (import type only).",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/sensitive-value-utils.ts (+ .test.ts) per §5.5; pure, no Node/DOM-only APIs (TextEncoder is fine) because electron/ imports LAST_APPLIED from it.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/label-selector-utils.ts (+ .test.ts) per §3.2; pure (imported by main).",
+    "Modify /Users/MohammedRashid.Matin/Development/lumen/src/utils/view-labels.ts: add DEPLOYMENT_DETAIL_PREFIX, buildDeploymentDetailViewId, parseDeploymentDetailViewId and the getViewLabel 'Deploy: <name>' branch (fallback 'Deployment'), keeping existing branches; create src/utils/view-labels.test.ts.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/deployment-rollout-utils.ts (+ .test.ts) per §5.8.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/pod-template-diff-utils.ts (+ .test.ts) per §5.2 (compare raw, display MASK).",
+    "Read /Users/MohammedRashid.Matin/Development/lumen/src/components/resources/details/RevisionDiffModal.tsx's local revisionToYaml, then create /Users/MohammedRashid.Matin/Development/lumen/src/utils/deployment-history-utils.ts (+ .test.ts) per §5.1 with byte-identical key order/js-yaml options plus maskTemplateEnv. Do NOT modify RevisionDiffModal here (that is FEAT-004).",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/utils/deployment-log-utils.ts (+ .test.ts) per §6.1.",
+    "Create /Users/MohammedRashid.Matin/Development/lumen/src/hooks/live-refresh-decision.ts (+ .test.ts) per §4/§9.",
+    "Write every test case listed for these modules in plan.md 'Unit test list'."
+  ],
+  "acceptance_criteria": [
+    "npx vitest run src/utils/sensitive-value-utils.test.ts src/utils/label-selector-utils.test.ts src/utils/view-labels.test.ts src/utils/deployment-rollout-utils.test.ts src/utils/pod-template-diff-utils.test.ts src/utils/deployment-history-utils.test.ts src/utils/deployment-log-utils.test.ts src/hooks/live-refresh-decision.test.ts passes",
+    "revisionToYaml output on a fixture equals the old RevisionDiffModal helper's output byte-for-byte (except masked sensitive env)",
+    "npx tsc --noEmit exits 0",
+    "npx eslint on all new files passes with --max-warnings 0; view-labels.ts gains no new problems",
+    "Every new file is under 500 lines"
+  ],
+  "verification": [
+    "npx vitest run src/utils src/hooks",
+    "npx tsc --noEmit",
+    "npx eslint src/types/deployment-details.ts src/utils/sensitive-value-utils.ts src/utils/label-selector-utils.ts src/utils/deployment-rollout-utils.ts src/utils/pod-template-diff-utils.ts src/utils/deployment-history-utils.ts src/utils/deployment-log-utils.ts src/hooks/live-refresh-decision.ts --max-warnings 0"
+  ],
+  "blocked_reason": null,
+  "findings": "All 8 modules + types created per design, no file splits needed (largest: pod-template-diff-utils.ts 226 lines). Tests: 8 new files / 99 tests pass; full suite 34 files / 254 tests; tsc exit 0; eslint clean on all new files and view-labels.ts. Exports match the design signatures; additions beyond the design (harmless): deployment-rollout-utils exports `PdbSummary` (the summarizePdb return type, structurally identical to the inline design type); live-refresh-decision exports `LiveRefreshState` ({ lastLiveRv?: string; hadLive: boolean }). Gotchas for later FEATs: (1) FEAT-004 RevisionDiffModal/DeploymentDetails: build RevisionYamlInput as { revision: rev.revision, name: rev.name, createdAt: rev.creationTimestamp (pass the Date unchanged, getDeploymentRevisions returns a Date via IPC), replicas: rev.spec?.replicas, selector: rev.spec?.selector, template: rev.spec?.template } - that is byte-identical to the old helper (test 'is byte-identical to the old modal helper' contains a verbatim copy of the old helper as the oracle). (2) maskTemplateEnv uses a custom structural deepClone that preserves Date instances (not JSON/structuredClone) so YAML output stays identical; it masks only literal `value`s, never valueFrom. (3) sensitive-value-utils and label-selector-utils import only `import type` from ../types/deployment-details, so electron/ can import them (LAST_APPLIED, selectorToQueryString, matchesLabelSelector, matchesServiceSelector). (4) diffPodTemplates label formats: image/scalar/resources/probes use `<field> <container>: before → after` (e.g. 'image app: v1 → v2', 'resources.limits.memory app: 256Mi → 512Mi'), added `<field> <container> added: X`, removed `<field> <container> removed (was X)`; env uses 'env X added' / 'env X removed' / 'env X: a → b' / 'env X changed (value hidden)'; whole containers 'container X added (image)' / 'container X removed'; restartedAt change is emitted first as 'Rollout restart triggered'. Empty arrays/objects are treated as unset. (5) buildRevisionTimeline: when the deployment revision annotation exists but matches no RS it falls through to the pod-hash then highest-revision rule; when no entry has a numeric revision the last (newest createdAt) entry is current. getPreviousRevision returns null for unnumbered entries. eventsForRevision token-matches only events with involvedKind === 'Deployment'. (6) getRolloutSummary: Recreate strategy reports maxSurge/maxUnavailable null; observedGenerationStale treats a missing observedGeneration as 0 when metadata.generation is set. summarizeHpa metric target strings: Utilization '80%', AverageValue '500Mi (avg)', Value raw; current null when no matching currentMetrics entry. (7) view-labels: parseDeploymentDetailViewId also rejects ids whose decoded segment is empty."
+}

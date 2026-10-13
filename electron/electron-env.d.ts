@@ -27,7 +27,9 @@ interface Window {
     // --- Credential Management ---
     forceCredentialRefresh: () => Promise<boolean>
 
-    getClusters: () => Promise<Array<{ name: string; cluster: any; user: any }>>
+    getClusters: () => Promise<import('../src/types/cluster-context').ClusterContextInfo[]>
+    onContextsChanged: (callback: (payload: import('../src/types/cluster-context').ContextsChangedPayload) => void) => () => void
+    renameCluster: (oldName: string, newName: string) => Promise<import('../src/types/cluster-context').RenameClusterResult>
     getNamespaces: (contextName: string) => Promise<string[]>
     getNamespacesDetails: (contextName: string) => Promise<Array<{ name: string; status: string; age: string; labels: any; annotations: any }>>
     getDeployments: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; replicas: number; availableReplicas: number }>>
@@ -45,6 +47,7 @@ interface Window {
     getPod: (contextName: string, namespace: string, name: string) => Promise<any>
     getReplicaSets: (contextName: string, namespaces?: string[]) => Promise<Array<{ name: string; namespace: string; desired: number; current: number; ready: number }>>
     getReplicaSet: (contextName: string, namespace: string, name: string) => Promise<any>
+    getDeploymentFullDetails: (contextName: string, namespace: string, name: string) => Promise<import('../src/types/deployment-details').DeploymentFullDetailsResponse>
     getDaemonSets: (contextName: string, namespaces?: string[]) => Promise<any[]>
     getDaemonSet: (contextName: string, namespace: string, name: string) => Promise<any>
     deleteDaemonSet: (contextName: string, namespace: string, name: string) => Promise<any>
@@ -135,17 +138,9 @@ interface Window {
     stopAllPortForwards: () => Promise<boolean>
     getActivePortForwards: () => Promise<Array<{ id: string, namespace: string, serviceName: string, inputPort: string | number, targetPort: number, localPort: number }>>
     deletePod: (contextName: string, namespace: string, name: string) => Promise<boolean>
-    watchPods: (contextName: string, namespaces: string[]) => void
-    stopWatchPods: () => void
-    onPodChange: (callback: (type: string, pod: any) => void) => (() => void)
-    onPodBatchChange: (callback: (events: Array<{ type: string; pod: any }>) => void) => (() => void)
-    watchDeployments: (contextName: string, namespaces: string[]) => void
-    stopWatchDeployments: () => void
     watchGenericResource: (contextName: string, resourceType: string, apiPath: string) => void
     stopWatchGenericResource: (resourceType: string) => void
     onGenericResourceChange: (callback: (resourceType: string, type: string, resource: any) => void) => () => void
-    onDeploymentChange: (callback: (type: string, deployment: any) => void) => (() => void)
-    onDeploymentBatchChange: (callback: (events: Array<{ type: string; deployment: any }>) => void) => (() => void)
     watchNodes: (contextName: string) => void
     stopWatchNodes: () => void
     onNodeChange: (callback: (type: string, node: any) => void) => (() => void)
@@ -231,13 +226,37 @@ interface Window {
       getReleaseHistory: (contextName: string, namespace: string, name: string) => Promise<any[]>
       uninstallRelease: (contextName: string, namespace: string, name: string) => Promise<any>
       rollbackRelease: (contextName: string, namespace: string, name: string, revision: number) => Promise<any>
-      watchHelmReleases: (contextName: string, namespaces: string[]) => void
-      stopWatchHelmReleases: () => void
-      onHelmReleaseBatchChange: (callback: (events: Array<{ type: string; resource: any }>) => void) => () => void
       listRepos: () => Promise<Array<{ name: string; url: string }>>
       updateRepos: () => Promise<string>
       addRepo: (name: string, url: string) => Promise<void>
       getCatalog: (opts?: { force?: boolean }) => Promise<import('../src/lib/helm-catalog-types').HelmCatalogSection[]>
+    }
+
+    // --- Background resource cache (core kinds) ---
+    resources: {
+      startSession: (args: import('../src/types/resource-cache').StartSessionArgs) => Promise<import('../src/types/resource-cache').ResourceSnapshot>
+      subscribe: () => Promise<import('../src/types/resource-cache').ResourceSnapshot | null>
+      stopSession: () => Promise<true>
+      setNamespaces: (namespaces: string[]) => Promise<true>
+      ensureFresh: () => Promise<import('../src/types/resource-cache').EnsureFreshResult>
+      getDiagnostics: () => Promise<import('../src/types/resource-cache').ResourceCacheDiagnostics | null>
+      onBatch: (cb: (batch: import('../src/types/resource-cache').ResourceBatch) => void) => () => void
+      listenerCount: () => number
+    }
+
+    // --- Crossplane (read-only) ---
+    crossplane: {
+      detect: (context: string, opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').CrossplaneDetection>
+      getPackages: (context: string, opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').CrossplanePackagesPayload>
+      getDefinitions: (context: string, opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').CrossplaneDefinitionsPayload>
+      getComposites: (context: string, opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').CrossplaneCompositesPayload>
+      getManagedKinds: (context: string, opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').ManagedKindsPayload>
+      scanManaged: (context: string, opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').ManagedScanSummary>
+      getManagedItems: (context: string, kindKeys: string[], opts?: { force?: boolean }) => Promise<import('../src/types/crossplane').ManagedItemsPayload>
+      getWarningEvents: (context: string, opts?: { limit?: number; force?: boolean }) => Promise<import('../src/types/crossplane').CrossplaneWarningEventsPayload>
+      getResource: (context: string, ref: import('../src/types/crossplane').CrossplaneObjectRef) => Promise<Record<string, unknown>>
+      getTree: (context: string, ref: import('../src/types/crossplane').CrossplaneObjectRef) => Promise<import('../src/types/crossplane').CrossplaneTree>
+      onScanProgress: (callback: (p: import('../src/types/crossplane').CrossplaneScanProgress) => void) => () => void
     }
 
     artifactHub: {
@@ -323,12 +342,13 @@ interface Window {
 
     // --- Terminal ---
     terminal: {
-      create: (id: string, cols: number, rows: number) => void
+      create: (id: string, cols: number, rows: number, context?: string) => void
+      createExec: (id: string, cols: number, rows: number, context: string, namespace: string, podName: string, containerName?: string) => void
       write: (id: string, data: string) => void
       resize: (id: string, cols: number, rows: number) => void
       dispose: (id: string) => void
-      onData: (callback: (id: string, data: string) => void) => () => void
-      onExit: (callback: (id: string, exitCode: number) => void) => () => void
+      onData: (id: string, callback: (data: string) => void) => () => void
+      onExit: (id: string, callback: (exitCode: number) => void) => () => void
     }
 
     // --- App ---

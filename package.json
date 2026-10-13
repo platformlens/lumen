@@ -10,7 +10,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps && npm run fix:pty",
-    "fix:pty": "npm rebuild node-pty --runtime=electron --target=40.2.1 --dist-url=https://electronjs.org/headers --build-from-source",
+    "fix:pty": "npm rebuild node-pty --runtime=electron --target=42.2.0 --dist-url=https://electronjs.org/headers --build-from-source",
     "rebuild": "electron-rebuild -f -w node-pty --arch=arm64"
   },
   "dependencies": {

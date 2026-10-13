@@ -13,9 +13,21 @@ interface TerminalComponentProps {
         containerName?: string;
     };
     initialCommand?: string;
+    /** Kube context a local shell is bound to (ignored for exec terminals, which carry their own). */
+    clusterContext?: string;
 }
 
-export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main', isVisible = true, execContext, initialCommand }) => {
+/** Unique backend PTY id per session, independent of the (possibly long) tab id. */
+const newBackendId = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `term-${crypto.randomUUID()}`
+        : `term-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+
+// Strip control characters before echoing a context name into the terminal
+// eslint-disable-next-line no-control-regex
+const stripControlChars = (value: string) => value.replace(/[\x00-\x1f\x7f]/g, '');
+
+export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main', isVisible = true, execContext, initialCommand, clusterContext }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const terminalRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
@@ -29,12 +41,14 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main
     useEffect(() => {
         if (!containerRef.current) return;
 
-        // Generate a unique ID for this specific session instance to avoid logic collisions 
-        // during React Strict Mode (mount/unmount/mount cycles)
-        const backendId = `${id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        // Generate a unique ID for this specific session instance to avoid logic collisions
+        // during React Strict Mode (mount/unmount/mount cycles) and across terminal tabs
+        const backendId = newBackendId();
         backendIdRef.current = backendId;
+        const terminalApi = window.k8s.terminal;
 
         let cleanupFn: (() => void) | undefined;
+        let initialCommandTimer: ReturnType<typeof setTimeout> | undefined;
 
         const init = () => {
             // Initialize xterm
@@ -54,17 +68,28 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main
             term.open(containerRef.current!); // Assert non-null
 
             if (isVisible) {
-                try { fitAddon.fit(); term.focus(); } catch { }
+                try {
+                    fitAddon.fit();
+                    term.focus();
+                } catch {
+                    // container may not be laid out yet
+                }
             }
 
             terminalRef.current = term;
             fitAddonRef.current = fitAddon;
             setSessionStatus('active');
 
+            // Subscribe to THIS session's output before creating the backend PTY
+            const cleanData = terminalApi.onData(backendId, (data) => term.write(data));
+            const cleanExit = terminalApi.onExit(backendId, (code) => {
+                term.write(`\r\n\x1b[31mSession ended with code ${code}.\x1b[0m\r\n`);
+                setSessionStatus('exited');
+            });
+
             // Create Backend Terminal with unique ID
             if (execContext) {
-                // Create exec terminal
-                (window.k8s as any).terminal.createExec(
+                terminalApi.createExec(
                     backendId,
                     term.cols,
                     term.rows,
@@ -74,33 +99,25 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main
                     execContext.containerName
                 );
             } else {
-                // Create regular terminal
-                (window.k8s as any).terminal.create(backendId, term.cols, term.rows);
+                if (clusterContext) {
+                    term.writeln(`\x1b[90mkube context: ${stripControlChars(clusterContext)}\x1b[0m`);
+                }
+                terminalApi.create(backendId, term.cols, term.rows, clusterContext);
             }
 
-            term.onData((data) => (window.k8s as any).terminal.write(backendId, data));
-
-            const cleanData = (window.k8s as any).terminal.onData((inId: string, data: string) => {
-                if (inId === backendId) term.write(data);
-            });
-            const cleanExit = (window.k8s as any).terminal.onExit((inId: string, code: number) => {
-                if (inId === backendId) {
-                    term.write(`\r\n\x1b[31mSession ended with code ${code}.\x1b[0m\r\n`);
-                    setSessionStatus('exited');
-                }
-            });
+            term.onData((data) => terminalApi.write(backendId, data));
 
             cleanupFn = () => {
                 cleanData();
                 cleanExit();
                 term.dispose();
-                (window.k8s as any).terminal.dispose(backendId);
+                terminalApi.dispose(backendId);
             };
 
             // Send initial command after a short delay to let the shell initialize
             if (initialCommand && !execContext) {
-                setTimeout(() => {
-                    (window.k8s as any).terminal.write(backendId, `${initialCommand}\r`);
+                initialCommandTimer = setTimeout(() => {
+                    terminalApi.write(backendId, `${initialCommand}\r`);
                 }, 500);
             }
         };
@@ -116,18 +133,21 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main
             try {
                 fitAddonRef.current.fit();
                 const { cols, rows } = terminalRef.current;
-                if (cols > 0 && rows > 0) (window.k8s as any).terminal.resize(backendId, cols, rows);
-            } catch { }
+                if (cols > 0 && rows > 0) terminalApi.resize(backendId, cols, rows);
+            } catch {
+                // ignore fit errors while the panel is animating / hidden
+            }
         });
         resizeObs.observe(containerRef.current);
 
         return () => {
+            if (initialCommandTimer) clearTimeout(initialCommandTimer);
             if (cleanupFn) cleanupFn();
             resizeObs.disconnect();
         };
     }, [id, sessionId]); // Depend on sessionId to re-spawn
 
-    // Visibility Effect
+    // Visibility Effect: refit + focus when this tab becomes active (xterm is never destroyed on tab switch)
     useEffect(() => {
         if (isVisible && terminalRef.current && fitAddonRef.current) {
             requestAnimationFrame(() => {
@@ -136,7 +156,7 @@ export const TerminalComponent: React.FC<TerminalComponentProps> = ({ id = 'main
                 terminalRef.current.focus();
                 const { cols, rows } = terminalRef.current;
                 if (backendIdRef.current && cols > 0 && rows > 0) {
-                    (window.k8s as any).terminal.resize(backendIdRef.current, cols, rows);
+                    window.k8s.terminal.resize(backendIdRef.current, cols, rows);
                 }
             });
         }
