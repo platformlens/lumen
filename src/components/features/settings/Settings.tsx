@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Check, Shield, ChevronDown, ChevronUp,
   FolderOpen, Info, Activity
@@ -72,6 +72,14 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
   /** Trusted command prefixes for auto-approval */
   const [trustedCommands, setTrustedCommands] = useState<string[]>([]);
+
+  /** Auto-save feedback for AI settings (model, provider, tool calling) */
+  const [aiSaveState, setAiSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [aiSaveError, setAiSaveError] = useState<string | null>(null);
+  const aiSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (aiSaveTimerRef.current) clearTimeout(aiSaveTimerRef.current);
+  }, []);
 
   /** AI data consent: opt-in required before sending resource data to AI providers */
   const [aiDataConsent, setAiDataConsent] = useState(false);
@@ -157,10 +165,10 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     }).catch(() => { });
     window.k8s.settings.get('aiToolMode').then((saved: string | null) => {
       if (saved === 'off' || saved === 'read' || saved === 'read-write') setAiToolMode(saved);
-    }).catch(() => { });
+    }).catch((err: unknown) => console.error('[Settings] Failed to load aiToolMode:', err));
     window.k8s.settings.get('aiTrustedCommands').then((saved: string[] | null) => {
       if (Array.isArray(saved)) setTrustedCommands(saved);
-    }).catch(() => { });
+    }).catch((err: unknown) => console.error('[Settings] Failed to load aiTrustedCommands:', err));
     window.k8s.settings.getAiDataConsent().then((enabled) => {
       setAiDataConsent(enabled);
     }).catch(() => { });
@@ -348,14 +356,82 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     setTimeout(() => setIsSaved(false), 2000);
   };
 
-  const handleModelChange = (modelId: string, provider: string) => {
+  /**
+   * Run an auto-save for an AI setting and surface the result inline.
+   * Resolves true on success; on failure shows an error and resolves false (never rejects).
+   */
+  const persistAiSetting = async (save: () => Promise<unknown>): Promise<boolean> => {
+    if (aiSaveTimerRef.current) clearTimeout(aiSaveTimerRef.current);
+    try {
+      await save();
+      setAiSaveState('saved');
+      setAiSaveError(null);
+      aiSaveTimerRef.current = setTimeout(() => setAiSaveState('idle'), 2000);
+      return true;
+    } catch (err) {
+      console.error('[Settings] Failed to save AI setting:', err);
+      setAiSaveState('error');
+      setAiSaveError('Could not save this setting. Your previous value has been restored.');
+      return false;
+    }
+  };
+
+  const handleModelChange = async (modelId: string, provider: string) => {
+    const prevModel = selectedModel;
+    const prevProvider = selectedProvider;
     setSelectedModel(modelId);
     setSelectedProvider(provider);
-    window.k8s.saveModelSelection(provider, modelId);
+    // Persist to electron-store; only announce the change once it is stored
+    const ok = await persistAiSetting(() => window.k8s.saveModelSelection(provider, modelId));
+    if (!ok) {
+      setSelectedModel(prevModel);
+      setSelectedProvider(prevProvider);
+      return;
+    }
     window.dispatchEvent(new CustomEvent('aiModelChanged', {
       detail: { provider, model: modelId }
     }));
   };
+
+  /** Switch provider, selecting a model that belongs to the new provider when its list is loaded. */
+  const handleProviderChange = (provider: string) => {
+    const models =
+      provider === 'google' ? googleModels :
+      provider === 'bedrock' ? bedrockModels :
+      localModels;
+    const nextModel = models.length > 0 ? models[0].id : selectedModel;
+    void handleModelChange(nextModel, provider);
+  };
+
+  const handleToolModeChange = async (mode: 'off' | 'read' | 'read-write') => {
+    const prev = aiToolMode;
+    setAiToolMode(mode);
+    const ok = await persistAiSetting(() => window.k8s.settings.set('aiToolMode', mode));
+    if (!ok) setAiToolMode(prev);
+  };
+
+  const handleTrustedCommandsChange = async (updated: string[]) => {
+    const prev = trustedCommands;
+    setTrustedCommands(updated);
+    const ok = await persistAiSetting(() => window.k8s.settings.set('aiTrustedCommands', updated));
+    if (!ok) setTrustedCommands(prev);
+  };
+
+  const renderAiSaveError = () => (
+    aiSaveState === 'error' && aiSaveError ? (
+      <div role="alert" className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm mb-4">
+        {aiSaveError}
+      </div>
+    ) : null
+  );
+
+  const renderAiSaveStatus = () => (
+    aiSaveState === 'saved' ? (
+      <span role="status" className="flex items-center gap-1 text-xs text-green-400">
+        <Check size={12} /> Saved
+      </span>
+    ) : null
+  );
 
   const handleSaveGeneralSettings = async () => {
     await Promise.all([
@@ -568,9 +644,10 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
     <div className="space-y-8">
       <section>
         <div className="flex items-center justify-between gap-4 mb-4">
-          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-3">
             <div className="w-1 h-6 bg-blue-500 rounded-full"></div>
             AI Provider Configuration
+            {renderAiSaveStatus()}
           </h3>
           <ToggleGroup
             options={[
@@ -579,9 +656,11 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
               { value: 'local', label: 'Local API' }
             ]}
             value={selectedProvider}
-            onChange={(provider) => handleModelChange(selectedModel, provider)}
+            onChange={handleProviderChange}
           />
         </div>
+
+        {renderAiSaveError()}
 
         {selectedProvider === 'google' && (
           <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
@@ -759,11 +838,13 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
 
       <section>
         <div className="flex items-center justify-between gap-4 mb-4">
-          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-3">
             <div className="w-1 h-6 bg-green-500 rounded-full" />
             Tool Calling (Agentic)
+            {renderAiSaveStatus()}
           </h3>
         </div>
+        {renderAiSaveError()}
         <div className="bg-white/5 rounded-lg border border-white/10 p-6 space-y-4 shadow-xl shadow-black/20">
           <p className="text-sm text-gray-400 leading-relaxed">
             When enabled, the AI assistant can execute <strong className="text-gray-300 font-medium">kubectl commands</strong> against
@@ -777,11 +858,8 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
           >
             <select
               value={aiToolMode}
-              onChange={async (e) => {
-                const mode = e.target.value as 'off' | 'read' | 'read-write';
-                setAiToolMode(mode);
-                await window.k8s.settings.set('aiToolMode', mode);
-                showSavedFeedback();
+              onChange={(e) => {
+                void handleToolModeChange(e.target.value as 'off' | 'read' | 'read-write');
               }}
               className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500/50"
             >
@@ -790,6 +868,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
               <option value="read-write" className="bg-gray-900">Read &amp; Write (apply, scale, rollout)</option>
             </select>
           </SettingRow>
+          <p className="text-xs text-gray-500">Changes are saved automatically.</p>
           {aiToolMode !== 'off' && (
             <div className="flex items-center gap-2 text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/10 rounded-lg px-3 py-2">
               <Info size={12} />
@@ -805,11 +884,7 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
               <div className="flex items-center justify-between">
                 <label className="text-xs text-gray-500 font-medium">Auto-approved command prefixes</label>
                 <button
-                  onClick={async () => {
-                    setTrustedCommands([]);
-                    await window.k8s.settings.set('aiTrustedCommands', []);
-                    showSavedFeedback();
-                  }}
+                  onClick={() => { void handleTrustedCommandsChange([]); }}
                   className="text-xs text-red-400 hover:text-red-300 transition-colors"
                 >
                   Clear all
@@ -823,10 +898,8 @@ export const Settings: React.FC<SettingsProps> = ({ activeSection = 'settings-ge
                   >
                     {cmd}
                     <button
-                      onClick={async () => {
-                        const updated = trustedCommands.filter((_, idx) => idx !== i);
-                        setTrustedCommands(updated);
-                        await window.k8s.settings.set('aiTrustedCommands', updated);
+                      onClick={() => {
+                        void handleTrustedCommandsChange(trustedCommands.filter((_, idx) => idx !== i));
                       }}
                       className="text-green-500/50 hover:text-red-400 transition-colors"
                     >
