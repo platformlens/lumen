@@ -1,0 +1,7 @@
+{
+  "task_id": "task-crossplane-ui",
+  "task_description": "Add a read-only Crossplane GUI section to Lumen (Overview, Packages, Definitions, Composites, Managed Resources views plus a Crossplane drawer with relationship graph), implementing .agents/tasks/crossplane-ui/design.md including its binding 'Amendments from review v3', with crossview (Apache-2.0) logic adapted in TS with attribution. Ordered plan: .agents/tasks/crossplane-ui/plan.md.",
+  "status": "completed",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

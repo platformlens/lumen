@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { X, Terminal, Trash2, FileText, Maximize2, Minimize2, PenTool, Sparkles, ExternalLink, Search, Download, ArrowDown, ChevronUp, ChevronDown } from 'lucide-react';
+import { X, Terminal, Trash2, Maximize2, Minimize2, Sparkles, ExternalLink, Search, Download, ArrowDown, ChevronUp, ChevronDown, Plus, Server } from 'lucide-react';
 import { TerminalComponent } from '../terminal/TerminalComponent';
 import { YamlEditor } from '../yaml-editor/YamlEditor';
+import { PanelTabStrip } from './PanelTabStrip';
 
 export type PanelTabType = 'log' | 'terminal' | 'yaml';
 
@@ -33,6 +34,9 @@ export interface PanelTab {
     yamlContent?: string;
     onSaveYaml?: (content: string) => Promise<void>;
     filePath?: string; // set for local files opened from disk
+
+    // Kube context this tab is bound to (terminal shell target / YAML save target)
+    clusterContext?: string;
 }
 
 interface LogViewerProps {
@@ -47,6 +51,11 @@ interface LogViewerProps {
     onToggleMinimize: () => void;
     onAnalyzeWithAI?: (logs: string[], podName: string, containerName: string) => void;
     onPopOutTab?: (tabId: string) => void;
+    getYamlDraft: (id: string) => string | undefined;
+    onYamlDraftChange: (id: string, draft: string | undefined) => void;
+    dirtyTabIds: ReadonlySet<string>;
+    onNewTerminal?: () => void;
+    currentCluster?: string | null;
 }
 
 export const LogViewer: React.FC<LogViewerProps> = React.memo(({
@@ -61,6 +70,11 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
     onToggleMinimize,
     onAnalyzeWithAI,
     onPopOutTab,
+    getYamlDraft,
+    onYamlDraftChange,
+    dirtyTabIds,
+    onNewTerminal,
+    currentCluster,
 }) => {
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const activeTab = tabs.find(t => t.id === activeTabId);
@@ -246,44 +260,43 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
         <div className="flex flex-col h-full w-full bg-[#0d0d0d]">
             {/* Header / Tabs */}
             <div className="flex items-center bg-white/5 border-b border-white/10 pr-2 h-9 flex-none">
-                <div className="flex-1 flex overflow-x-auto no-scrollbar min-w-0">
-                    {tabs.length === 0 && (
-                        <div className="px-3 h-9 flex items-center text-xs text-gray-500 italic">
-                            No active sessions
-                        </div>
-                    )}
-                    {tabs.map(tab => (
-                        <div
-                            key={tab.id}
-                            className={`
-                                group flex items-center gap-2 px-3 h-9 text-xs border-r border-white/10 cursor-pointer min-w-[150px] max-w-[250px] flex-shrink-0
-                                ${activeTabId === tab.id ? 'bg-white/10 text-white border-b-0 shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.1)]' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200 border-b border-white/10'}
-                            `}
-                            onClick={(e) => { e.stopPropagation(); onSwitchTab(tab.id); }}
-                        >
-                            {tab.type === 'terminal' ? (
-                                <Terminal size={14} className={activeTabId === tab.id ? 'text-green-400' : 'text-gray-500'} />
-                            ) : tab.type === 'yaml' ? (
-                                <PenTool size={14} className={activeTabId === tab.id ? 'text-blue-400' : 'text-gray-500'} />
-                            ) : (
-                                <FileText size={14} className={activeTabId === tab.id ? 'text-blue-400' : 'text-gray-500'} />
-                            )}
-                            <div className="flex flex-col truncate flex-1">
-                                <span className="font-medium truncate">{tab.title}</span>
-                                {tab.subtitle && <span className="text-[10px] opacity-70 truncate">{tab.subtitle}</span>}
-                            </div>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
-                                className="opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-red-400 p-0.5 rounded transition-all"
-                            >
-                                <X size={14} />
-                            </button>
-                        </div>
-                    ))}
-                </div>
+                <PanelTabStrip
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    dirtyTabIds={dirtyTabIds}
+                    onSwitchTab={onSwitchTab}
+                    onCloseTab={onCloseTab}
+                />
 
                 {/* Toolbar */}
                 <div className="flex items-center gap-1 pl-2">
+                    {/* Kube context the active tab is bound to */}
+                    {!isMinimized && activeTab?.clusterContext && (
+                        <span
+                            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md font-mono max-w-[220px] mr-1 ${activeTab.clusterContext !== currentCluster
+                                ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
+                                : 'text-gray-400 bg-white/5'
+                                }`}
+                            title={activeTab.clusterContext !== currentCluster
+                                ? `This tab targets context "${activeTab.clusterContext}", which differs from the selected cluster${currentCluster ? ` "${currentCluster}"` : ''}`
+                                : `Context: ${activeTab.clusterContext}`}
+                        >
+                            <Server size={12} className="shrink-0" />
+                            <span className="truncate">{activeTab.clusterContext}</span>
+                        </span>
+                    )}
+
+                    {onNewTerminal && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onNewTerminal(); }}
+                            className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors"
+                            title="New Terminal (⌘⇧`)"
+                            aria-label="New terminal"
+                        >
+                            <Plus size={16} />
+                        </button>
+                    )}
+
                     {/* Container Selector (Logs only) */}
                     {!isMinimized && activeTab && activeTab.type === 'log' && activeTab.allContainers && activeTab.allContainers.length > 1 && (
                         <div className="flex items-center px-2 mr-2 border-r border-white/10 h-5">
@@ -425,7 +438,13 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                         className="w-full h-full p-2"
                         style={{ display: activeTabId === tab.id ? 'block' : 'none' }}
                     >
-                        <TerminalComponent id={tab.id} execContext={tab.execContext} initialCommand={tab.initialCommand} />
+                        <TerminalComponent
+                            id={tab.id}
+                            isVisible={activeTabId === tab.id}
+                            execContext={tab.execContext}
+                            initialCommand={tab.initialCommand}
+                            clusterContext={tab.clusterContext}
+                        />
                     </div>
                 ))}
 
@@ -503,8 +522,12 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                 {activeTab && activeTab.type === 'yaml' && activeTab.yamlContent && activeTab.onSaveYaml && (
                     <div className="absolute inset-0 z-10 bg-[#1e1e1e]">
                         <YamlEditor
+                            key={activeTab.id}
                             initialYaml={activeTab.yamlContent}
+                            initialDraft={getYamlDraft(activeTab.id)}
                             onSave={activeTab.onSaveYaml}
+                            onDraftChange={(draft) => onYamlDraftChange(activeTab.id, draft)}
+                            contextLabel={activeTab.clusterContext}
                         />
                     </div>
                 )}
@@ -513,7 +536,7 @@ export const LogViewer: React.FC<LogViewerProps> = React.memo(({
                 {!activeTab && (
                     <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-2">
                         <Terminal size={32} className="opacity-20" />
-                        <p>Select a pod to view logs or open a terminal</p>
+                        <p>Select a pod to view logs, or use + to open a terminal</p>
                     </div>
                 )}
             </div>

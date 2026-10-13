@@ -1,9 +1,116 @@
 import { KubeConfig, AppsV1Api, CoreV1Api, RbacAuthorizationV1Api, ApiextensionsV1Api, CustomObjectsApi, BatchV1Api, NetworkingV1Api, StorageV1Api, DiscoveryV1Api, PortForward, Watch, Log, AutoscalingV2Api, PolicyV1Api, AdmissionregistrationV1Api, SchedulingV1Api, NodeV1Api } from '@kubernetes/client-node';
 import * as net from 'net';
 import * as crypto from 'crypto';
+import * as os from 'os';
+import { resolveKubeconfigFiles, resolveCustomKubeconfigPath, hashKubeconfigFiles, contextsSignature, renameContextInFiles } from './kubeconfig-files';
+import type { ClusterContextInfo, ContextsChangedPayload } from '../src/types/cluster-context';
 import * as yaml from 'js-yaml';
 import * as zlib from 'zlib';
 import { execFile } from 'child_process';
+import { fetchDeploymentFullDetails } from './deployment-full-details';
+import { KubeconfigLoadError, UnknownContextError } from './resource-cache/kinds';
+import type { DeploymentFullDetailsResponse } from '../src/types/deployment-details';
+
+/**
+ * Validates a Kubernetes API parameter (apiVersion, kind, namespace, or resource name).
+ * Rejects path traversal sequences, null bytes, and characters outside the allowed pattern.
+ *
+ * Allowed characters: alphanumeric, hyphens, dots, underscores, forward slashes (for apiVersion like `apps/v1`).
+ * Max length: 253 characters.
+ *
+ * @param paramName - The name of the parameter being validated (for error messages)
+ * @param value - The value to validate
+ * @throws Error with descriptive message if validation fails
+ */
+export function validateK8sParam(paramName: string, value: string): void {
+    if (!value || value.length === 0) {
+        throw new Error(`Invalid ${paramName}: must not be empty`);
+    }
+    if (value.length > 253) {
+        throw new Error(`Invalid ${paramName}: exceeds maximum length of 253 characters (got ${value.length})`);
+    }
+    // Reject null bytes
+    if (value.includes('\0')) {
+        throw new Error(`Invalid ${paramName}: must not contain null bytes`);
+    }
+    // Reject path traversal sequences
+    if (value.includes('..')) {
+        throw new Error(`Invalid ${paramName}: must not contain path traversal sequence '..'`);
+    }
+    if (value.includes('//')) {
+        throw new Error(`Invalid ${paramName}: must not contain path traversal sequence '//'`);
+    }
+    // Allowed characters: alphanumeric, hyphens, dots, underscores, forward slashes
+    // Must start with alphanumeric character
+    const validPattern = /^[a-zA-Z0-9][a-zA-Z0-9._/\-]*$/;
+    if (!validPattern.test(value)) {
+        throw new Error(`Invalid ${paramName}: contains disallowed characters (allowed: alphanumeric, hyphens, dots, underscores, forward slashes; must start with alphanumeric)`);
+    }
+}
+
+/** Structured error returned from Kubernetes API requests. */
+export interface K8sRequestError {
+    status: number;
+    message: string;
+}
+
+/** Timeout for raw HTTPS requests to the Kubernetes API server (30 seconds). */
+const K8S_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Sanitize a Kubernetes API error message by stripping internal server details,
+ * stack traces, and sensitive information. Returns a clean, user-safe message.
+ */
+export function sanitizeK8sErrorMessage(rawMessage: string): string {
+    if (!rawMessage || typeof rawMessage !== 'string') {
+        return 'An unknown error occurred';
+    }
+
+    // Try to parse as JSON (K8s API Status response)
+    try {
+        const parsed = JSON.parse(rawMessage);
+        if (parsed && parsed.message && typeof parsed.message === 'string') {
+            // Use the K8s API status message but strip internal details
+            return stripInternalDetails(parsed.message);
+        }
+        if (parsed && parsed.reason && typeof parsed.reason === 'string') {
+            return parsed.reason;
+        }
+    } catch {
+        // Not JSON, sanitize the raw string
+    }
+
+    return stripInternalDetails(rawMessage);
+}
+
+/**
+ * Strip internal server details from an error message:
+ * - Stack traces
+ * - File paths
+ * - Internal IP addresses
+ * - Server version info
+ */
+function stripInternalDetails(message: string): string {
+    // Truncate overly long messages
+    let sanitized = message.length > 500 ? message.slice(0, 500) : message;
+
+    // Remove stack traces (lines starting with "at " or containing file paths)
+    sanitized = sanitized.replace(/\s+at\s+.+/g, '');
+
+    // Remove file system paths
+    sanitized = sanitized.replace(/\/[a-zA-Z0-9_\-/.]+\.(go|js|ts|py):\d+/g, '[internal]');
+
+    // Remove internal IP:port patterns (but keep the general message)
+    sanitized = sanitized.replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+/g, '[server]');
+
+    // Remove goroutine/thread info
+    sanitized = sanitized.replace(/goroutine\s+\d+.*/g, '');
+
+    // Collapse multiple whitespace/newlines
+    sanitized = sanitized.replace(/\s+/g, ' ').trim();
+
+    return sanitized || 'An unknown error occurred';
+}
 
 interface ActiveForward {
     id: string;
@@ -63,14 +170,137 @@ export class K8sService {
     // Generation counter per watcher — incremented on every start/stop to invalidate stale reconnect timers
     private watchGenerations: Map<string, number> = new Map();
 
-    constructor() {
+    // Custom kubeconfig path (settings_kubeconfigPath); empty means KUBECONFIG / ~/.kube/config
+    private customKubeconfigPath: string = '';
+    // Hash of the kubeconfig file(s) content last loaded, and signature of the context list last emitted
+    private kubeconfigHash: string = '';
+    private contextsSig: string = '';
+    private contextNames: Set<string> = new Set();
+    private kubeconfigListeners: Set<(payload: ContextsChangedPayload) => void> = new Set();
+
+    constructor(customKubeconfigPath?: string) {
+        this.customKubeconfigPath = (customKubeconfigPath ?? '').trim();
         this.kc = new KubeConfig();
         try {
-            this.kc.loadFromDefault();
+            this.kubeconfigHash = hashKubeconfigFiles(this.getKubeconfigFiles());
+            this.kc = this.loadKubeConfig();
             this.lastReloadTime = Date.now();
-            console.log('KubeConfig loaded from default.');
+            this.captureContexts(this.kc);
+            console.log('KubeConfig loaded.');
         } catch (err) {
             console.error('Error loading KubeConfig:', err);
+        }
+    }
+
+    /** Kubeconfig file(s) currently in use (custom path if it exists, else KUBECONFIG, else ~/.kube/config). */
+    public getKubeconfigFiles(): string[] {
+        return resolveKubeconfigFiles({
+            customPath: this.customKubeconfigPath,
+            env: process.env,
+            homedir: os.homedir(),
+        });
+    }
+
+    /** The custom kubeconfig path only when it is set AND exists (what the pod worker should load). */
+    public getCustomKubeconfigPath(): string | undefined {
+        return resolveCustomKubeconfigPath(this.customKubeconfigPath, os.homedir());
+    }
+
+    /** Create a fresh KubeConfig from the configured location. Throws on parse errors. */
+    private loadKubeConfig(): KubeConfig {
+        const kc = new KubeConfig();
+        const custom = this.getCustomKubeconfigPath();
+        if (custom) {
+            kc.loadFromFile(custom);
+        } else {
+            kc.loadFromDefault();
+        }
+        return kc;
+    }
+
+    private captureContexts(kc: KubeConfig) {
+        const contexts = kc.getContexts();
+        this.contextNames = new Set(contexts.map(c => c.name));
+        this.contextsSig = contextsSignature(contexts);
+    }
+
+    private toClusterInfo(kc: KubeConfig): ClusterContextInfo[] {
+        return kc.getContexts().map(ctx => ({
+            name: ctx.name,
+            cluster: ctx.cluster,
+            user: ctx.user,
+            ...(ctx.namespace ? { namespace: ctx.namespace } : {}),
+        }));
+    }
+
+    /** Subscribe to context-list changes detected on disk. Returns an unsubscribe function. */
+    public onKubeconfigChanged(cb: (payload: ContextsChangedPayload) => void): () => void {
+        this.kubeconfigListeners.add(cb);
+        return () => { this.kubeconfigListeners.delete(cb); };
+    }
+
+    /** Point the service at a different kubeconfig (empty = default resolution) and reload. */
+    public setKubeconfigPath(p?: string) {
+        this.customKubeconfigPath = (p ?? '').trim();
+        this.refreshKubeConfig({ force: true });
+    }
+
+    /**
+     * Re-read the kubeconfig if its content changed on disk (or `force`). Keeps the old config on parse
+     * errors, preserves the in-memory active context, and only stops watchers when the active context
+     * was removed. Emits `onKubeconfigChanged` listeners when the context list changed (unless `silent`).
+     */
+    public refreshKubeConfig(opts: { force?: boolean; silent?: boolean } = {}): void {
+        const hash = hashKubeconfigFiles(this.getKubeconfigFiles());
+        if (!opts.force && hash === this.kubeconfigHash) return;
+
+        let next: KubeConfig;
+        try {
+            next = this.loadKubeConfig();
+        } catch (err) {
+            // Likely mid-edit: keep the old config and retry on the next change/fetch
+            console.warn('[k8s] Kubeconfig changed but could not be parsed; keeping previous config:', err);
+            return;
+        }
+
+        this.clearExecTokenCache();
+        const previousNames = this.contextNames;
+        const previousSig = this.contextsSig;
+        const nextNames = new Set(next.getContexts().map(c => c.name));
+
+        let activeRemoved = false;
+        if (this.currentContext) {
+            if (nextNames.has(this.currentContext)) {
+                next.setCurrentContext(this.currentContext);
+            } else {
+                activeRemoved = true;
+            }
+        }
+
+        this.kc = next;
+        this.lastReloadTime = Date.now();
+        this.kubeconfigHash = hash;
+        this.captureContexts(next);
+
+        if (activeRemoved) {
+            console.log(`[k8s] Active context '${this.currentContext}' was removed from kubeconfig; stopping watchers`);
+            this.stopAllWatchers();
+            this.currentContext = '';
+        }
+
+        if (opts.silent || this.contextsSig === previousSig) return;
+
+        const payload: ContextsChangedPayload = {
+            contexts: this.toClusterInfo(next),
+            added: [...nextNames].filter(n => !previousNames.has(n)),
+            removed: [...previousNames].filter(n => !nextNames.has(n)),
+        };
+        for (const cb of this.kubeconfigListeners) {
+            try {
+                cb(payload);
+            } catch (err) {
+                console.error('[k8s] kubeconfig listener failed:', err);
+            }
         }
     }
 
@@ -136,10 +366,9 @@ export class K8sService {
             this.clearExecTokenCache();
 
             // Create a completely new KubeConfig instance to avoid any caching
-            this.kc = new KubeConfig();
-            this.kc.loadFromDefault();
+            this.kc = this.loadKubeConfig();
             this.lastReloadTime = Date.now();
-            console.log('[k8s] KubeConfig reloaded from default with new instance.');
+            console.log('[k8s] KubeConfig reloaded with new instance.');
         } catch (err) {
             console.error('[k8s] Error reloading KubeConfig:', err);
         }
@@ -430,14 +659,62 @@ export class K8sService {
         return true;
     }
 
-    getClusters() {
-        const contexts = this.kc.getContexts();
-        console.log(`Found ${contexts.length} contexts.`);
-        return contexts.map(ctx => ({
-            name: ctx.name,
-            cluster: ctx.cluster,
-            user: ctx.user,
-        }));
+    /**
+     * Isolated KubeConfig for one context (Crossplane view). Never touches this.kc, so long-running
+     * Crossplane scans cannot hit the wrong cluster after a context switch.
+     */
+    public createContextKubeConfig(contextName: string): KubeConfig {
+        const kc = this.loadKubeConfig();
+        if (!kc.getContexts().some(c => c.name === contextName)) {
+            throw new Error(`Unknown kube context: ${contextName}`);
+        }
+        kc.setCurrentContext(contextName);
+        return kc;
+    }
+
+    /** Returns true when `name` is a context in the loaded kubeconfig. */
+    hasContext(name: string): boolean {
+        if (this.kc.getContexts().some(c => c.name === name)) return true;
+        // Miss: the kubeconfig may have changed on disk since it was cached
+        this.refreshKubeConfig();
+        return this.kc.getContexts().some(c => c.name === name);
+    }
+
+    getClusters(): ClusterContextInfo[] {
+        this.refreshKubeConfig();
+        return this.toClusterInfo(this.kc);
+    }
+
+    /**
+     * Renames a kube context on disk (like `kubectl config rename-context`) and migrates in-memory state.
+     * Throws KubeconfigRenameError when the rename is rejected; the kubeconfig is untouched in that case.
+     */
+    renameContext(oldName: string, newName: string): { newName: string; clusters: ClusterContextInfo[] } {
+        const result = renameContextInFiles(this.getKubeconfigFiles(), oldName, newName);
+        const target = result.newName;
+
+        if (this.currentContext === oldName) {
+            // Watchers' reconnect closures capture the old name; the renderer restarts them with the new one
+            this.stopAllWatchers();
+            this.currentContext = target;
+        }
+
+        const prefix = `${oldName}::`;
+        for (const [key, value] of [...this.resourcePluralCache]) {
+            if (key.startsWith(prefix)) {
+                this.resourcePluralCache.delete(key);
+                this.resourcePluralCache.set(`${target}::${key.slice(prefix.length)}`, value);
+            }
+        }
+
+        try {
+            // Silent + forced: our own write must update the stored hash without emitting contextsChanged
+            this.refreshKubeConfig({ force: true, silent: true });
+        } catch (err) {
+            console.warn('[k8s] Reload after rename failed; the rename itself succeeded:', err);
+        }
+
+        return { newName: target, clusters: this.getClusters() };
     }
 
     async getNamespaces(contextName: string) {
@@ -947,311 +1224,6 @@ export class K8sService {
         }
     }
 
-    async startPodWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, pod: any) => void) {
-        // Stop existing watcher if any to avoid duplicates
-        this.stopPodWatch();
-
-        const watcherKey = 'pods';
-        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
-        this.watchGenerations.set(watcherKey, gen);
-
-        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        const rv = this.watchResourceVersions.get(watcherKey);
-        if (!rv) {
-            console.log(`[k8s] Starting watch for pods in ${activeWatchersKey(namespaces)} [gen=${gen}] (FRESH — no resourceVersion)`);
-        }
-        await this.setContextWithSmartReload(contextName);
-        const watch = new Watch(this.kc);
-
-        const path = (namespaces.length === 0 || namespaces.includes('all'))
-            ? '/api/v1/pods'
-            : `/api/v1/namespaces/${namespaces[0]}/pods`;
-
-        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
-        if (rv) queryParams.resourceVersion = rv;
-
-        try {
-            const req = await watch.watch(
-                path,
-                queryParams,
-                (type, apiObj, _watchObj) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    const objRv = apiObj?.metadata?.resourceVersion;
-                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
-                    this.watchReconnectAttempts.delete(watcherKey);
-
-                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                        if (!apiObj || !apiObj.metadata) return;
-                        onEvent(type, apiObj);
-                    }
-                },
-                (err) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
-                        console.log('[k8s] Pod watch aborted (expected)');
-                        return;
-                    }
-
-                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
-                    const hasRv = this.watchResourceVersions.has(watcherKey);
-                    // Normal server-side close with a valid rv — quiet reconnect
-                    const isNormalClose = !err && hasRv;
-
-                    if (!isNormalClose) {
-                        console.error(`[k8s] Pod watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
-                    }
-
-                    // Detect 410 Gone — the resourceVersion is too old
-                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
-                    if (is410) {
-                        console.log('[k8s] Pod watch rv expired (410 Gone), clearing for fresh re-list');
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    // If we've failed 3+ times with the same rv, it's probably stale — clear it
-                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
-                    if (attempts >= 3 && hasRv) {
-                        console.log(`[k8s] Pod watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    if (this.activeWatchers.has(watcherKey)) {
-                        // Use a short delay for normal closes (server just rotated the connection)
-                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
-                        if (!isNormalClose) {
-                            console.log(`[k8s] Pod watch reconnecting in ${delay}ms... [gen=${gen}]`);
-                        }
-                        this.activeWatchers.delete(watcherKey);
-                        setTimeout(() => {
-                            if (gen !== this.watchGenerations.get(watcherKey)) return;
-                            this.startPodWatch(contextName, namespaces, onEvent);
-                        }, delay);
-                    }
-                }
-            );
-
-            if (gen === this.watchGenerations.get(watcherKey)) {
-                this.activeWatchers.set(watcherKey, req);
-            } else {
-                req?.abort?.();
-            }
-        } catch (err) {
-            console.error('[k8s] Failed to start pod watch:', err);
-        }
-    }
-
-    stopPodWatch() {
-        const watcherKey = 'pods';
-        // Bump generation to invalidate any pending reconnect timers
-        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
-        if (this.activeWatchers.has(watcherKey)) {
-            console.log('[k8s] Stopping pod watch (preserving resourceVersion for resume)');
-            const req = this.activeWatchers.get(watcherKey);
-            if (req && req.abort) req.abort();
-            this.activeWatchers.delete(watcherKey);
-            // Keep watchResourceVersions so the next start resumes instead of re-listing
-            this.watchReconnectAttempts.delete(watcherKey);
-        }
-    }
-
-    async startDeploymentWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, deployment: any) => void) {
-        this.stopDeploymentWatch();
-
-        const watcherKey = 'deployments';
-        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
-        this.watchGenerations.set(watcherKey, gen);
-
-        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        const rv = this.watchResourceVersions.get(watcherKey);
-        console.log(`[k8s] Starting watch for deployments in ${activeWatchersKey(namespaces)}${rv ? ` (resuming from rv=${rv})` : ''}`);
-        await this.setContextWithSmartReload(contextName);
-        const watch = new Watch(this.kc);
-
-        const path = (namespaces.length === 0 || namespaces.includes('all'))
-            ? '/apis/apps/v1/deployments'
-            : `/apis/apps/v1/namespaces/${namespaces[0]}/deployments`;
-
-        const queryParams: Record<string, string> = { allowWatchBookmarks: 'true' };
-        if (rv) queryParams.resourceVersion = rv;
-
-        try {
-            const req = await watch.watch(
-                path,
-                queryParams,
-                (type, apiObj, _watchObj) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    const objRv = apiObj?.metadata?.resourceVersion;
-                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
-                    this.watchReconnectAttempts.delete(watcherKey);
-
-                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                        if (!apiObj || !apiObj.metadata) return;
-                        onEvent(type, apiObj);
-                    }
-                },
-                (err) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
-                        console.log('[k8s] Deployment watch aborted (expected)');
-                        return;
-                    }
-
-                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
-                    const hasRv = this.watchResourceVersions.has(watcherKey);
-                    const isNormalClose = !err && hasRv;
-
-                    if (!isNormalClose) {
-                        console.error(`[k8s] Deployment watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
-                    }
-
-                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
-                    if (is410) {
-                        console.log('[k8s] Deployment watch rv expired (410 Gone), clearing for fresh re-list');
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
-                    if (attempts >= 3 && hasRv) {
-                        console.log(`[k8s] Deployment watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    if (this.activeWatchers.has(watcherKey)) {
-                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
-                        if (!isNormalClose) {
-                            console.log(`[k8s] Deployment watch reconnecting in ${delay}ms... [gen=${gen}]`);
-                        }
-                        this.activeWatchers.delete(watcherKey);
-                        setTimeout(() => {
-                            if (gen !== this.watchGenerations.get(watcherKey)) return;
-                            this.startDeploymentWatch(contextName, namespaces, onEvent);
-                        }, delay);
-                    }
-                }
-            );
-
-            if (gen === this.watchGenerations.get(watcherKey)) {
-                this.activeWatchers.set(watcherKey, req);
-            } else {
-                req?.abort?.();
-            }
-        } catch (err) {
-            console.error('[k8s] Failed to start deployment watch:', err);
-        }
-    }
-
-    stopDeploymentWatch() {
-        const watcherKey = 'deployments';
-        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
-        if (this.activeWatchers.has(watcherKey)) {
-            console.log('[k8s] Stopping deployment watch');
-            const req = this.activeWatchers.get(watcherKey);
-            if (req && req.abort) req.abort();
-            this.activeWatchers.delete(watcherKey);
-            this.watchResourceVersions.delete(watcherKey);
-            this.watchReconnectAttempts.delete(watcherKey);
-        }
-    }
-
-    async startHelmReleaseWatch(contextName: string, namespaces: string[] = [], onEvent: (event: string, secret: any) => void) {
-        this.stopHelmReleaseWatch();
-
-        const watcherKey = 'helm-releases';
-        const gen = (this.watchGenerations.get(watcherKey) ?? 0) + 1;
-        this.watchGenerations.set(watcherKey, gen);
-
-        const activeWatchersKey = (ns: string[]) => ns.length === 0 || ns.includes('all') ? 'all-namespaces' : ns.join(',');
-        const rv = this.watchResourceVersions.get(watcherKey);
-        console.log(`[k8s] Starting watch for helm releases in ${activeWatchersKey(namespaces)}${rv ? ` (resuming from rv=${rv})` : ''}`);
-        await this.setContextWithSmartReload(contextName);
-        const watch = new Watch(this.kc);
-
-        const path = (namespaces.length === 0 || namespaces.includes('all'))
-            ? '/api/v1/secrets'
-            : `/api/v1/namespaces/${namespaces[0]}/secrets`;
-
-        const queryParams: Record<string, string> = { fieldSelector: 'type=helm.sh/release.v1', allowWatchBookmarks: 'true' };
-        if (rv) queryParams.resourceVersion = rv;
-
-        try {
-            const req = await watch.watch(
-                path,
-                queryParams,
-                (type, apiObj, _watchObj) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    const objRv = apiObj?.metadata?.resourceVersion;
-                    if (objRv) this.watchResourceVersions.set(watcherKey, objRv);
-                    this.watchReconnectAttempts.delete(watcherKey);
-
-                    if (type === 'ADDED' || type === 'MODIFIED' || type === 'DELETED') {
-                        if (!apiObj || !apiObj.metadata) return;
-                        onEvent(type, apiObj);
-                    }
-                },
-                (err) => {
-                    if (gen !== this.watchGenerations.get(watcherKey)) return;
-                    if (err && (err.name === 'AbortError' || (err as any).type === 'aborted')) {
-                        console.log('[k8s] Helm release watch aborted (expected)');
-                        return;
-                    }
-
-                    const errCode = err?.statusCode ?? err?.code ?? (err as any)?.status;
-                    const hasRv = this.watchResourceVersions.has(watcherKey);
-                    const isNormalClose = !err && hasRv;
-
-                    if (!isNormalClose) {
-                        console.error(`[k8s] Helm release watch ended [gen=${gen}] errCode=${errCode}`, err ? String(err).slice(0, 200) : '(no error, no rv)');
-                    }
-
-                    const is410 = errCode === 410 || String(err).includes('410') || String(err).includes('Gone') || String(err).includes('too old');
-                    if (is410) {
-                        console.log('[k8s] Helm release watch rv expired (410 Gone), clearing for fresh re-list');
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    const attempts = this.watchReconnectAttempts.get(watcherKey) ?? 0;
-                    if (attempts >= 3 && hasRv) {
-                        console.log(`[k8s] Helm release watch failed ${attempts + 1} times with same rv, clearing for fresh re-list`);
-                        this.watchResourceVersions.delete(watcherKey);
-                    }
-
-                    if (this.activeWatchers.has(watcherKey)) {
-                        const delay = isNormalClose ? 500 : this.getWatchReconnectDelay(watcherKey);
-                        if (!isNormalClose) {
-                            console.log(`[k8s] Helm release watch reconnecting in ${delay}ms... [gen=${gen}]`);
-                        }
-                        this.activeWatchers.delete(watcherKey);
-                        setTimeout(() => {
-                            if (gen !== this.watchGenerations.get(watcherKey)) return;
-                            this.startHelmReleaseWatch(contextName, namespaces, onEvent);
-                        }, delay);
-                    }
-                }
-            );
-
-            if (gen === this.watchGenerations.get(watcherKey)) {
-                this.activeWatchers.set(watcherKey, req);
-            } else {
-                req?.abort?.();
-            }
-        } catch (err) {
-            console.error('[k8s] Failed to start helm release watch:', err);
-        }
-    }
-
-    stopHelmReleaseWatch() {
-        const watcherKey = 'helm-releases';
-        this.watchGenerations.set(watcherKey, (this.watchGenerations.get(watcherKey) ?? 0) + 1);
-        if (this.activeWatchers.has(watcherKey)) {
-            console.log('[k8s] Stopping helm release watch');
-            const req = this.activeWatchers.get(watcherKey);
-            if (req && req.abort) req.abort();
-            this.activeWatchers.delete(watcherKey);
-            this.watchResourceVersions.delete(watcherKey);
-            this.watchReconnectAttempts.delete(watcherKey);
-        }
-    }
-
     /**
      * Stop all active watchers. Called on app quit to prevent reconnection loops.
      */
@@ -1340,6 +1312,23 @@ export class K8sService {
             console.error('Error fetching deployment revisions:', error);
             return [];
         }
+    }
+
+    /**
+     * Aggregated, RBAC-tolerant details for the Deployment Full View (one IPC round trip).
+     * Clients are created inside the retry closure so a 401 retry rebuilds them with refreshed credentials.
+     */
+    async getDeploymentFullDetails(contextName: string, namespace: string, name: string): Promise<DeploymentFullDetailsResponse> {
+        console.log(`[k8s] getDeploymentFullDetails ${namespace}/${name}`);
+        await this.setContextWithSmartReload(contextName);
+        return this.withAuthRetry(contextName, () => fetchDeploymentFullDetails({
+            apps: this.kc.makeApiClient(AppsV1Api),
+            core: this.kc.makeApiClient(CoreV1Api),
+            networking: this.kc.makeApiClient(NetworkingV1Api),
+            autoscaling: this.kc.makeApiClient(AutoscalingV2Api),
+            policy: this.kc.makeApiClient(PolicyV1Api),
+            getPodMetrics: () => this.getPodMetrics(contextName, [namespace]),
+        }, contextName, namespace, name));
     }
 
     async restartDeployment(contextName: string, namespace: string, deploymentName: string) {
@@ -2194,7 +2183,45 @@ export class K8sService {
         }
     }
 
+    /**
+     * Final cleanup for a generic watch key (design §5.3). Unlike stopGenericWatch (which the
+     * internal reconnect path also calls), this deletes the key from every per-watch map, so
+     * per-switch unique keys cannot grow them. Late callbacks compare against `undefined` and drop.
+     */
+    disposeGenericWatch(resourceType: string) {
+        this.stopGenericWatch(resourceType);
+        const key = `generic:${resourceType}`;
+        this.watchGenerations.delete(key);
+        this.watchResourceVersions.delete(key);
+        this.watchReconnectAttempts.delete(key);
+    }
 
+    /** Sizes of the legacy per-watch maps, for resource-cache diagnostics. */
+    getLegacyMapSizes(): { activeWatchers: number; watchGenerations: number; watchResourceVersions: number } {
+        return {
+            activeWatchers: this.activeWatchers.size,
+            watchGenerations: this.watchGenerations.size,
+            watchResourceVersions: this.watchResourceVersions.size,
+        };
+    }
+
+    /**
+     * Build a NEW KubeConfig for a resource-cache session (design §3.1), from the same location
+     * K8sService loads (custom path or default resolution). The session owns the instance, so
+     * other calls switching the shared `this.kc` context cannot affect a live watch.
+     * Throws KubeconfigLoadError (fixed message, no cause attached) or UnknownContextError.
+     */
+    createKubeConfig(contextName: string): KubeConfig {
+        let kc: KubeConfig;
+        try {
+            kc = this.loadKubeConfig();
+        } catch {
+            throw new KubeconfigLoadError();
+        }
+        if (!kc.getContextObject(contextName)) throw new UnknownContextError();
+        kc.setCurrentContext(contextName);
+        return kc;
+    }
 
     async getCRDs(contextName: string) {
         console.log(`Getting CRDs for ${contextName}`);
@@ -3295,22 +3322,29 @@ export class K8sService {
      */
     public async getResourceYaml(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<string> {
         console.log(`[k8s] getResourceYaml for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+
+        // Validate parameters against path traversal and disallowed characters
+        validateK8sParam('apiVersion', apiVersion);
+        validateK8sParam('kind', kind);
+        validateK8sParam('name', name);
+        if (namespace) {
+            validateK8sParam('namespace', namespace);
+        }
+
         this.kc.setCurrentContext(contextName);
 
         try {
             const path = await this.buildResourcePath(contextName, apiVersion, kind, name, namespace);
             console.log(`[k8s] Fetching resource from path: ${path}`);
 
-            const { statusCode, data } = await this.k8sRequest(path, 'GET');
-
-            if (statusCode >= 200 && statusCode < 300) {
-                const resource = JSON.parse(data);
-                return yaml.dump(resource);
-            } else {
-                throw new Error(`HTTP ${statusCode}: ${data}`);
-            }
+            const { data } = await this.k8sRequest(path, 'GET');
+            const resource = JSON.parse(data);
+            return yaml.dump(resource);
         } catch (error: any) {
             console.error(`Error getting resource YAML:`, error);
+            if (error && typeof error.status === 'number' && error.message) {
+                throw new Error(`Failed to get ${kind} YAML: ${error.message}`);
+            }
             throw new Error(`Failed to get ${kind} YAML: ${error.message || error}`);
         }
     }
@@ -3326,6 +3360,15 @@ export class K8sService {
      */
     public async updateResourceYaml(contextName: string, apiVersion: string, kind: string, name: string, yamlContent: string, namespace?: string): Promise<any> {
         console.log(`[k8s] updateResourceYaml for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+
+        // Validate parameters against path traversal and disallowed characters
+        validateK8sParam('apiVersion', apiVersion);
+        validateK8sParam('kind', kind);
+        validateK8sParam('name', name);
+        if (namespace) {
+            validateK8sParam('namespace', namespace);
+        }
+
         this.kc.setCurrentContext(contextName);
 
         let userObj: any;
@@ -3341,48 +3384,47 @@ export class K8sService {
 
             for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
                 const body = JSON.stringify(userObj);
-                const { statusCode, data } = await this.k8sRequest(path, 'PUT', body);
 
-                if (statusCode >= 200 && statusCode < 300) {
+                try {
+                    const { data } = await this.k8sRequest(path, 'PUT', body);
                     if (attempt > 0) {
                         console.log(`[k8s] Update succeeded after ${attempt} conflict retry(ies)`);
                     }
                     return JSON.parse(data);
+                } catch (putError: any) {
+                    // Handle 409 Conflict - stale resourceVersion
+                    if (putError && putError.status === 409 && attempt < MAX_CONFLICT_RETRIES) {
+                        console.warn(`[k8s] 409 Conflict on attempt ${attempt + 1}, re-fetching latest version...`);
+
+                        // Fetch the latest version from the server
+                        const { data: getData } = await this.k8sRequest(path, 'GET');
+                        const latestObj = JSON.parse(getData);
+
+                        // Apply the latest server-managed metadata to the user's object
+                        // This preserves the user's spec/data changes while resolving the conflict
+                        userObj.metadata.resourceVersion = latestObj.metadata.resourceVersion;
+                        // Preserve server-managed fields that cause conflicts
+                        if (latestObj.metadata.managedFields) {
+                            userObj.metadata.managedFields = latestObj.metadata.managedFields;
+                        }
+                        if (latestObj.metadata.generation !== undefined) {
+                            userObj.metadata.generation = latestObj.metadata.generation;
+                        }
+
+                        continue;
+                    }
+
+                    // Non-409 error or exhausted retries — re-throw
+                    throw putError;
                 }
-
-                // Handle 409 Conflict - stale resourceVersion
-                if (statusCode === 409 && attempt < MAX_CONFLICT_RETRIES) {
-                    console.warn(`[k8s] 409 Conflict on attempt ${attempt + 1}, re-fetching latest version...`);
-
-                    // Fetch the latest version from the server
-                    const { statusCode: getStatus, data: getData } = await this.k8sRequest(path, 'GET');
-                    if (getStatus < 200 || getStatus >= 300) {
-                        throw new Error(`Failed to re-fetch resource for conflict resolution: HTTP ${getStatus}`);
-                    }
-
-                    const latestObj = JSON.parse(getData);
-
-                    // Apply the latest server-managed metadata to the user's object
-                    // This preserves the user's spec/data changes while resolving the conflict
-                    userObj.metadata.resourceVersion = latestObj.metadata.resourceVersion;
-                    // Preserve server-managed fields that cause conflicts
-                    if (latestObj.metadata.managedFields) {
-                        userObj.metadata.managedFields = latestObj.metadata.managedFields;
-                    }
-                    if (latestObj.metadata.generation !== undefined) {
-                        userObj.metadata.generation = latestObj.metadata.generation;
-                    }
-
-                    continue;
-                }
-
-                // Non-409 error or exhausted retries
-                throw new Error(`HTTP ${statusCode}: ${data}`);
             }
 
             throw new Error('Exhausted conflict retries');
         } catch (error: any) {
             console.error(`Error updating resource YAML:`, error);
+            if (error && typeof error.status === 'number' && error.message) {
+                throw new Error(`Failed to update ${kind} YAML: ${error.message}`);
+            }
             throw new Error(`Failed to update ${kind} YAML: ${error.message || error}`);
         }
     }
@@ -3397,21 +3439,28 @@ export class K8sService {
      */
     public async deleteResource(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<boolean> {
         console.log(`[k8s] deleteResource for ${apiVersion}/${kind} ${namespace ? namespace + '/' : ''}${name}`);
+
+        // Validate parameters against path traversal and disallowed characters
+        validateK8sParam('apiVersion', apiVersion);
+        validateK8sParam('kind', kind);
+        validateK8sParam('name', name);
+        if (namespace) {
+            validateK8sParam('namespace', namespace);
+        }
+
         this.kc.setCurrentContext(contextName);
 
         try {
             const path = await this.buildResourcePath(contextName, apiVersion, kind, name, namespace);
             console.log(`[k8s] Deleting resource at path: ${path}`);
 
-            const { statusCode, data } = await this.k8sRequest(path, 'DELETE');
-
-            if (statusCode >= 200 && statusCode < 300) {
-                return true;
-            } else {
-                throw new Error(`HTTP ${statusCode}: ${data}`);
-            }
+            await this.k8sRequest(path, 'DELETE');
+            return true;
         } catch (error: any) {
             console.error(`Error deleting resource:`, error);
+            if (error && typeof error.status === 'number' && error.message) {
+                throw new Error(`Failed to delete ${kind}: ${error.message}`);
+            }
             throw new Error(`Failed to delete ${kind}: ${error.message || error}`);
         }
     }
@@ -3421,15 +3470,20 @@ export class K8sService {
      */
     private async buildResourcePath(contextName: string, apiVersion: string, kind: string, name: string, namespace?: string): Promise<string> {
         const plural = await this.getResourcePlural(contextName, apiVersion, kind);
+        const encodedName = encodeURIComponent(name);
+        const encodedPlural = encodeURIComponent(plural);
+        const encodedNamespace = namespace ? encodeURIComponent(namespace) : undefined;
 
         if (apiVersion === 'v1') {
-            return namespace
-                ? `/api/v1/namespaces/${namespace}/${plural}/${name}`
-                : `/api/v1/${plural}/${name}`;
+            return encodedNamespace
+                ? `/api/v1/namespaces/${encodedNamespace}/${encodedPlural}/${encodedName}`
+                : `/api/v1/${encodedPlural}/${encodedName}`;
         }
-        return namespace
-            ? `/apis/${apiVersion}/namespaces/${namespace}/${plural}/${name}`
-            : `/apis/${apiVersion}/${plural}/${name}`;
+        // apiVersion may be "group/version" — encode each segment separately
+        const encodedApiVersion = apiVersion.split('/').map(encodeURIComponent).join('/');
+        return encodedNamespace
+            ? `/apis/${encodedApiVersion}/namespaces/${encodedNamespace}/${encodedPlural}/${encodedName}`
+            : `/apis/${encodedApiVersion}/${encodedPlural}/${encodedName}`;
     }
 
     /**
@@ -3463,16 +3517,42 @@ export class K8sService {
                 path: url.pathname,
                 method,
                 headers,
+                timeout: K8S_REQUEST_TIMEOUT_MS,
                 ...requestOptions
             }, (res: any) => {
                 let data = '';
                 res.on('data', (chunk: string) => data += chunk);
                 res.on('end', () => {
-                    resolve({ statusCode: res.statusCode || 0, data });
+                    const statusCode = res.statusCode || 0;
+                    if (statusCode >= 400) {
+                        const error: K8sRequestError = {
+                            status: statusCode,
+                            message: sanitizeK8sErrorMessage(data)
+                        };
+                        reject(error);
+                    } else {
+                        resolve({ statusCode, data });
+                    }
                 });
             });
 
-            req.on('error', (e: Error) => reject(e));
+            req.on('timeout', () => {
+                req.destroy();
+                const error: K8sRequestError = {
+                    status: 408,
+                    message: 'Request timed out'
+                };
+                reject(error);
+            });
+
+            req.on('error', (e: Error) => {
+                const error: K8sRequestError = {
+                    status: 0,
+                    message: sanitizeK8sErrorMessage(e.message || 'Network error')
+                };
+                reject(error);
+            });
+
             if (body) req.write(body);
             req.end();
         });
@@ -3494,7 +3574,7 @@ export class K8sService {
             // Build discovery path: /api/v1 for core, /apis/<group>/<version> for others
             const discoveryPath = apiVersion === 'v1'
                 ? '/api/v1'
-                : `/apis/${apiVersion}`;
+                : `/apis/${apiVersion.split('/').map(encodeURIComponent).join('/')}`;
 
             const https = await import('https');
             const url = new URL(discoveryPath, cluster.server);
@@ -3507,6 +3587,7 @@ export class K8sService {
                     port: url.port || 443,
                     path: url.pathname,
                     method: 'GET',
+                    timeout: K8S_REQUEST_TIMEOUT_MS,
                     ...requestOptions
                 }, (res) => {
                     let body = '';
@@ -3518,6 +3599,10 @@ export class K8sService {
                             reject(new Error(`Discovery HTTP ${res.statusCode}`));
                         }
                     });
+                });
+                req.on('timeout', () => {
+                    req.destroy();
+                    reject(new Error('Discovery request timed out'));
                 });
                 req.on('error', reject);
                 req.end();

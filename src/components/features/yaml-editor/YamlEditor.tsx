@@ -1,40 +1,55 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Save, AlertTriangle, Eye, EyeOff, FileDiff } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Save, AlertTriangle, Eye, EyeOff, FileDiff, Server } from 'lucide-react';
 import Editor, { OnMount, BeforeMount } from '@monaco-editor/react';
 import { stripManagedFields } from '../../../utils/yaml-utils';
+import { computeDraft } from '../../../utils/yaml-draft-utils';
 import { DiffModal } from './DiffModal';
 
 interface YamlEditorProps {
+    /** Latest server/file content (the "base" the draft is diffed against). */
     initialYaml: string;
+    /** Unsaved draft to restore on mount (e.g. after switching back to this tab). */
+    initialDraft?: string;
     onSave: (newContent: string) => Promise<void>;
-    onContentChange?: (content: string) => void;
+    /** Reports the current unsaved draft, or `undefined` when the editor matches the base. */
+    onDraftChange?: (draft: string | undefined) => void;
+    /** Kube context the save will be applied to (shown in the toolbar). */
+    contextLabel?: string;
 }
 
-export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, onSave, onContentChange }) => {
-    const [yaml, setYaml] = useState(initialYaml);
+export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, initialDraft, onSave, onDraftChange, contextLabel }) => {
+    const [yaml, setYaml] = useState(initialDraft ?? initialYaml);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [isDirty, setIsDirty] = useState(false);
+    const [isDirty, setIsDirtyState] = useState(initialDraft !== undefined && initialDraft !== initialYaml);
     const [cursorPosition, setCursorPosition] = useState({ lineNumber: 1, column: 1 });
     const [hideSystemFields, setHideSystemFields] = useState(false);
     const [isReviewing, setIsReviewing] = useState(false);
-    const editorRef = useRef<any>(null);
-    // Track the last initialYaml we synced from — only reset editor when it changes
-    // to a value we didn't write ourselves (i.e. a server-side update after save)
-    const lastSyncedYamlRef = useRef(initialYaml);
 
-    // Only reset editor content when initialYaml changes AND it's different from what
-    // the user has typed (i.e. a fresh load or post-save server refresh, not our own writes)
+    // Refs mirror state so effects / Monaco commands always read the latest values
+    const isDirtyRef = useRef(isDirty);
+    const isSavingRef = useRef(false);
+    const handleSaveRef = useRef<() => void>(() => { });
+
+    const setIsDirty = (value: boolean) => {
+        isDirtyRef.current = value;
+        setIsDirtyState(value);
+    };
+
+    // What the editor shows when there are no unsaved edits
+    const displayedBase = useMemo(
+        () => (hideSystemFields ? stripManagedFields(initialYaml) : initialYaml),
+        [initialYaml, hideSystemFields]
+    );
+
+    // Apply external content changes (fresh load, post-save refresh, "Hide System Fields" toggle)
+    // but never clobber an unsaved draft. During a save the server response replaces the content.
     useEffect(() => {
-        if (initialYaml === lastSyncedYamlRef.current) return;
-        lastSyncedYamlRef.current = initialYaml;
-        const content = hideSystemFields ? stripManagedFields(initialYaml) : initialYaml;
-        setYaml(content);
-        setIsDirty(false);
-        if (editorRef.current) {
-            editorRef.current.setValue(content);
-        }
-    }, [initialYaml, hideSystemFields]);
+        if (isDirtyRef.current && !isSavingRef.current) return;
+        setYaml(displayedBase);
+        isDirtyRef.current = false;
+        setIsDirtyState(false);
+    }, [displayedBase]);
 
     const handleEditorWillMount: BeforeMount = (monaco) => {
         monaco.editor.defineTheme('lumen-dark', {
@@ -60,12 +75,12 @@ export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, 
     };
 
     const handleEditorDidMount: OnMount = (editor, monaco) => {
-        editorRef.current = editor;
-        editor.setValue(yaml); // Ensure content is set on mount
+        // Content is driven by the controlled `value` prop; no setValue here so
+        // programmatic updates never fire onChange / mark the editor dirty.
 
-        // Add Cmd+S binding
+        // Cmd+S — go through the ref so the latest handleSave (and isDirty) is used
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-            handleSave();
+            handleSaveRef.current();
         });
 
         // Track cursor position
@@ -80,27 +95,30 @@ export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, 
     const handleEditorChange = (value: string | undefined) => {
         const newValue = value || '';
         setYaml(newValue);
-        setIsDirty(true);
-        lastSyncedYamlRef.current = newValue; // track user edits so the effect doesn't overwrite them
-        onContentChange?.(newValue);
+        const draft = computeDraft(newValue, displayedBase);
+        setIsDirty(draft !== undefined);
+        onDraftChange?.(draft);
     };
 
     const handleSave = async () => {
         if (!isDirty && !hideSystemFields) return;
 
+        isSavingRef.current = true;
         setIsSaving(true);
         setError(null);
         try {
             await onSave(yaml);
-            lastSyncedYamlRef.current = yaml; // allow post-save server refresh to come through
             setIsDirty(false);
+            onDraftChange?.(undefined);
             setIsReviewing(false);
-        } catch (err: any) {
-            setError(err.message || "Failed to save YAML");
+        } catch (err: unknown) {
+            setError(err instanceof Error && err.message ? err.message : 'Failed to save YAML');
         } finally {
+            isSavingRef.current = false;
             setIsSaving(false);
         }
     };
+    handleSaveRef.current = () => { void handleSave(); };
 
     const handleToggleSystemFields = () => {
         if (isDirty) return; // Prevent toggling if edits exist to avoid conflict
@@ -111,10 +129,19 @@ export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, 
         <div className="flex flex-col h-full bg-[#0a0a0a] text-gray-300 font-mono text-sm relative overflow-hidden">
             {/* Toolbar */}
             <div className="flex-none flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#171717]">
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-widest">YAML Editor</span>
                         {isDirty && <span className="w-2 h-2 rounded-full bg-yellow-500" title="Unsaved changes"></span>}
+                        {contextLabel && (
+                            <span
+                                className="flex items-center gap-1 text-xs text-gray-400 bg-white/5 px-2 py-0.5 rounded-md font-mono truncate"
+                                title={`Changes will be applied to context ${contextLabel}`}
+                            >
+                                <Server size={12} className="shrink-0" />
+                                <span className="truncate">{contextLabel}</span>
+                            </span>
+                        )}
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -220,7 +247,7 @@ export const YamlEditor: React.FC<YamlEditorProps> = React.memo(({ initialYaml, 
             {/* Diff Modal */}
             {isReviewing && (
                 <DiffModal
-                    original={hideSystemFields ? stripManagedFields(initialYaml) : initialYaml}
+                    original={displayedBase}
                     modified={yaml}
                     onConfirm={handleSave}
                     onCancel={() => setIsReviewing(false)}

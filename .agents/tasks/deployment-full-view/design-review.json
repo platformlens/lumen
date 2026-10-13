@@ -1,0 +1,85 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "MEDIUM",
+      "section": "§2.2, §4",
+      "title": "Cross-cluster race on same-key remount",
+      "problem": "Dashboard is not keyed by cluster, so a cluster switch can keep DeploymentFullView mounted with the same key. Combined with the §4 coalescing rule (pendingRef), cluster A's in-flight response still holds the latest request id and gets applied and cached under cluster B. This contradicts 'data never leaks across clusters'.",
+      "fix": "Use key={`${clusterName}|${activeView}`} in DashboardContent. In the hook, capture reqKey per fetch, cache under reqKey, and apply only when id and reqKey both match current; the reset effect bumps requestIdRef and clears pendingRef."
+    },
+    {
+      "id": 2,
+      "severity": "MEDIUM",
+      "section": "§6.1 Logs, §6.6",
+      "title": "Logs action loses container selection",
+      "problem": "onOpenLogs({ name, namespace }, c) leaves App.handleOpenLogs with allContainers = [c], because it reads pod.spec.containers/initContainers. Sidecar and init logs become unreachable, a regression compared with the Pods view.",
+      "fix": "Pass { name, namespace, spec: { containers: non-init names, initContainers: init names } } built from DeploymentPodSummary.containers; type the prop accordingly; firstMainContainerName = first kind==='main'."
+    },
+    {
+      "id": 3,
+      "severity": "NIT",
+      "section": "§3.3",
+      "title": "filterHpa call-site signature mismatch",
+      "fix": ".then(list => filterHpa(list, name))"
+    },
+    {
+      "id": 4,
+      "severity": "NIT",
+      "section": "§4, §9",
+      "title": "Effect described inline but §9 says it delegates to decideLiveRefresh",
+      "fix": "Make the §4 effect call decideLiveRefresh(stateRef.current, liveRv, fetchedRv) and schedule the debounce when action==='debounce'."
+    },
+    {
+      "id": 5,
+      "severity": "NIT",
+      "section": "§5.1",
+      "title": "Token regex misses quoted or punctuated RS names",
+      "fix": "Use (^|[\\s\"'(])name($|[\\s\"',.:)]) and add a quoted-name test."
+    },
+    {
+      "id": 6,
+      "severity": "NIT",
+      "section": "§3.3",
+      "title": "classifyK8sError 401 rules diverge from is401Error",
+      "fix": "Also classify messages matching /\\b401\\b|Unauthorized/ as 'unauthorized'."
+    },
+    {
+      "id": 7,
+      "severity": "NIT",
+      "section": "§3.3",
+      "title": "podMetrics can never be forbidden because getPodMetrics swallows errors",
+      "fix": "UI text: 'Metrics unavailable (metrics-server missing or no permission)'."
+    },
+    {
+      "id": 8,
+      "severity": "NIT",
+      "section": "§3.3, §8",
+      "title": "Worst-case aggregate latency not stated",
+      "fix": "State that settle timeouts are per call and document the ~70 s bound; optionally use a 10 s per-section default."
+    },
+    {
+      "id": 9,
+      "severity": "NIT",
+      "section": "§6.6",
+      "title": "SchedulingConstraints raw JSON scope",
+      "fix": "Serialize only the scheduling fields, never the whole template.spec (which holds unmasked env)."
+    },
+    {
+      "id": 10,
+      "severity": "NIT",
+      "section": "§2.2",
+      "title": "Actions column renders without a handler",
+      "fix": "Append the column only when onOpenFullView is defined."
+    },
+    {
+      "id": 11,
+      "severity": "NIT",
+      "section": "§6.4",
+      "title": "DrawerRevision.creationTimestamp is a Date over IPC",
+      "fix": "Type it as string | Date and keep the YAML output byte-identical with the fixture."
+    }
+  ],
+  "reviewDoc": "/Users/MohammedRashid.Matin/Development/lumen/.agents/tasks/deployment-full-view/design-review.md"
+}

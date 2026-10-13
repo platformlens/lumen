@@ -1,16 +1,23 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, utilityProcess, nativeImage, powerMonitor } from 'electron'
 import { fromNodeProviderChain } from '@aws-sdk/credential-providers';
 import fixPath from 'fix-path';
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import os from 'node:os'
 import { K8sService } from './k8s'
-import { TerminalService } from './terminal'
+import { TerminalService, setLocalTerminalEnabled } from './terminal'
+import { isValidTerminalContext } from './terminal-kubeconfig'
+import { KubeconfigRenameError } from './kubeconfig-files'
+import type { RenameClusterResult } from '../src/types/cluster-context'
 import { AwsService } from './aws'
+import { KubeconfigWatcher } from './kubeconfig-watcher'
 import { ContextEngine } from './context-engine/context-engine'
 import { ContextEngineConfig } from './context-engine/types'
 import { ChatSessionManager } from './context-engine/chat-session'
+import { EncryptedStore } from './security/encrypted-store'
+import { isSafeExternalUrl } from './security/url-validator'
+import { getAuditLogger } from './security/audit-logger'
+import { redact } from './security/redaction'
 import { createGoogleGenerativeAI, type GoogleGenerativeAIProviderOptions } from '@ai-sdk/google';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -34,6 +41,10 @@ import {
 } from './ai-prompt-cache';
 import { AI_THINK_CLOSE, AI_THINK_OPEN } from '../src/utils/ai-thinking';
 import { geminiThinkingConfigForModel } from '../src/utils/gemini-thinking-config';
+import { getSecretStore, maskSecret } from './security/secret-store'
+import { classify, isAllowed } from './security/mutation-policy'
+import { safeHandle, safeOn } from './ipc/validation'
+import { z } from 'zod'
 import dotenv from 'dotenv'
 
 function serializeAiUsageForRenderer(u: LanguageModelUsage | undefined) {
@@ -53,11 +64,17 @@ function serializeAiUsageForRenderer(u: LanguageModelUsage | undefined) {
 import Store from 'electron-store'
 import { Worker } from 'worker_threads'
 import { WatcherBatchBuffer } from './watcher-batch-buffer'
+import { createTransformWorkerClient } from './transform-worker-client'
 import type { TransformRequest, TransformResponse } from './resource-transform-worker'
 import type { AuditLogWorkerRequest, AuditLogWorkerResponse } from './audit-log-worker'
-import type { LightweightPod, WorkerOutbound } from '../src/types/pod-worker'
+import type { WorkerInboundV2, WorkerOutboundV2 } from '../src/types/pod-worker'
+import { WatchManager } from './resource-cache/watch-manager'
+import type { PodWorkerPort } from './resource-cache/pod-adapter'
+import { registerResourceCacheIpc } from './ipc/resource-cache-ipc'
 import { artifactHubFetchMain } from './artifacthub-fetch'
 import { getHelmCatalogForIpc } from './helm-catalog-main'
+import { CrossplaneService } from './crossplane'
+import { registerCrossplaneIpc } from './crossplane-ipc'
 
 // Fix PATH for MacOS to find aws/kubectl etc
 fixPath();
@@ -169,6 +186,24 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 /** App/window/dock icon: `public/` in dev, Vite `dist/` in packaged builds. */
 const APP_LOGO_PNG = path.join(process.env.VITE_PUBLIC, 'logo-new.png')
 
+/**
+ * On macOS, the dock icon comes from the .icns embedded in the app bundle (via electron-builder).
+ * We only need to set it manually during development. For Windows/Linux, the PNG is used directly.
+ */
+function getAppIcon(): Electron.NativeImage | string | undefined {
+  if (process.platform === 'darwin') {
+    // In packaged builds, macOS uses the .icns from the app bundle automatically.
+    // In dev, we create a properly sized nativeImage so the dock icon looks correct.
+    if (VITE_DEV_SERVER_URL) {
+      const image = nativeImage.createFromPath(APP_LOGO_PNG)
+      // Resize to standard macOS icon size to avoid oversized dock icon
+      return image.resize({ width: 512, height: 512 })
+    }
+    return undefined // Let macOS use the bundled .icns
+  }
+  return APP_LOGO_PNG
+}
+
 const store = new Store();
 
 setLangfuseTraceAnalyticsPreferenceReader(() => {
@@ -177,8 +212,25 @@ setLangfuseTraceAnalyticsPreferenceReader(() => {
 });
 syncLangfuseOtelWithStore();
 
-const k8sService = new K8sService()
+const k8sService = new K8sService((store.get('settings_kubeconfigPath') as string) || undefined)
+// Crossplane view: read-only service with isolated per-context KubeConfigs
+const crossplaneService = new CrossplaneService({
+  kubeConfigFactory: (ctx) => k8sService.createContextKubeConfig(ctx),
+  emitProgress: (p) => { if (win && !win.isDestroyed()) win.webContents.send('crossplane:scanProgress', p); },
+})
+// Live kubeconfig refresh: poll the kubeconfig file(s); K8sService hash-checks content before reloading
+const kubeconfigWatcher = new KubeconfigWatcher(() => k8sService.refreshKubeConfig())
+kubeconfigWatcher.setFiles(k8sService.getKubeconfigFiles())
+k8sService.onKubeconfigChanged((payload) => {
+  // Edited contexts (server URL, CA, credentials) must not keep stale Crossplane clients
+  crossplaneService.invalidateKubeConfigs()
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('k8s:contextsChanged', payload)
+  }
+})
 const terminalService = new TerminalService()
+// Initialize local terminal feature gate from store (defaults to true)
+setLocalTerminalEnabled((store.get('settings_enableLocalTerminal') as boolean) ?? true);
 const awsService = new AwsService()
 awsService.sendToAuditLogWorker = sendToAuditLogWorker;
 
@@ -189,35 +241,33 @@ const contextEngineConfig: ContextEngineConfig = (store.get('contextEngineConfig
   anomalyDetectionEnabled: true,
 };
 const contextEngine = new ContextEngine(contextEngineConfig);
-// Generation counters to prevent stale watcher callbacks from feeding the store.
-// When a watcher restarts, the generation increments. Callbacks from old generations are ignored.
-let podWatchGeneration = 0;
-let deploymentWatchGeneration = 0;
+// Generation counter to prevent stale node watcher callbacks from feeding the store.
+// Deployments, pods, secrets, configmaps, services and helm releases are owned by WatchManager.
 let nodeWatchGeneration = 0;
-// Track last-watched namespace scope per kind to avoid unnecessary clearKind calls
-let lastPodWatchScope = '';
-let lastDeploymentWatchScope = '';
-let podBatchBuffer: WatcherBatchBuffer | null = null;
-let deploymentBatchBuffer: WatcherBatchBuffer | null = null;
 let nodeBatchBuffer: WatcherBatchBuffer | null = null;
-let helmBatchBuffer: WatcherBatchBuffer | null = null;
-let helmWatchGeneration = 0;
 // Per-resource-type batch buffers for generic watcher resources that have worker transforms
 const genericBatchBuffers = new Map<string, WatcherBatchBuffer>();
 const genericWatchGenerations = new Map<string, number>();
 // Map generic watch keys to worker resourceType values
 const WATCH_KEY_TO_WORKER_TYPE: Record<string, string> = {
   replicasets: 'replicaset',
-  secrets: 'secret',
   persistentvolumes: 'persistentvolume',
   persistentvolumeclaims: 'persistentvolumeclaim',
 };
-const chatSessionManager = new ChatSessionManager(store);
+// Initialize Encrypted Store for encrypting larger data blobs (chat history) at rest
+const encryptedStore = new EncryptedStore(store);
+
+const chatSessionManager = new ChatSessionManager({
+  encryptedStore,
+  legacyStore: store,
+  isHistoryEnabled: () => (store.get('settings_enableAiHistory') as boolean) ?? true,
+});
+
+// Migrate any plaintext chat sessions to encrypted storage
+encryptedStore.migratePlaintextSessions(store);
 
 // Spawn resource transform worker once at startup
 const workerPath = path.join(__dirname, 'resource-transform-worker.js');
-let transformWorker: Worker | null = null;
-const pendingTransforms = new Map<string, (response: TransformResponse) => void>();
 let transformRequestId = 0;
 
 // Spawn audit-log worker (lazily on first request)
@@ -225,34 +275,9 @@ const auditLogWorkerPath = path.join(__dirname, 'audit-log-worker.js');
 let auditLogWorker: Worker | null = null;
 const pendingAuditLogRequests = new Map<string, (response: AuditLogWorkerResponse) => void>();
 
-function getOrCreateWorker(): Worker {
-  if (!transformWorker) {
-    transformWorker = new Worker(workerPath);
-    transformWorker.on('message', (response: TransformResponse) => {
-      const resolve = pendingTransforms.get(response.id);
-      if (resolve) {
-        pendingTransforms.delete(response.id);
-        resolve(response);
-      }
-    });
-    transformWorker.on('error', (err) => {
-      console.error('[Worker] Transform worker error:', err);
-      transformWorker = null;
-    });
-    transformWorker.on('exit', (code) => {
-      if (code !== 0) console.error('[Worker] Transform worker exited with code', code);
-      transformWorker = null;
-    });
-  }
-  return transformWorker;
-}
-
-function sendToWorker(request: TransformRequest): Promise<TransformResponse> {
-  return new Promise((resolve) => {
-    pendingTransforms.set(request.id, resolve);
-    getOrCreateWorker().postMessage(request);
-  });
-}
+// Transform worker client: per-worker pending sets + 15 s timeout (design §3.5.1, fixes D9)
+const transformClient = createTransformWorkerClient({ createWorker: () => new Worker(workerPath) });
+const sendToWorker = (request: TransformRequest): Promise<TransformResponse> => transformClient.sendToWorker(request);
 
 function getOrCreateAuditLogWorker(): Worker {
   if (!auditLogWorker) {
@@ -283,162 +308,160 @@ function sendToAuditLogWorker(request: AuditLogWorkerRequest): Promise<AuditLogW
   });
 }
 
-// --- Pod Worker (utilityProcess) ---
+// --- Pod Worker (utilityProcess) + background resource cache (design §3.6, §3.7) ---
 const podWorkerPath = path.join(__dirname, 'k8s-pod-worker.js');
 let podWorker: Electron.UtilityProcess | null = null;
-const pendingChunkRequests = new Map<string, (pods: LightweightPod[]) => void>();
-// Track UID → {name, namespace} so context engine deletes work (pod worker only sends UID for deletes)
-const podUidMap = new Map<string, { name: string; namespace: string }>();
+let podWorkerRespawnPending = false;
+let appQuitting = false;
+
+// Every caller goes through the port, so nothing can spawn a second worker inside the respawn window.
+const podWorkerPort: PodWorkerPort = {
+  isAvailable: () => !!podWorker && !podWorkerRespawnPending && !appQuitting,
+  post(msg: WorkerInboundV2) {
+    if (appQuitting || podWorkerRespawnPending) return false;
+    if (!podWorker) podWorker = spawnPodWorker(); // lazy first spawn only
+    podWorker.postMessage(msg);
+    return true;
+  },
+};
+
+const watchManager = new WatchManager({
+  createKubeConfig: (ctx) => k8sService.createKubeConfig(ctx),
+  sendToTransformWorker: sendToWorker,
+  podWorker: podWorkerPort,
+  contextEngine,
+  getKubeconfigPath: () => k8sService.getCustomKubeconfigPath(),
+  getLegacyMapSizes: () => ({ ...k8sService.getLegacyMapSizes(), genericWatchGenerations: genericWatchGenerations.size }),
+  pendingTransforms: () => transformClient.pendingTransformCount(),
+});
 
 function spawnPodWorker(): Electron.UtilityProcess {
   const worker = utilityProcess.fork(podWorkerPath);
-
-  worker.on('message', (msg: WorkerOutbound) => {
-    switch (msg.type) {
-      case 'pod-delta-batch':
-        if (win && !win.isDestroyed()) win.webContents.send('k8s-pod-delta-batch', msg.deltas);
-        // Forward deltas to context engine so AI summaries stay in sync
-        for (const delta of msg.deltas) {
-          try {
-            if (delta.action === 'delete' && delta.uid) {
-              const info = podUidMap.get(delta.uid);
-              if (info) {
-                contextEngine.handleResourceEvent('Pod', 'DELETED', {
-                  metadata: { uid: delta.uid, name: info.name, namespace: info.namespace },
-                });
-                podUidMap.delete(delta.uid);
-              }
-            } else if (delta.pod) {
-              const p = delta.pod;
-              podUidMap.set(p.uid, { name: p.name, namespace: p.namespace });
-              // Build a minimal raw-pod-shaped object for the context engine extractor
-              const pseudoRaw = {
-                metadata: { uid: p.uid, name: p.name, namespace: p.namespace, creationTimestamp: p.age },
-                status: {
-                  phase: p.status === 'Terminating' ? 'Running' : p.status,
-                  containerStatuses: p.containers.filter(c => c.name !== '').map(c => ({
-                    name: c.name,
-                    ready: c.ready,
-                    restartCount: c.restartCount,
-                    state: c.state === 'running' ? { running: {} }
-                      : c.state === 'waiting' ? { waiting: { reason: 'Waiting' } }
-                      : { terminated: { reason: 'Terminated' } },
-                  })),
-                  conditions: [],
-                },
-                spec: { containers: [] },
-              };
-              const eventType = delta.action === 'add' ? 'ADDED' : 'MODIFIED';
-              contextEngine.handleResourceEvent('Pod', eventType, pseudoRaw);
-            }
-          } catch (err) {
-            console.error('[ContextEngine] Error processing pod worker delta:', err);
-          }
-        }
-        break;
-      case 'informer-synced':
-        if (win && !win.isDestroyed()) win.webContents.send('k8s-pod-informer-synced', { count: msg.count });
-        break;
-      case 'informer-error':
-        if (win && !win.isDestroyed()) win.webContents.send('k8s-pod-informer-error', {
-          error: msg.error,
-          recoverable: msg.recoverable,
-        });
-        break;
-      case 'pods-chunk-reply': {
-        const resolve = pendingChunkRequests.get(msg.requestId);
-        if (resolve) {
-          pendingChunkRequests.delete(msg.requestId);
-          resolve(msg.payload);
-        }
-        break;
-      }
-      case 'informer-stopped':
-        contextEngine.clearKind('Pod');
-        podUidMap.clear();
-        break;
-    }
-  });
-
+  worker.on('message', (msg: WorkerOutboundV2) => watchManager.onPodWorkerMessage(msg));
   worker.on('exit', (code) => {
+    if (podWorker === worker) podWorker = null;
+    if (code === 0 || appQuitting) return;
     console.error(`[pod-worker] exited with code ${code}`);
-    podWorker = null;
-    if (code !== 0) {
-      setTimeout(() => { podWorker = spawnPodWorker(); }, 2000);
-    }
+    podWorkerRespawnPending = true;
+    setTimeout(() => {
+      podWorkerRespawnPending = false;
+      if (appQuitting) return;
+      podWorker = spawnPodWorker();
+      watchManager.onPodWorkerRespawned();
+    }, 2000);
   });
-
   return worker;
-}
-
-function ensurePodWorker(): Electron.UtilityProcess {
-  if (!podWorker) podWorker = spawnPodWorker();
-  return podWorker;
 }
 
 app.on('before-quit', () => {
   void shutdownLangfuseOtel().catch(() => {});
+  // Kill all terminal PTYs and remove their per-terminal kubeconfig files
+  terminalService.disposeAll();
   // Stop all K8s watchers to prevent reconnection loops during shutdown
   k8sService.stopAllWatchers();
+  kubeconfigWatcher.stop();
 
   // Clean up batch buffers
-  if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
-  if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
   if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
-  if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
   for (const [, buffer] of genericBatchBuffers) {
     buffer.destroy();
   }
   genericBatchBuffers.clear();
 
+  // Set before kill(): kill() exits non-zero and would otherwise schedule a respawn
+  appQuitting = true;
+  watchManager.stopSession('quit');
   if (podWorker) {
     podWorker.kill();
     podWorker = null;
   }
-  pendingChunkRequests.clear();
 });
 
 
+/**
+ * Enforce mutation policy for a Kubernetes IPC channel.
+ * Checks Safe Mode state and logs MUTATE/DESTRUCTIVE actions via AuditLogger.
+ * Throws an error if the action is blocked by Safe Mode.
+ */
+function enforceMutationPolicy(
+  channel: string,
+  opts: { context?: string; namespace?: string; resourceName?: string; resourceKind?: string } = {}
+): void {
+  const safeModeEnabled = (store.get('settings_safeMode') as boolean) ?? false;
+  const actionClass = classify(channel);
+
+  if (actionClass === 'READ') return;
+
+  if (!isAllowed(channel, safeModeEnabled)) {
+    const auditLogger = getAuditLogger();
+    auditLogger.log({
+      action: channel,
+      category: actionClass,
+      context: opts.context,
+      namespace: opts.namespace,
+      resourceName: opts.resourceName,
+      resourceKind: opts.resourceKind,
+      result: 'blocked by safe mode',
+    });
+    throw new Error('Application is in read-only mode. Disable Safe Mode to perform this action.');
+  }
+
+  // Log allowed MUTATE/DESTRUCTIVE actions
+  const auditLogger = getAuditLogger();
+  auditLogger.log({
+    action: channel,
+    category: actionClass,
+    context: opts.context,
+    namespace: opts.namespace,
+    resourceName: opts.resourceName,
+    resourceKind: opts.resourceKind,
+    result: 'success',
+  });
+}
+
 function registerIpcHandlers() {
+  // --- Crossplane (read-only) ---
+  registerCrossplaneIpc(crossplaneService);
+
   // --- AWS Handlers ---
   ipcMain.handle('aws:getEksCluster', async (_, region, clusterName) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getEksCluster(region, clusterName, creds);
   });
 
   ipcMain.handle('aws:getVpcDetails', async (_, region, vpcId) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getVpcDetails(region, vpcId, creds);
   });
 
   ipcMain.handle('aws:getSubnets', async (_, region, vpcId) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getSubnets(region, vpcId, creds);
   });
 
   ipcMain.handle('aws:getInstanceDetails', async (_, region, instanceId) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getInstanceDetails(region, instanceId, creds);
   });
 
   ipcMain.handle('aws:getEc2Instances', async (_, region, vpcId, clusterName) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getEc2Instances(region, vpcId, clusterName, creds);
   });
 
   ipcMain.handle('aws:getPodIdentities', async (_, region, clusterName) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.getPodIdentities(region, clusterName, creds);
   });
 
   ipcMain.handle('aws:lookupCloudTrailEvents', async (_, params) => {
-    const creds = store.get('awsCreds');
+    const creds = await getAwsCreds();
     return awsService.lookupCloudTrailEvents(params, creds);
   });
 
   ipcMain.handle('aws:queryAuditLogs', async (_, params) => {
     try {
-      const creds = store.get('awsCreds');
+      const creds = await getAwsCreds();
       return await awsService.queryAuditLogs(params, creds);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error querying audit logs';
@@ -448,7 +471,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('aws:checkAuth', async (_, region) => {
-    const savedCreds = store.get('awsCreds') as AwsCreds | undefined;
+    const savedCreds = await getAwsCreds();
 
     // If manual creds are saved, use them directly
     if (savedCreds && savedCreds.accessKeyId && savedCreds.secretAccessKey) {
@@ -518,6 +541,7 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:forceCredentialRefresh', () => {
     console.log('IPC: k8s:forceCredentialRefresh called');
     k8sService.forceCredentialRefresh();
+    crossplaneService.invalidateKubeConfigs();
     return true;
   });
 
@@ -595,11 +619,19 @@ function registerIpcHandlers() {
     return k8sService.getDeploymentRevisions(contextName, namespace, deploymentName);
   })
 
+  // Read-only (mutation-policy classifies it READ). Validated: context, DNS-1123 namespace label, DNS-1123 name subdomain.
+  safeHandle('k8s:getDeploymentFullDetails', z.tuple([
+    z.string().min(1).max(253),
+    z.string().regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/).max(63),
+    z.string().regex(/^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$/).max(253),
+  ]), async (_e, [context, namespace, name]) => k8sService.getDeploymentFullDetails(context, namespace, name));
+
   ipcMain.handle('k8s:getReplicaSet', (_, contextName, namespace, name) => {
     return k8sService.getReplicaSet(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:scaleDeployment', (_, contextName, namespace, name, replicas) => {
+    enforceMutationPolicy('k8s:scaleDeployment', { context: contextName, namespace, resourceName: name, resourceKind: 'Deployment' });
     return k8sService.scaleDeployment(contextName, namespace, name, replicas);
   })
 
@@ -645,14 +677,17 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:restartDeployment', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:restartDeployment', { context: contextName, namespace, resourceName: name, resourceKind: 'Deployment' });
     return k8sService.restartDeployment(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:restartDaemonSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:restartDaemonSet', { context: contextName, namespace, resourceName: name, resourceKind: 'DaemonSet' });
     return k8sService.restartDaemonSet(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:restartStatefulSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:restartStatefulSet', { context: contextName, namespace, resourceName: name, resourceKind: 'StatefulSet' });
     return k8sService.restartStatefulSet(contextName, namespace, name);
   })
 
@@ -692,6 +727,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('k8s:deleteNode', async (_event, contextName, name) => {
+    enforceMutationPolicy('k8s:deleteNode', { context: contextName, resourceName: name, resourceKind: 'Node' });
     return k8sService.deleteNode(contextName, name);
   });
 
@@ -731,6 +767,7 @@ function registerIpcHandlers() {
 
 
   ipcMain.handle('k8s:startPortForward', (_, contextName, namespace, serviceName, servicePort, localPort, resourceType) => {
+    enforceMutationPolicy('k8s:startPortForward', { context: contextName, namespace, resourceName: serviceName, resourceKind: resourceType || 'Service' });
     return k8sService.startPortForward(contextName, namespace, serviceName, servicePort, localPort, resourceType);
   })
 
@@ -747,6 +784,15 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('shell:openExternal', (_, url) => {
+    if (!isSafeExternalUrl(url)) {
+      const auditLogger = getAuditLogger();
+      auditLogger.log({
+        action: 'shell:openExternal',
+        category: 'SECURITY',
+        result: `Blocked unsafe URL: ${typeof url === 'string' ? url.slice(0, 200) : 'non-string value'}`,
+      });
+      return Promise.reject(new Error(`URL validation failed: the provided URL is not allowed to be opened externally`));
+    }
     return shell.openExternal(url);
   })
 
@@ -917,6 +963,14 @@ function registerIpcHandlers() {
         activeExplainAbort.abort();
         activeExplainAbort = null;
       }
+
+      // Check AI data consent before proceeding
+      const aiConsent = (store.get('settings_aiDataConsent') as boolean) ?? false;
+      if (!aiConsent) {
+        event.sender.send('ai:explainResourceStream:error', 'AI data sharing is disabled. Enable it in Settings to use AI features.');
+        return;
+      }
+
       activeExplainAbort = new AbortController();
       const explainAbortSignal = activeExplainAbort.signal;
 
@@ -931,7 +985,7 @@ function registerIpcHandlers() {
 
       if (!useLmStudioNative) {
         if (provider === 'google') {
-          const apiKey = getApiKey();
+          const apiKey = await getApiKey();
           if (!apiKey) {
             event.sender.send('ai:explainResourceStream:error', 'GEMINI_API_KEY not configured.');
             activeExplainAbort = null;
@@ -940,7 +994,7 @@ function registerIpcHandlers() {
           const google = createGoogleGenerativeAI({ apiKey });
           aiModel = google(model);
         } else if (provider === 'bedrock') {
-          const bedrockConfig = getBedrockConfig();
+          const bedrockConfig = await getBedrockConfig();
           const bedrock = createAmazonBedrock(bedrockConfig);
           aiModel = bedrock(model);
         } else if (provider === 'local') {
@@ -1007,7 +1061,7 @@ function registerIpcHandlers() {
         ${relatedContext}
         
         Resource JSON:
-        ${JSON.stringify(stripResourceForAI(resource), null, 2)}
+        ${JSON.stringify(redact(stripResourceForAI(resource)), null, 2)}
       `;
 
       let fullResponse = '';
@@ -1148,6 +1202,13 @@ function registerIpcHandlers() {
       activeCustomPromptAbort = null;
     }
 
+    // Check AI data consent before proceeding
+    const aiConsent = (store.get('settings_aiDataConsent') as boolean) ?? false;
+    if (!aiConsent) {
+      event.sender.send('ai:customPromptStream:error', 'AI data sharing is disabled. Enable it in Settings to use AI features.');
+      return;
+    }
+
     // Create new abort controller for this stream
     activeCustomPromptAbort = new AbortController();
     const abortSignal = activeCustomPromptAbort.signal;
@@ -1165,7 +1226,7 @@ function registerIpcHandlers() {
 
       if (!useLmStudioNative) {
         if (provider === 'google') {
-          const apiKey = getApiKey();
+          const apiKey = await getApiKey();
           if (!apiKey) {
             event.sender.send('ai:customPromptStream:error', 'GEMINI_API_KEY not configured.');
             activeCustomPromptAbort = null;
@@ -1175,7 +1236,7 @@ function registerIpcHandlers() {
           const google = createGoogleGenerativeAI({ apiKey });
           aiModel = google(model);
         } else if (provider === 'bedrock') {
-          const bedrockConfig = getBedrockConfig();
+          const bedrockConfig = await getBedrockConfig();
           const bedrock = createAmazonBedrock(bedrockConfig);
           aiModel = bedrock(model);
         } else if (provider === 'local') {
@@ -1574,8 +1635,8 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:checkAwsAuth', async () => {
     try {
       const grantedCreds = awsService.getGrantedCredentials();
-      const savedCreds = getAwsCreds();
-      const config = getBedrockConfig();
+      const savedCreds = await getAwsCreds();
+      const config = await getBedrockConfig();
 
       const client = new BedrockClient({
         region: config.region,
@@ -1616,7 +1677,7 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:listModels', async (_, provider: string) => {
     if (provider === 'google') {
       try {
-        const apiKey = getApiKey();
+        const apiKey = await getApiKey();
         if (!apiKey) return [];
 
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
@@ -1640,7 +1701,7 @@ function registerIpcHandlers() {
       }
     } else if (provider === 'bedrock') {
       try {
-        const config = getBedrockConfig();
+        const config = await getBedrockConfig();
         const client = new BedrockClient({
           region: config.region,
           credentials: config.credentialProvider
@@ -1774,138 +1835,8 @@ function registerIpcHandlers() {
 
 
   ipcMain.handle('k8s:deletePod', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deletePod', { context: contextName, namespace, resourceName: name, resourceKind: 'Pod' });
     return k8sService.deletePod(contextName, namespace, name);
-  })
-
-  ipcMain.on('k8s:watchPods', (event, contextName, namespaces) => {
-    k8sService.stopPodWatch();
-    if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
-    const newScope = Array.isArray(namespaces) ? namespaces.sort().join(',') : '';
-    if (newScope !== lastPodWatchScope) {
-      contextEngine.clearKind('Pod');
-      lastPodWatchScope = newScope;
-    }
-    const gen = ++podWatchGeneration;
-
-    podBatchBuffer = new WatcherBatchBuffer({
-      flushIntervalMs: 500,
-      onFlush: async (events) => {
-        if (gen !== podWatchGeneration) return;
-        try {
-          const request: TransformRequest = {
-            id: `pod-${++transformRequestId}`,
-            resourceType: 'pod',
-            events,
-          };
-          const response = await sendToWorker(request);
-          if (response.error) console.warn('[Worker] Pod transform warning:', response.error);
-          if (response.events.length > 0 && gen === podWatchGeneration) {
-            event.sender.send('k8s:podBatchChange', response.events.map(e => ({ type: e.type, pod: e.resource })));
-          }
-        } catch (err) {
-          console.error('[Worker] Pod batch transform error:', err);
-        }
-      },
-    });
-
-    k8sService.startPodWatch(contextName, namespaces, (type, rawPod) => {
-      if (gen !== podWatchGeneration) return;
-      try {
-        contextEngine.handleResourceEvent('Pod', type as 'ADDED' | 'MODIFIED' | 'DELETED', rawPod);
-      } catch (err) {
-        console.error('[ContextEngine] Error processing pod event:', err);
-      }
-      // Backward compatibility: send individual transformed events
-      const containerStatuses = rawPod.status?.containerStatuses || [];
-      const initContainerStatuses = rawPod.status?.initContainerStatuses || [];
-      const allStatuses = [...initContainerStatuses, ...containerStatuses];
-      const phase = rawPod.metadata?.deletionTimestamp ? 'Terminating' : (rawPod.status?.phase || 'Unknown');
-      const transformedPod = {
-        name: rawPod.metadata?.name,
-        namespace: rawPod.metadata?.namespace,
-        status: phase,
-        restarts: containerStatuses.reduce((acc: number, c: Record<string, unknown>) => acc + ((c?.restartCount as number) || 0), 0),
-        age: rawPod.metadata?.creationTimestamp,
-        containers: allStatuses.map((c: Record<string, unknown>) => ({
-          name: c?.name,
-          state: (c?.state as Record<string, unknown>)?.running ? 'running' : ((c?.state as Record<string, unknown>)?.waiting ? 'waiting' : 'terminated'),
-          ready: c?.ready,
-          image: c?.image,
-          restartCount: c?.restartCount
-        })),
-        metadata: rawPod.metadata,
-        spec: rawPod.spec,
-        node: rawPod.spec?.nodeName,
-        rawStatus: rawPod.status,
-      };
-      event.sender.send('k8s:podChange', type, transformedPod);
-      // Push RAW event to batch buffer (worker will transform)
-      podBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: rawPod });
-    });
-  })
-
-  ipcMain.on('k8s:stopWatchPods', () => {
-    k8sService.stopPodWatch();
-    if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
-  })
-
-  ipcMain.on('k8s:watchDeployments', (event, contextName, namespaces) => {
-    k8sService.stopDeploymentWatch();
-    if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
-    const newScope = Array.isArray(namespaces) ? namespaces.sort().join(',') : '';
-    if (newScope !== lastDeploymentWatchScope) {
-      contextEngine.clearKind('Deployment');
-      lastDeploymentWatchScope = newScope;
-    }
-    const gen = ++deploymentWatchGeneration;
-
-    deploymentBatchBuffer = new WatcherBatchBuffer({
-      flushIntervalMs: 150,
-      onFlush: async (events) => {
-        if (gen !== deploymentWatchGeneration) return;
-        try {
-          const request: TransformRequest = {
-            id: `dep-${++transformRequestId}`,
-            resourceType: 'deployment',
-            events,
-          };
-          const response = await sendToWorker(request);
-          if (response.error) console.warn('[Worker] Deployment transform warning:', response.error);
-          if (response.events.length > 0 && gen === deploymentWatchGeneration) {
-            event.sender.send('k8s:deploymentBatchChange', response.events.map(e => ({ type: e.type, deployment: e.resource })));
-          }
-        } catch (err) {
-          console.error('[Worker] Deployment batch transform error:', err);
-        }
-      },
-    });
-
-    k8sService.startDeploymentWatch(contextName, namespaces, (type, rawDep) => {
-      if (gen !== deploymentWatchGeneration) return;
-      try {
-        contextEngine.handleResourceEvent('Deployment', type as 'ADDED' | 'MODIFIED' | 'DELETED', rawDep);
-      } catch (err) {
-        console.error('[ContextEngine] Error processing deployment event:', err);
-      }
-      // Backward compatibility: send individual transformed events
-      const transformedDep = {
-        name: rawDep.metadata?.name,
-        namespace: rawDep.metadata?.namespace,
-        replicas: rawDep.spec?.replicas,
-        availableReplicas: rawDep.status?.availableReplicas,
-        status: rawDep.status,
-        metadata: rawDep.metadata,
-        spec: rawDep.spec
-      };
-      event.sender.send('k8s:deploymentChange', type, transformedDep);
-      // Push RAW event to batch buffer (worker will transform)
-      deploymentBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: rawDep });
-    });
-  })
-
-  ipcMain.on('k8s:stopWatchDeployments', () => {
-    k8sService.stopDeploymentWatch();
-    if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
   })
 
   ipcMain.on('k8s:watchNodes', (event, contextName) => {
@@ -1957,12 +1888,18 @@ function registerIpcHandlers() {
     if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
   })
 
-  ipcMain.on('k8s:watchGenericResource', (event, contextName, resourceType, apiPath) => {
+  // Watch keys are `${view}@${cluster}#${nonce}` (+ `:${ns}`), unique per renderer effect run (D3)
+  safeOn('k8s:watchGenericResource', z.tuple([
+    z.string().min(1).max(253),
+    z.string().min(1).max(1024),
+    z.string().min(1).max(1024).startsWith('/'),
+  ]), (event, [contextName, resourceType, apiPath]) => {
     // Clean up any existing batch buffer for this resource type
     const existingBuffer = genericBatchBuffers.get(resourceType);
     if (existingBuffer) { existingBuffer.destroy(); genericBatchBuffers.delete(resourceType); }
 
-    const workerType = WATCH_KEY_TO_WORKER_TYPE[resourceType];
+    const baseKey = resourceType.split('@')[0].split(':')[0];
+    const workerType = Object.prototype.hasOwnProperty.call(WATCH_KEY_TO_WORKER_TYPE, baseKey) ? WATCH_KEY_TO_WORKER_TYPE[baseKey] : undefined;
 
     if (workerType) {
       // Resource types with worker transforms get batch buffering + off-thread transformation
@@ -1993,9 +1930,7 @@ function registerIpcHandlers() {
 
       k8sService.startGenericWatch(contextName, resourceType, apiPath, (type, resource) => {
         if (genericWatchGenerations.get(resourceType) !== gen) return;
-        // Still send individual raw events for backward compatibility
-        event.sender.send('k8s:genericResourceChange', resourceType, type, resource);
-        // Push raw event to batch buffer for worker transform
+        // Worker-batched kinds are consumed only through the batch channel (no raw duplicate send, D4)
         batchBuffer.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource });
       });
     } else {
@@ -2006,8 +1941,10 @@ function registerIpcHandlers() {
     }
   })
 
-  ipcMain.on('k8s:stopWatchGenericResource', (_, resourceType) => {
-    k8sService.stopGenericWatch(resourceType);
+  safeOn('k8s:stopWatchGenericResource', z.string().min(1).max(1024), (_, resourceType) => {
+    // Final cleanup: per-run unique keys must not grow the generation / rv maps
+    k8sService.disposeGenericWatch(resourceType);
+    genericWatchGenerations.delete(resourceType);
     const buffer = genericBatchBuffers.get(resourceType);
     if (buffer) { buffer.destroy(); genericBatchBuffers.delete(resourceType); }
   })
@@ -2036,6 +1973,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:deleteDaemonSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteDaemonSet', { context: contextName, namespace, resourceName: name, resourceKind: 'DaemonSet' });
     return k8sService.deleteDaemonSet(contextName, namespace, name);
   })
 
@@ -2048,6 +1986,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:deleteStatefulSet', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteStatefulSet', { context: contextName, namespace, resourceName: name, resourceKind: 'StatefulSet' });
     return k8sService.deleteStatefulSet(contextName, namespace, name);
   })
 
@@ -2060,6 +1999,7 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:deleteJob', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteJob', { context: contextName, namespace, resourceName: name, resourceKind: 'Job' });
     return k8sService.deleteJob(contextName, namespace, name);
   })
 
@@ -2072,10 +2012,12 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:triggerCronJob', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:triggerCronJob', { context: contextName, namespace, resourceName: name, resourceKind: 'CronJob' });
     return k8sService.triggerCronJob(contextName, namespace, name);
   })
 
   ipcMain.handle('k8s:deleteCronJob', (_, contextName, namespace, name) => {
+    enforceMutationPolicy('k8s:deleteCronJob', { context: contextName, namespace, resourceName: name, resourceKind: 'CronJob' });
     return k8sService.deleteCronJob(contextName, namespace, name);
   })
 
@@ -2084,88 +2026,115 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('k8s:updateDeploymentYaml', (_, contextName, namespace, name, yaml) => {
+    enforceMutationPolicy('k8s:updateDeploymentYaml', { context: contextName, namespace, resourceName: name, resourceKind: 'Deployment' });
     return k8sService.updateDeploymentYaml(contextName, namespace, name, yaml);
   })
 
-  // --- Pod Worker IPC ---
-  ipcMain.handle('start-pod-informer', async (_event, context: string, namespaces: string[]) => {
-    const worker = ensurePodWorker();
-    worker.postMessage({ type: 'start-informer', context, namespaces });
-  });
+  // --- Background resource cache (core kinds: deployments, pods, secrets, configmaps, services, helm) ---
+  registerResourceCacheIpc(watchManager, { diagnosticsEnabled: !app.isPackaged });
 
-  ipcMain.handle('stop-pod-informer', async () => {
-    podWorker?.postMessage({ type: 'stop-informer' });
-  });
-
-  ipcMain.handle('get-pods-chunk', async (_event, { offset, limit }: { offset: number; limit: number }) => {
-    const worker = ensurePodWorker();
-    const requestId = crypto.randomUUID();
-    return new Promise<LightweightPod[]>((resolve) => {
-      pendingChunkRequests.set(requestId, resolve);
-      worker.postMessage({ type: 'get-pods-chunk', requestId, offset, limit });
-      setTimeout(() => {
-        if (pendingChunkRequests.has(requestId)) {
-          pendingChunkRequests.delete(requestId);
-          resolve([]);
+  // --- Terminal (validated with zod schemas) ---
+  // Create failures are reported to the owning terminal (red error text + exit) so the
+  // renderer shows its "Restart Session" overlay instead of a blank terminal.
+  const reportTerminalCreateError = (sender: Electron.WebContents, id: string, err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Terminal] Failed to create terminal ${id}:`, message);
+    if (!sender.isDestroyed()) {
+      sender.send('terminal:data', id, `\x1b[31m${message}\x1b[0m\r\n`);
+      sender.send('terminal:exit', id, -1);
+    }
+  };
+  safeOn('terminal:create', z.tuple([
+    z.string().min(1).max(128),
+    z.number().int().min(1).max(1000),
+    z.number().int().min(1).max(500),
+  ]).rest(z.string().min(1).max(512).optional()), (event, args) => {
+    const [id, cols, rows, context] = args as [string, number, number, string | undefined];
+    try {
+      if (context !== undefined) {
+        if (!isValidTerminalContext(context)) {
+          throw new Error('Invalid kube context for terminal');
         }
-      }, 10_000);
-    });
-  });
-
-  // --- Terminal ---
-  ipcMain.on('terminal:create', (event, id, cols, rows) => {
-    terminalService.createTerminal(event.sender, id, cols, rows);
+        if (!k8sService.hasContext(context)) {
+          throw new Error(`Kube context "${context}" was not found in your kubeconfig`);
+        }
+      }
+      terminalService.createTerminal(event.sender, id, cols, rows, context);
+    } catch (err) {
+      reportTerminalCreateError(event.sender, id, err);
+    }
   })
 
-  ipcMain.on('terminal:createExec', (event, id, cols, rows, context, namespace, podName, containerName) => {
-    terminalService.createExecTerminal(event.sender, id, cols, rows, context, namespace, podName, containerName);
+  safeOn('terminal:createExec', z.tuple([
+    z.string().max(128),
+    z.number().int().min(1).max(1000),
+    z.number().int().min(1).max(500),
+    z.string().max(253),
+    z.string().max(253),
+    z.string().max(253),
+  ]).rest(z.string().max(253).optional()), (event, args) => {
+    const [id, cols, rows, context, namespace, podName, containerName] = args as [string, number, number, string, string, string, string | undefined];
+    try {
+      terminalService.createExecTerminal(event.sender, id, cols, rows, context, namespace, podName, containerName);
+    } catch (err) {
+      reportTerminalCreateError(event.sender, id, err);
+    }
   })
 
-  ipcMain.on('terminal:write', (_, id, data) => {
+  safeOn('terminal:write', z.tuple([
+    z.string().max(128),
+    z.string().max(65536),
+  ]), (_event, [id, data]) => {
     terminalService.write(id, data);
   })
 
-  ipcMain.on('terminal:resize', (_, id, cols, rows) => {
+  safeOn('terminal:resize', z.tuple([
+    z.string().max(128),
+    z.number().int().min(1).max(1000),
+    z.number().int().min(1).max(500),
+  ]), (_event, [id, cols, rows]) => {
     terminalService.resize(id, cols, rows);
   })
 
-  ipcMain.on('terminal:dispose', (_, id) => {
+  safeOn('terminal:dispose', z.tuple([
+    z.string().max(128),
+  ]), (_event, [id]) => {
     terminalService.dispose(id);
   })
 
   // --- Network ---
   ipcMain.handle('k8s:getEndpointSlices', (_, contextName, namespaces) => { return k8sService.getEndpointSlices(contextName, namespaces); });
   ipcMain.handle('k8s:getEndpointSlice', (_, contextName, namespace, name) => { return k8sService.getEndpointSlice(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteEndpointSlice', (_, contextName, namespace, name) => { return k8sService.deleteEndpointSlice(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteEndpointSlice', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteEndpointSlice', { context: contextName, namespace, resourceName: name, resourceKind: 'EndpointSlice' }); return k8sService.deleteEndpointSlice(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getEndpoints', (_, contextName, namespaces) => { return k8sService.getEndpoints(contextName, namespaces); });
   ipcMain.handle('k8s:getEndpoint', (_, contextName, namespace, name) => { return k8sService.getEndpoint(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteEndpoint', (_, contextName, namespace, name) => { return k8sService.deleteEndpoint(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteEndpoint', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteEndpoint', { context: contextName, namespace, resourceName: name, resourceKind: 'Endpoint' }); return k8sService.deleteEndpoint(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getIngresses', (_, contextName, namespaces) => { return k8sService.getIngresses(contextName, namespaces); });
   ipcMain.handle('k8s:getIngress', (_, contextName, namespace, name) => { return k8sService.getIngress(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteIngress', (_, contextName, namespace, name) => { return k8sService.deleteIngress(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteIngress', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteIngress', { context: contextName, namespace, resourceName: name, resourceKind: 'Ingress' }); return k8sService.deleteIngress(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getIngressClasses', (_, contextName) => { return k8sService.getIngressClasses(contextName); });
   ipcMain.handle('k8s:getIngressClass', (_, contextName, name) => { return k8sService.getIngressClass(contextName, name); });
-  ipcMain.handle('k8s:deleteIngressClass', (_, contextName, name) => { return k8sService.deleteIngressClass(contextName, name); });
+  ipcMain.handle('k8s:deleteIngressClass', (_, contextName, name) => { enforceMutationPolicy('k8s:deleteIngressClass', { context: contextName, resourceName: name, resourceKind: 'IngressClass' }); return k8sService.deleteIngressClass(contextName, name); });
 
   ipcMain.handle('k8s:getNetworkPolicies', (_, contextName, namespaces) => { return k8sService.getNetworkPolicies(contextName, namespaces); });
   ipcMain.handle('k8s:getNetworkPolicy', (_, contextName, namespace, name) => { return k8sService.getNetworkPolicy(contextName, namespace, name); });
-  ipcMain.handle('k8s:deleteNetworkPolicy', (_, contextName, namespace, name) => { return k8sService.deleteNetworkPolicy(contextName, namespace, name); });
+  ipcMain.handle('k8s:deleteNetworkPolicy', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deleteNetworkPolicy', { context: contextName, namespace, resourceName: name, resourceKind: 'NetworkPolicy' }); return k8sService.deleteNetworkPolicy(contextName, namespace, name); });
 
   // --- Storage ---
   ipcMain.handle('k8s:getPersistentVolumeClaims', (_, contextName, namespaces) => { return k8sService.getPersistentVolumeClaims(contextName, namespaces); });
   ipcMain.handle('k8s:getPersistentVolumeClaim', (_, contextName, namespace, name) => { return k8sService.getPersistentVolumeClaim(contextName, namespace, name); });
-  ipcMain.handle('k8s:deletePersistentVolumeClaim', (_, contextName, namespace, name) => { return k8sService.deletePersistentVolumeClaim(contextName, namespace, name); });
+  ipcMain.handle('k8s:deletePersistentVolumeClaim', (_, contextName, namespace, name) => { enforceMutationPolicy('k8s:deletePersistentVolumeClaim', { context: contextName, namespace, resourceName: name, resourceKind: 'PersistentVolumeClaim' }); return k8sService.deletePersistentVolumeClaim(contextName, namespace, name); });
 
   ipcMain.handle('k8s:getPersistentVolumes', (_, contextName) => { return k8sService.getPersistentVolumes(contextName); });
   ipcMain.handle('k8s:getPersistentVolume', (_, contextName, name) => { return k8sService.getPersistentVolume(contextName, name); });
-  ipcMain.handle('k8s:deletePersistentVolume', (_, contextName, name) => { return k8sService.deletePersistentVolume(contextName, name); });
+  ipcMain.handle('k8s:deletePersistentVolume', (_, contextName, name) => { enforceMutationPolicy('k8s:deletePersistentVolume', { context: contextName, resourceName: name, resourceKind: 'PersistentVolume' }); return k8sService.deletePersistentVolume(contextName, name); });
 
   ipcMain.handle('k8s:getStorageClasses', (_, contextName) => { return k8sService.getStorageClasses(contextName); });
   ipcMain.handle('k8s:getStorageClass', (_, contextName, name) => { return k8sService.getStorageClass(contextName, name); });
-  ipcMain.handle('k8s:deleteStorageClass', (_, contextName, name) => { return k8sService.deleteStorageClass(contextName, name); });
+  ipcMain.handle('k8s:deleteStorageClass', (_, contextName, name) => { enforceMutationPolicy('k8s:deleteStorageClass', { context: contextName, resourceName: name, resourceKind: 'StorageClass' }); return k8sService.deleteStorageClass(contextName, name); });
 
   // --- Config ---
   ipcMain.handle('k8s:getConfigMaps', (_, contextName, namespaces) => { return k8sService.getConfigMaps(contextName, namespaces); });
@@ -2180,12 +2149,12 @@ function registerIpcHandlers() {
   ipcMain.handle('k8s:getPodDisruptionBudgets', (_, contextName, namespaces) => { return k8sService.getPodDisruptionBudgets(contextName, namespaces); });
   ipcMain.handle('k8s:getPodDisruptionBudget', (_, contextName, namespace, name) => { return k8sService.getPodDisruptionBudget(contextName, namespace, name); });
   ipcMain.handle('k8s:getPdbYaml', (_, contextName, namespace, name) => { return k8sService.getPdbYaml(contextName, namespace, name); });
-  ipcMain.handle('k8s:updatePdbYaml', (_, contextName, namespace, name, yamlContent) => { return k8sService.updatePdbYaml(contextName, namespace, name, yamlContent); });
+  ipcMain.handle('k8s:updatePdbYaml', (_, contextName, namespace, name, yamlContent) => { enforceMutationPolicy('k8s:updatePdbYaml', { context: contextName, namespace, resourceName: name, resourceKind: 'PodDisruptionBudget' }); return k8sService.updatePdbYaml(contextName, namespace, name, yamlContent); });
 
   // Generic resource YAML operations
   ipcMain.handle('k8s:getResourceYaml', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.getResourceYaml(contextName, apiVersion, kind, name, namespace); });
-  ipcMain.handle('k8s:updateResourceYaml', (_, contextName, apiVersion, kind, name, yamlContent, namespace) => { return k8sService.updateResourceYaml(contextName, apiVersion, kind, name, yamlContent, namespace); });
-  ipcMain.handle('k8s:deleteResource', (_, contextName, apiVersion, kind, name, namespace) => { return k8sService.deleteResource(contextName, apiVersion, kind, name, namespace); });
+  ipcMain.handle('k8s:updateResourceYaml', (_, contextName, apiVersion, kind, name, yamlContent, namespace) => { enforceMutationPolicy('k8s:updateResourceYaml', { context: contextName, namespace, resourceName: name, resourceKind: kind }); return k8sService.updateResourceYaml(contextName, apiVersion, kind, name, yamlContent, namespace); });
+  ipcMain.handle('k8s:deleteResource', (_, contextName, apiVersion, kind, name, namespace) => { enforceMutationPolicy('k8s:deleteResource', { context: contextName, namespace, resourceName: name, resourceKind: kind }); return k8sService.deleteResource(contextName, apiVersion, kind, name, namespace); });
 
   ipcMain.handle('k8s:getMutatingWebhookConfigurations', (_, contextName) => { return k8sService.getMutatingWebhookConfigurations(contextName); });
   ipcMain.handle('k8s:getMutatingWebhookConfiguration', (_, contextName, name) => { return k8sService.getMutatingWebhookConfiguration(contextName, name); });
@@ -2217,9 +2186,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('context:clusterSwitch', async () => {
     contextEngine.onClusterSwitch();
-    lastPodWatchScope = '';
-    lastDeploymentWatchScope = '';
-    // Clear cached resourceVersions so watchers start fresh on the new cluster
+    // Clear cached resourceVersions so node / non-core generic watchers start fresh on the new cluster
     k8sService.clearWatchResourceVersions();
     return true;
   });
@@ -2232,7 +2199,11 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('settings:setContextConfig', async (_, config: Partial<ContextEngineConfig>) => {
+  safeHandle('settings:setContextConfig', z.object({
+    tokenBudget: z.number().int().min(100).max(100000).optional(),
+    summariesEnabled: z.boolean().optional(),
+    anomalyDetectionEnabled: z.boolean().optional(),
+  }), async (_event, config) => {
     const current = (store.get('contextEngineConfig') as ContextEngineConfig) || {
       tokenBudget: 2000,
       summariesEnabled: true,
@@ -2244,23 +2215,57 @@ function registerIpcHandlers() {
     return true;
   });
 
-  // Handlers
-  ipcMain.handle('settings:saveApiKey', async (_, apiKey) => {
-    store.set('geminiApiKey', apiKey);
-    return true;
+  // Handlers (validated with zod schemas)
+  safeHandle('settings:saveApiKey', z.string().max(1048576), async (_event, apiKey) => {
+    const secretStore = getSecretStore();
+    const success = await secretStore.setSecret('geminiApiKey', apiKey);
+    return success;
   });
 
-  ipcMain.handle('settings:getApiKey', async () => {
-    return (store.get('geminiApiKey') as string) || '';
+  safeHandle('settings:saveAwsCreds', z.object({
+    accessKeyId: z.string().max(255).optional(),
+    secretAccessKey: z.string().max(255).optional(),
+    sessionToken: z.string().max(4096).optional(),
+  }), async (_event, creds) => {
+    const secretStore = getSecretStore();
+    const results: boolean[] = [];
+    if (creds.accessKeyId) {
+      results.push(await secretStore.setSecret('awsAccessKeyId', creds.accessKeyId));
+    }
+    if (creds.secretAccessKey) {
+      results.push(await secretStore.setSecret('awsSecretAccessKey', creds.secretAccessKey));
+    }
+    if (creds.sessionToken) {
+      results.push(await secretStore.setSecret('awsSessionToken', creds.sessionToken));
+    }
+    return results.every(r => r);
   });
 
-  ipcMain.handle('settings:saveAwsCreds', async (_, creds) => {
-    store.set('awsCreds', creds);
-    return true;
+  // --- Masked metadata IPC handlers (never expose raw secrets) ---
+  ipcMain.handle('settings:hasApiKey', async () => {
+    const secretStore = getSecretStore();
+    const key = await secretStore.getSecret('geminiApiKey');
+    return key !== null && key.length > 0;
   });
 
-  ipcMain.handle('settings:getAwsCreds', async () => {
-    return (store.get('awsCreds') as Record<string, string>) || {};
+  ipcMain.handle('settings:apiKeyMasked', async () => {
+    const secretStore = getSecretStore();
+    const key = await secretStore.getSecret('geminiApiKey');
+    if (!key || key.length === 0) return '';
+    return maskSecret(key);
+  });
+
+  ipcMain.handle('settings:hasAwsCreds', async () => {
+    const secretStore = getSecretStore();
+    const accessKeyId = await secretStore.getSecret('awsAccessKeyId');
+    return accessKeyId !== null && accessKeyId.length > 0;
+  });
+
+  ipcMain.handle('settings:awsAccessKeyMasked', async () => {
+    const secretStore = getSecretStore();
+    const accessKeyId = await secretStore.getSecret('awsAccessKeyId');
+    if (!accessKeyId || accessKeyId.length === 0) return '';
+    return maskSecret(accessKeyId);
   });
 
   // --- Auth Session Persistence ---
@@ -2427,6 +2432,40 @@ function registerIpcHandlers() {
     return pinned; // Return updated list
   });
 
+  // Rename a kube context in the kubeconfig (like `kubectl config rename-context`) and migrate app state.
+  // Not subject to Safe Mode: it edits a local file, not a cluster.
+  safeHandle('k8s:renameContext', z.object({
+    oldName: z.string().min(1).max(512),
+    newName: z.string().max(512),
+  }), async (_event, { oldName, newName }): Promise<RenameClusterResult> => {
+    try {
+      const { newName: renamed, clusters } = k8sService.renameContext(oldName, newName);
+
+      // Replace in place so the pin keeps its position; dedupe in case the new name was already pinned
+      const storedPins = (store.get('pinnedClusters') as string[]) || [];
+      const pinnedClusters = [...new Set(storedPins.map(c => (c === oldName ? renamed : c)))];
+      store.set('pinnedClusters', pinnedClusters);
+
+      terminalService.retargetContext(oldName, renamed);
+
+      getAuditLogger().log({
+        action: 'k8s:renameContext',
+        category: 'MUTATE',
+        context: oldName,
+        resourceName: renamed,
+        result: 'success',
+      });
+
+      return { ok: true, newName: renamed, clusters, pinnedClusters };
+    } catch (err) {
+      if (err instanceof KubeconfigRenameError) {
+        return { ok: false, error: err.message };
+      }
+      console.error('[k8s] renameContext failed:', err);
+      return { ok: false, error: `Failed to rename context: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  });
+
   // Sync handlers for cold start
   ipcMain.on('settings:getModelSync', (event) => {
     event.returnValue = store.get('k8ptain_model') || 'gemini-1.5-flash';
@@ -2436,21 +2475,64 @@ function registerIpcHandlers() {
     event.returnValue = store.get('k8ptain_provider') || 'google';
   });
 
-  ipcMain.handle('settings:saveModelSelection', (_event, provider, model) => {
+  safeHandle('settings:saveModelSelection', z.tuple([
+    z.string().max(255),
+    z.string().max(255),
+  ]), async (_event, [provider, model]) => {
     store.set('k8ptain_provider', provider);
     store.set('k8ptain_model', model);
     return true;
   });
 
-  // --- General Settings ---
-  ipcMain.handle('settings:get', async (_, key: string) => {
+  // --- General Settings (validated with allowlist) ---
+  const SETTINGS_ALLOWLIST = [
+    'refreshInterval', 'defaultNamespace', 'showSystemNamespaces',
+    'enableNotifications', 'maxLogLines', 'editorFontSize',
+    'editorWordWrap', 'terminalFontSize', 'kubeconfigPath',
+    'enableLocalTerminal', 'enableAiHistory', 'zoomFactor',
+    'fontFamily', 'tableFontSize', 'sidebarFontSize',
+    'pinnedFontSize', 'headingSize', 'dateFormat', 'aiTraceAnalytics',
+    'aiToolMode', 'aiTrustedCommands', 'localModelEndpoint',
+    'localUseLmStudioNative', 'localLmStudioApiToken', 'theme',
+    'notificationsMuted', 'geminiServiceTier',
+  ] as const;
+
+  const AI_TOOL_MODES = ['off', 'read', 'read-write'] as const;
+  const APP_THEMES = ['blue', 'charcoal', 'red'] as const;
+  const GEMINI_SERVICE_TIERS = ['flex', 'standard'] as const;
+
+  safeHandle('settings:get', z.enum(SETTINGS_ALLOWLIST), async (_event, key) => {
     return store.get(`settings_${key}`) ?? null;
   });
 
-  ipcMain.handle('settings:set', async (_, key: string, value: string | number | boolean) => {
+  safeHandle('settings:set', z.tuple([
+    z.enum(SETTINGS_ALLOWLIST),
+    z.union([
+      z.string().max(1024),
+      z.number(),
+      z.boolean(),
+      z.array(z.string().max(256)).max(200),
+    ]),
+  ]), async (_event, [key, value]) => {
+    // Key-specific validation: these values gate command execution / UI state.
+    if (key === 'aiToolMode' && !(AI_TOOL_MODES as readonly unknown[]).includes(value)) {
+      throw new Error('Invalid aiToolMode');
+    }
+    if (key === 'aiTrustedCommands' && !Array.isArray(value)) {
+      throw new Error('Invalid aiTrustedCommands');
+    }
+    if (key === 'theme' && !(APP_THEMES as readonly unknown[]).includes(value)) {
+      throw new Error('Invalid theme');
+    }
+    if (key === 'geminiServiceTier' && !(GEMINI_SERVICE_TIERS as readonly unknown[]).includes(value)) {
+      throw new Error('Invalid geminiServiceTier');
+    }
     store.set(`settings_${key}`, value);
     if (key === 'aiTraceAnalytics') {
       syncLangfuseOtelWithStore();
+    }
+    if (key === 'enableLocalTerminal') {
+      setLocalTerminalEnabled(value as boolean);
     }
     return true;
   });
@@ -2475,7 +2557,7 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('settings:setZoomFactor', async (_, factor: number) => {
+  safeHandle('settings:setZoomFactor', z.number().min(25).max(500), async (_event, factor) => {
     store.set('settings_zoomFactor', factor);
     if (win) {
       win.webContents.setZoomFactor(factor / 100);
@@ -2489,8 +2571,44 @@ function registerIpcHandlers() {
     return path.join(os.homedir(), '.kube', 'config');
   });
 
-  ipcMain.handle('settings:setKubeconfigPath', async (_, kubeconfigPath: string) => {
+  safeHandle('settings:setKubeconfigPath', z.string().max(1024), async (_event, kubeconfigPath) => {
     store.set('settings_kubeconfigPath', kubeconfigPath);
+    k8sService.setKubeconfigPath(kubeconfigPath.trim() || undefined);
+    kubeconfigWatcher.setFiles(k8sService.getKubeconfigFiles());
+    return true;
+  });
+
+  // --- AI Data Consent ---
+  ipcMain.handle('settings:getAiDataConsent', async () => {
+    return (store.get('settings_aiDataConsent') as boolean) ?? false;
+  });
+
+  safeHandle('settings:setAiDataConsent', z.boolean(), async (_event, enabled) => {
+    const previous = (store.get('settings_aiDataConsent') as boolean) ?? false;
+    store.set('settings_aiDataConsent', enabled);
+    const auditLogger = getAuditLogger();
+    auditLogger.log({
+      action: 'settings:setAiDataConsent',
+      category: 'SECURITY',
+      result: `AI data consent changed from ${previous} to ${enabled}`,
+    });
+    return true;
+  });
+
+  // --- Safe Mode ---
+  ipcMain.handle('settings:getSafeMode', async () => {
+    return (store.get('settings_safeMode') as boolean) ?? false;
+  });
+
+  ipcMain.handle('settings:setSafeMode', async (_, enabled: boolean) => {
+    const previous = (store.get('settings_safeMode') as boolean) ?? false;
+    store.set('settings_safeMode', enabled);
+    const auditLogger = getAuditLogger();
+    auditLogger.log({
+      action: 'settings:setSafeMode',
+      category: 'SECURITY',
+      result: `Safe Mode changed from ${previous} to ${enabled}`,
+    });
     return true;
   });
 
@@ -2606,45 +2724,6 @@ function registerIpcHandlers() {
     getHelmCatalogForIpc(store, opts)
   );
 
-  // --- Helm release watcher (real-time) ---
-  ipcMain.on('k8s:watchHelmReleases', (event, contextName, namespaces) => {
-    console.log('[HelmWatcher:main] Starting watch for context:', contextName, 'namespaces:', namespaces);
-    k8sService.stopHelmReleaseWatch();
-    if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
-    const gen = ++helmWatchGeneration;
-
-    helmBatchBuffer = new WatcherBatchBuffer({
-      flushIntervalMs: 150,
-      onFlush: async (events) => {
-        if (gen !== helmWatchGeneration) return;
-        try {
-          const request: TransformRequest = {
-            id: `helmrelease-${++transformRequestId}`,
-            resourceType: 'helmrelease',
-            events,
-          };
-          const response = await sendToWorker(request);
-          if (response.error) console.warn('[HelmWatcher:main] Transform warning:', response.error);
-          if (response.events.length > 0 && gen === helmWatchGeneration) {
-            event.sender.send('k8s:helmReleaseBatchChange', response.events);
-          }
-        } catch (err) {
-          console.error('[HelmWatcher:main] Batch transform error:', err);
-        }
-      },
-    });
-
-    k8sService.startHelmReleaseWatch(contextName, namespaces, (type, rawSecret) => {
-      if (gen !== helmWatchGeneration) return;
-      helmBatchBuffer?.push({ type: type as 'ADDED' | 'MODIFIED' | 'DELETED', resource: rawSecret });
-    });
-  });
-
-  ipcMain.on('k8s:stopWatchHelmReleases', () => {
-    console.log('[HelmWatcher:main] Stopping watch');
-    k8sService.stopHelmReleaseWatch();
-    if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
-  });
 }
 
 // Helper functions for AI
@@ -2812,8 +2891,9 @@ function extractAiErrorInfo(error: unknown): { message: string; isAccessDenied: 
   return { message, isAccessDenied };
 }
 
-function getApiKey(): string {
-  const key = store.get('geminiApiKey') as string;
+async function getApiKey(): Promise<string> {
+  const secretStore = getSecretStore();
+  const key = await secretStore.getSecret('geminiApiKey');
   return key || process.env.GEMINI_API_KEY || '';
 }
 
@@ -2824,8 +2904,18 @@ interface AwsCreds {
   region?: string;
 }
 
-function getAwsCreds(): AwsCreds {
-  return (store.get('awsCreds') as AwsCreds) || {};
+async function getAwsCreds(): Promise<AwsCreds> {
+  const secretStore = getSecretStore();
+  const [accessKeyId, secretAccessKey, sessionToken] = await Promise.all([
+    secretStore.getSecret('awsAccessKeyId'),
+    secretStore.getSecret('awsSecretAccessKey'),
+    secretStore.getSecret('awsSessionToken'),
+  ]);
+  const creds: AwsCreds = {};
+  if (accessKeyId) creds.accessKeyId = accessKeyId;
+  if (secretAccessKey) creds.secretAccessKey = secretAccessKey;
+  if (sessionToken) creds.sessionToken = sessionToken;
+  return creds;
 }
 
 /**
@@ -2846,8 +2936,8 @@ interface BedrockConfig {
   credentialProvider?: () => Promise<{ accessKeyId: string; secretAccessKey: string; sessionToken?: string }>;
 }
 
-function getBedrockConfig(): BedrockConfig {
-  const savedCreds = getAwsCreds();
+async function getBedrockConfig(): Promise<BedrockConfig> {
+  const savedCreds = await getAwsCreds();
   const grantedCreds = awsService.getGrantedCredentials();
 
   const config: BedrockConfig = {
@@ -2903,6 +2993,12 @@ function getEffectiveProfile(): string | undefined {
 
 registerIpcHandlers()
 
+// Initialize Secret Store and migrate legacy plaintext secrets to OS keychain
+const secretStore = getSecretStore();
+secretStore.migrateLegacySecrets(store).catch((err) => {
+  console.error('[main] Secret store migration failed:', err);
+});
+
 // Initialize AWS profile from stored settings
 const savedProfile = (store.get('awsProfile') as string) || 'default';
 if (savedProfile && savedProfile !== 'default') {
@@ -2922,6 +3018,8 @@ awsService.on('credentialsChanged', (data: { identity: string; account: string; 
   if (win && !win.isDestroyed()) {
     win.webContents.send('aws:credentialsChanged', data);
   }
+  // New identity: rebuild the cache session's kubeconfig and re-list (may also widen RBAC)
+  watchManager.onCredentialsChanged();
 });
 
 // Forward anomaly events from ContextEngine to renderer
@@ -2937,13 +3035,42 @@ function createWindow() {
     height: 720,
     minWidth: 1024,
     minHeight: 576,
-    icon: APP_LOGO_PNG,
+    ...(process.platform !== 'darwin' && { icon: APP_LOGO_PNG }),
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
     },
   })
+
+  // Background resource cache: a reload / renderer loss unbinds the subscriber and arms the 60 s idle stop.
+  // Registered per window on its own webContents, so they are released with it.
+  const cacheSubscriberId = win.webContents.id
+  // 'did-navigate' fires only for committed main-frame, cross-document navigations (reload, HMR full
+  // reload), so a navigation blocked by the will-navigate guard below never unbinds the live renderer.
+  win.webContents.on('did-navigate', () => watchManager.onRendererNavigated())
+  win.webContents.on('render-process-gone', () => watchManager.detachSubscriber(cacheSubscriberId))
+  win.webContents.on('destroyed', () => watchManager.detachSubscriber(cacheSubscriberId))
+
+  // Navigation guard: block navigation to URLs outside the application origin
+  win.webContents.on('will-navigate', (event, url) => {
+    const allowed = VITE_DEV_SERVER_URL
+      ? url.startsWith(VITE_DEV_SERVER_URL)
+      : url.startsWith('file://');
+    if (!allowed) {
+      console.warn(`[security] Blocked navigation to: ${url}`);
+      event.preventDefault();
+    }
+  });
+
+  // Deny all new window creation requests (window.open, target="_blank", etc.)
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    console.warn(`[security] Denied new window request for: ${url}`);
+    return { action: 'deny' };
+  });
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
@@ -2977,12 +3104,12 @@ function createWindow() {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  watchManager.stopSession('all-windows-closed');
   awsService.stopCredentialFileWatcher();
+  // No renderer left to own terminals
+  terminalService.disposeAll();
   // Stop all watchers — no renderer to receive events
   k8sService.stopAllWatchers();
-  if (helmBatchBuffer) { helmBatchBuffer.destroy(); helmBatchBuffer = null; }
-  if (podBatchBuffer) { podBatchBuffer.destroy(); podBatchBuffer = null; }
-  if (deploymentBatchBuffer) { deploymentBatchBuffer.destroy(); deploymentBatchBuffer = null; }
   if (nodeBatchBuffer) { nodeBatchBuffer.destroy(); nodeBatchBuffer = null; }
   for (const [, buffer] of genericBatchBuffers) {
     buffer.destroy();
@@ -3003,6 +3130,8 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
+  // powerMonitor is only usable after ready; registered once per app lifetime
+  powerMonitor.on('resume', () => watchManager.ensureFresh(0))
   if (process.platform === 'win32' || process.platform === 'linux') {
     const startupDeepLink = process.argv.find(
       (a): a is string => typeof a === 'string' && a.startsWith(`${OAUTH_CALLBACK_PROTOCOL}:`),
@@ -3010,10 +3139,14 @@ app.whenReady().then(() => {
     if (startupDeepLink) queueOAuthDeepLink(startupDeepLink)
   }
   if (process.platform === 'darwin') {
-    try {
-      app.dock?.setIcon(APP_LOGO_PNG);
-    } catch (e) {
-      console.error('Failed to set dock icon:', e);
+    // Only set dock icon manually in dev — packaged builds use the bundled .icns
+    if (VITE_DEV_SERVER_URL) {
+      try {
+        const icon = getAppIcon()
+        if (icon) app.dock?.setIcon(icon as Electron.NativeImage);
+      } catch (e) {
+        console.error('Failed to set dock icon:', e);
+      }
     }
   }
   createWindow();

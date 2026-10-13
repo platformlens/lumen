@@ -1,0 +1,49 @@
+# AI Assistant
+
+Lumen includes an integrated AI panel that helps you understand and troubleshoot Kubernetes resources using natural language.
+
+## Supported Providers
+
+### Google Gemini
+
+- Requires a Gemini API key configured in Settings
+- Default model: `gemini-1.5-flash`
+- Fast responses with good Kubernetes knowledge
+
+### AWS Bedrock
+
+- Uses your configured AWS credentials (Granted, manual, or provider chain)
+- Supports Claude and other Bedrock-hosted models
+- No separate API key needed if AWS credentials are configured
+
+## How It Works
+
+1. Select any Kubernetes resource in the dashboard
+2. Open the AI panel from the sidebar
+3. Ask questions about the resource or request explanations
+
+The AI assistant has context about:
+- The selected resource's full YAML spec
+- Current resource status and events
+- Related resources in the cluster
+
+## Use Cases
+
+- **Explain resource status** — "Why is this pod in CrashLoopBackOff?"
+- **Troubleshoot issues** — "What's wrong with this deployment?"
+- **Learn Kubernetes** — "What does this annotation do?"
+- **Suggest fixes** — "How do I fix this OOMKilled error?"
+
+## Configuration
+
+Navigate to **Settings → AI** to configure your provider and model:
+
+| Setting | Description |
+|---|---|
+| Provider | `google` or `bedrock` |
+| Model | Model ID (e.g., `gemini-1.5-flash`, `anthropic.claude-3-sonnet`) |
+| API Key | Required for Google Gemini only |
+
+## Streaming Responses
+
+AI responses stream in real-time, so you see the answer as it's generated. You can cancel a response mid-stream if needed.

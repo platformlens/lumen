@@ -1,0 +1,29 @@
+{
+  "project_type": "Electron 40 + React 18 + TypeScript desktop app (Lumen, Kubernetes manager); main process in electron/, renderer in src/",
+  "language": "TypeScript (strict, noUnusedLocals/Parameters on)",
+  "build_system": "Vite + vite-plugin-electron; electron-builder. Type check with `npx tsc --noEmit` (currently clean, ~8s). Do NOT run `npm run dev` or `npm run build`.",
+  "test_framework": "vitest (vitest.config.ts includes **/*.test.ts, globals true); existing pattern: electron/terminal-kubeconfig.test.ts. Do not add permanent tests; use throwaway test files against temp kubeconfig copies and delete them.",
+  "build_command": "npx tsc --noEmit",
+  "test_command": "npx vitest run <throwaway test file>",
+  "verification_instructions": "1) npx tsc --noEmit must pass. 2) npx eslint <touched files> must add no new errors (repo-wide `npm run lint` already fails with ~1600 pre-existing problems; compare against `git stash`-free baseline by only checking messages on lines you wrote). 3) Throwaway vitest against temp dir kubeconfigs (os.tmpdir), delete the file afterwards. Never read/write the real ~/.kube/config.",
+  "snapshot_or_generated_files": null,
+  "environment_constraints": "Working tree has ~20 unrelated uncommitted modifications in the same files (k8s.ts, main.ts, preload.ts, terminal.ts, App.tsx, electron-env.d.ts, vite-env.d.ts). DO NOT commit, stash, reset, checkout or revert. Edit with targeted str_replace only. No `timeout` binary on this macOS shell. Never run the dev server. Absolute paths only.",
+  "contribution_requirements": "Strict main/renderer separation (all kubeconfig/k8s ops in electron/ main; renderer only calls window.k8s.*). Avoid `any`. Files under ~500 lines (main.ts/k8s.ts/App.tsx are already huge: put new logic in new modules and keep edits in them minimal). Debounce and clean up listeners; onX(callback) returns an unsubscribe that removes ONLY its own listener (ipcRenderer.off, never removeAllListeners). Theme: glassmorphism (bg-white/5 border border-white/10 backdrop-blur-xl rounded-xl, text-gray-300/400, blue accents, GlassButton, modals z-[200], lucide-react, framer-motion). IPC inputs validated with zod via safeHandle from electron/ipc/validation.ts.",
+  "key_patterns": "Preload bridge: electron/preload.ts (ipcRenderer.invoke / on+off), typed twice: electron/electron-env.d.ts and src/vite-env.d.ts (keep both in sync). Events to renderer via `win.webContents.send` guarded by `win && !win.isDestroyed()` (see aws:credentialsChanged in main.ts ~3197). fs.watchFile pattern with debounce in electron/aws.ts startCredentialFileWatcher. Store access only in main (`store.get('pinnedClusters') as string[]`). Existing right-click context menu: SecondarySidebar.tsx `contextMenu` state + `handleContextMenu` + ReactDOM.createPortal block (Pin/Unpin) near the bottom of the file. Toasts: App.tsx `showToast(message, 'success'|'error'|'info')`, container `fixed top-4 right-4 z-[100]` (raise to z-[300]).",
+  "relevant_files": [
+    "electron/k8s.ts (K8sService: constructor, reloadKubeConfig ~235, setContextWithSmartReload ~280, hasContext ~538, getClusters ~541, stopAllWatchers ~1365, resourcePluralCache)",
+    "electron/main.ts (k8sService created ~207, before-quit ~419, k8s:getClusters ~606, start-pod-informer ~2218, hasContext use ~2264, pinned clusters handlers ~2622, settings:setKubeconfigPath ~2722, win.on focus ~3272)",
+    "electron/preload.ts (getClusters ~39, pinned ~362, onCredentialsChanged pattern ~406)",
+    "electron/terminal.ts (PtySession, attach, writeContextKubeconfig)",
+    "electron/terminal-kubeconfig.ts (buildContextKubeconfig, isValidTerminalContext)",
+    "electron/aws.ts (watchFile pattern)",
+    "electron/ipc/validation.ts (safeHandle)",
+    "electron/electron-env.d.ts, src/vite-env.d.ts",
+    "src/App.tsx (clustersList ~78/127, pinnedClusters, handleClusterSelect ~765, tab refs ~85/568, panelTabs ~559, toast ~717 and ~1876, SecondarySidebar usage ~1661, StatusBar ~1826)",
+    "src/components/features/sidebar/SecondarySidebar.tsx (context menu + cluster list)",
+    "src/components/features/logs/LogViewer.tsx (PanelTab type: clusterContext, execContext.context)",
+    "src/components/shared/ConfirmModal.tsx, GlassButton.tsx, ToastNotification.tsx (modal/styling patterns)",
+    "src/components/features/layout/StatusBar.tsx (clusters prop)"
+  ],
+  "directory_structure": "electron/ = main process (k8s.ts, main.ts, preload.ts, terminal.ts, aws.ts, ipc/, security/); src/components/{features,shared,dashboard}, src/hooks, src/utils, src/types; .agents/tasks/ = plan artifacts"
+}

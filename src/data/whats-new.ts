@@ -13,6 +13,63 @@ export interface WhatsNewRelease {
 
 export const WHATS_NEW_RELEASES: WhatsNewRelease[] = [
     {
+        version: '0.0.9',
+        title: 'Version 0.0.9',
+        description: 'Background resource cache, Crossplane, Deployment Full View, cluster rename, and multi-terminal support.',
+        sections: [
+            {
+                title: 'Faster, always-live resources',
+                colorAccent: 'bg-cyan-500',
+                items: [
+                    'Deployments, pods, secrets, configmaps, services and Helm releases now load once per cluster and stay live in the background',
+                    'Switching tabs or namespaces no longer reloads data or restarts watches',
+                    'Status banners explain reconnecting, error and forbidden states while keeping loaded rows visible',
+                    'Watches resync automatically when the window regains focus or your machine wakes from sleep',
+                ],
+            },
+            {
+                title: 'Crossplane',
+                colorAccent: 'bg-purple-500',
+                items: [
+                    'New read-only Crossplane section, shown only when Crossplane is detected in the cluster',
+                    'Overview, Packages, Definitions, Composites and Managed resource views',
+                    'Detail drawer with health banner, reference links and a Claim → XR → managed resource graph',
+                ],
+            },
+            {
+                title: 'Deployments & clusters',
+                colorAccent: 'bg-green-500',
+                items: [
+                    'New Full View for deployments: rollout, revisions, pod distribution, containers, networking and security posture on one page',
+                    'Compare pod-template changes between revisions',
+                    'Right-click a cluster to rename its kube context — pins, tabs, watchers and terminals follow',
+                    'Contexts added to your kubeconfig appear without restarting Lumen',
+                    'The custom kubeconfig path in Settings is now honored',
+                ],
+            },
+            {
+                title: 'Nodes, YAML & terminals',
+                colorAccent: 'bg-blue-500',
+                items: [
+                    'New ARM / non-ARM / unknown architecture chart on the Nodes page',
+                    'Nodes table is always reachable, even with Stats expanded or in short windows',
+                    'Unsaved YAML edits are kept per tab across tab switches, pop-out and refreshes',
+                    'Open multiple terminal tabs, each bound to the cluster context it was opened with',
+                    'Cordon and drain now target the right cluster without changing your global kubectl context',
+                ],
+            },
+            {
+                title: 'Bug fixes',
+                colorAccent: 'bg-orange-500',
+                items: [
+                    'Fixed YAML tabs saving to the wrong cluster',
+                    'Fixed event listener leaks and stale watchers after cluster switches',
+                    'Fixed inconsistent data when selecting multiple namespaces',
+                ],
+            },
+        ],
+    },
+    {
         version: '0.0.8',
         title: 'Version 0.0.8',
         description: 'Agentic AI debugging, AWS settings overhaul, cluster quick-switch, and real node metrics.',

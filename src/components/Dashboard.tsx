@@ -4,7 +4,8 @@ import {
     Activity,
     PenTool,
     Trash,
-    RotateCcw
+    RotateCcw,
+    Maximize2
 } from 'lucide-react';
 
 import { ErrorBoundary } from './shared/ErrorBoundary';
@@ -15,11 +16,13 @@ import { ScaleModal } from './shared/ScaleModal';
 import { DashboardContent } from './dashboard/DashboardContent';
 import { DashboardHeader } from './dashboard/DashboardHeader';
 import { useResourceSorting } from '../hooks/useResourceSorting';
-import { useDashboardWatchers } from '../hooks/useDashboardWatchers';
+import { useResourceStore } from '../stores/resourceStore';
+import { useResourceCount } from '../hooks/useResourceList';
 import { ConfirmModal } from './shared/ConfirmModal';
 import { ResourceEvents } from './shared/ResourceEvents';
-import { resolveResourceMeta, formatDeleteMessage } from '../utils/resource-utils';
-import { applyHelmReleaseEvents, HelmRelease } from '../utils/helm-release-utils';
+import { resolveResourceMeta, formatDeleteMessage, coreKindForView } from '../utils/resource-utils';
+import { buildDeploymentDetailViewId, DEPLOYMENT_DETAIL_PREFIX } from '../utils/view-labels';
+import { toCrossplaneRef } from '../utils/crossplane-utils';
 
 interface DashboardProps {
     clusterName: string;
@@ -32,20 +35,21 @@ interface DashboardProps {
     onCordonDrain?: (nodeName: string) => void;
     onDeleteNode?: (nodeName: string) => void;
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
+    /** Reports the namespace selection to the App-level resource sync (design §6.2). */
+    onNamespacesChange?: (namespaces: string[]) => void;
 }
 
 
-export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain, onExec, onCordonDrain, onDeleteNode, showToast }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, onOpenLogs, onNavigate, onOpenYaml, onExplain, onExec, onCordonDrain, onDeleteNode, showToast, onNamespacesChange }) => {
     const [namespaces, setNamespaces] = useState<string[]>([]);
     const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>(['all']);
 
     // Performance: Use transition for non-urgent state updates
     const [, startTransition] = useTransition();
 
-    const [deployments, setDeployments] = useState<any[]>([]);
-    const [pods, setPods] = useState<any[]>([]);
+    // Deployments, pods, services, configmaps, secrets and helm releases live in the resource store
+    // (always loaded in the background). Dashboard only reads a count and does non-reactive lookups.
     const [replicaSets, setReplicaSets] = useState<any[]>([]);
-    const [services, setServices] = useState<any[]>([]);
     const [clusterRoleBindings, setClusterRoleBindings] = useState<any[]>([]);
     const [clusterRoles, setClusterRoles] = useState<any[]>([]);
     const [roleBindings, setRoleBindings] = useState<any[]>([]);
@@ -76,19 +80,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [storageClasses, setStorageClasses] = useState<any[]>([]);
 
     // Config State
-    const [configMaps, setConfigMaps] = useState<any[]>([]);
-    const [secrets, setSecrets] = useState<any[]>([]);
     const [horizontalPodAutoscalers, setHorizontalPodAutoscalers] = useState<any[]>([]);
     const [podDisruptionBudgets, setPodDisruptionBudgets] = useState<any[]>([]);
     const [mutatingWebhookConfigurations, setMutatingWebhookConfigurations] = useState<any[]>([]);
     const [validatingWebhookConfigurations, setValidatingWebhookConfigurations] = useState<any[]>([]);
     const [priorityClasses, setPriorityClasses] = useState<any[]>([]);
     const [runtimeClasses, setRuntimeClasses] = useState<any[]>([]);
-
-    // Helm Release State (parent-managed, prop-driven to HelmReleasesView)
-    const [helmReleases, setHelmReleases] = useState<any[]>([]);
-    const [helmReleasesLoaded, setHelmReleasesLoaded] = useState(false);
-    const helmReleasesMapRef = useRef<Map<string, HelmRelease>>(new Map());
 
     const [nodes, setNodes] = useState<any[]>([]);
     const [customObjects, setCustomObjects] = useState<any[]>([]);
@@ -101,7 +98,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const isCrdView = activeView.startsWith('crd/');
     const crdParams = isCrdView ? activeView.split('/') : []; // ['crd', group, version, plural]
 
-    // Bump this counter when the window regains focus to force watchers to restart.
+    // Bump this counter when the window regains focus to force the node and non-core generic watchers
+    // to restart (core kinds are kept fresh by the main-process resource cache).
     // macOS throttles background processes, silently killing watch connections.
     // Only restart if the window was blurred for >30s to avoid churn from quick alt-tabs.
     const [watchEpoch, setWatchEpoch] = useState(0);
@@ -141,9 +139,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     const [podViewMode, setPodViewMode] = useState<'list' | 'visual'>('list');
     const [summariesEnabled, setSummariesEnabled] = useState(false);
 
-    // Pod worker count — reported by DashboardContent when pod worker is active
-    const [podWorkerCount, setPodWorkerCount] = useState<number | null>(null);
-
     // Fetch context engine config for summariesEnabled
     useEffect(() => {
         (window as any).k8s.settings.getContextConfig().then((config: any) => {
@@ -151,15 +146,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }).catch(() => { });
     }, []);
 
-    // Performance: Use batched IPC watchers for pods and deployments
-    const { isUpdating } = useDashboardWatchers({
-        clusterName,
-        selectedNamespaces,
-        setPods,
-        setDeployments,
-        startTransition,
-        watchEpoch,
-    });
+    // Namespace selection → main-process cache (recorded even before a session exists) and App's sync ref
+    useEffect(() => {
+        onNamespacesChange?.(selectedNamespaces);
+        void window.k8s.resources.setNamespaces(selectedNamespaces).catch(() => { });
+    }, [selectedNamespaces, onNamespacesChange]);
+
+    // Header count for core kinds: a primitive selector, so Dashboard re-renders only when it changes
+    const coreKind = coreKindForView(activeView);
+    const coreCount = useResourceCount(coreKind, selectedNamespaces);
 
     // Sorting State
     const { sortConfig, handleSort, getSortedData } = useResourceSorting();
@@ -198,17 +193,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
     // Track active view to prevent race conditions
     const activeViewRef = useRef(activeView);
+    // Nonce for non-core generic watch keys (D3)
+    const watchNonceRef = useRef(0);
+    const crossplaneDrawerSeq = useRef(0);
     useEffect(() => {
         activeViewRef.current = activeView;
     }, [activeView]);
 
     // Performance: Helper to get current view data for cache check
     const getCurrentViewData = () => {
-        if (activeView === 'overview') return pods.length > 0 || deployments.length > 0;
-        if (activeView === 'pods') return pods.length > 0;
-        if (activeView === 'deployments') return deployments.length > 0;
+        // Core kinds and overview take their loading state from the resource store
+        if (coreKindForView(activeView) !== null || activeView === 'overview') return true;
         if (activeView === 'replicasets') return replicaSets.length > 0;
-        if (activeView === 'services') return services.length > 0;
         if (activeView === 'nodes') return nodes.length > 0;
         if (activeView === 'daemonsets') return daemonSets.length > 0;
         if (activeView === 'statefulsets') return statefulSets.length > 0;
@@ -228,8 +224,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (activeView === 'persistentvolumeclaims') return pvcs.length > 0;
         if (activeView === 'persistentvolumes') return pvs.length > 0;
         if (activeView === 'storageclasses') return storageClasses.length > 0;
-        if (activeView === 'configmaps') return configMaps.length > 0;
-        if (activeView === 'secrets') return secrets.length > 0;
         if (activeView === 'horizontalpodautoscalers') return horizontalPodAutoscalers.length > 0;
         if (activeView === 'poddisruptionbudgets') return podDisruptionBudgets.length > 0;
         if (activeView === 'mutatingwebhookconfigurations') return mutatingWebhookConfigurations.length > 0;
@@ -260,10 +254,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     // Load Namespaces & Wipe State on Cluster Change
     useEffect(() => {
         // Explicitly wipe ALL state on cluster change to prevent data leaks from previous cluster
-        setPods([]);
-        setDeployments([]);
         setReplicaSets([]);
-        setServices([]);
         setEvents([]);
         setEndpointSlices([]);
         setEndpoints([]);
@@ -275,8 +266,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         setStatefulSets([]);
         setJobs([]);
         setCronJobs([]);
-        setConfigMaps([]);
-        setSecrets([]);
         setHorizontalPodAutoscalers([]);
         setPodDisruptionBudgets([]);
         setMutatingWebhookConfigurations([]);
@@ -295,9 +284,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         setCrdDefinitions([]);
         setCustomObjects([]);
         setPodMetrics({});
-        setHelmReleases([]);
-        setHelmReleasesLoaded(false);
-        helmReleasesMapRef.current = new Map();
         // Clear resource cache so stale data from the old cluster is never served
         resourceCacheRef.current = new Map();
         console.log('[Dashboard] State wiped for new cluster:', clusterName);
@@ -351,43 +337,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clusterName, watchEpoch]);
 
-    // Helm Release Watcher Effect - Runs continuously, independent of active view.
-    // Preserves cached data; only clears on namespace change.
-    const prevHelmNsRef = useRef<string>(JSON.stringify(selectedNamespaces));
-    const prevHelmClusterRef = useRef<string>(clusterName);
-    useEffect(() => {
-        // Clear state when cluster or namespaces changed to prevent stale data
-        const nsKey = JSON.stringify(selectedNamespaces);
-        if (prevHelmClusterRef.current !== clusterName || prevHelmNsRef.current !== nsKey) {
-            prevHelmClusterRef.current = clusterName;
-            prevHelmNsRef.current = nsKey;
-            setHelmReleases([]);
-            setHelmReleasesLoaded(false);
-            helmReleasesMapRef.current = new Map();
-        }
-
-        console.log(`[HelmWatcher] Starting — cluster=${clusterName}, ns=${selectedNamespaces.join(',')}, epoch=${watchEpoch}`);
-        (window as any).k8s.helm.watchHelmReleases(clusterName, selectedNamespaces);
-
-        const unsubscribe = (window as any).k8s.helm.onHelmReleaseBatchChange((events: Array<{ type: string; resource: any }>) => {
-            console.debug('[HelmWatcher] Batch received:', events.length, 'events, map size before:', helmReleasesMapRef.current.size);
-            startTransition(() => {
-                helmReleasesMapRef.current = applyHelmReleaseEvents(helmReleasesMapRef.current, events);
-                const releases = Array.from(helmReleasesMapRef.current.values());
-                console.debug('[HelmWatcher] Map size after:', helmReleasesMapRef.current.size, 'releases:', releases.length);
-                setHelmReleases(releases);
-                setHelmReleasesLoaded(true);
-            });
-        });
-
-        return () => {
-            console.log(`[HelmWatcher] Cleanup — epoch=${watchEpoch}`);
-            unsubscribe();
-            (window as any).k8s.helm.stopWatchHelmReleases();
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clusterName, selectedNamespaces, watchEpoch]);
-
     // Config Resource Watcher Effect - Watch config resources when their view is active
     useEffect(() => {
         // Shape raw K8s API objects to match the flat format from initial load functions
@@ -426,12 +375,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 metadata: r.metadata, spec: r.spec, status: r.status
             }),
             // Network
-            services: (r) => ({
-                name: r.metadata?.name, namespace: r.metadata?.namespace,
-                type: r.spec?.type, clusterIP: r.spec?.clusterIP,
-                ports: r.spec?.ports?.map((p: any) => `${p.port}:${p.targetPort}/${p.protocol}`).join(', '),
-                age: r.metadata?.creationTimestamp, metadata: r.metadata, spec: r.spec
-            }),
             endpointslices: (r) => ({
                 name: r.metadata?.name, namespace: r.metadata?.namespace,
                 addressType: r.addressType,
@@ -485,16 +428,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 age: r.metadata?.creationTimestamp, metadata: r.metadata, parameters: r.parameters
             }),
             // Config
-            configmaps: (r) => ({
-                name: r.metadata?.name, namespace: r.metadata?.namespace,
-                data: Object.keys(r.data || {}).length, age: r.metadata?.creationTimestamp,
-                metadata: r.metadata, dataRaw: r.data
-            }),
-            secrets: (r) => ({
-                name: r.metadata?.name, namespace: r.metadata?.namespace,
-                type: r.type, data: Object.keys(r.data || {}).length,
-                age: r.metadata?.creationTimestamp, metadata: r.metadata
-            }),
             horizontalpodautoscalers: (r) => ({
                 name: r.metadata?.name, namespace: r.metadata?.namespace,
                 reference: `${r.spec?.scaleTargetRef?.kind}/${r.spec?.scaleTargetRef?.name}`,
@@ -553,14 +486,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
 
         // Map of view names to their API watch paths and state setters
         const RESOURCE_WATCH_MAP: Record<string, { apiPath: (ns: string[]) => string; setter: (fn: (prev: any[]) => any[]) => void }> = {
-            // Workloads (pods, deployments, nodes have dedicated watchers — skip them)
+            // Workloads (pods, deployments are core kinds in the resource store; nodes have a dedicated watcher)
             daemonsets: { apiPath: nsPath('/apis/apps/v1', 'daemonsets'), setter: setDaemonSets },
             statefulsets: { apiPath: nsPath('/apis/apps/v1', 'statefulsets'), setter: setStatefulSets },
             replicasets: { apiPath: nsPath('/apis/apps/v1', 'replicasets'), setter: setReplicaSets },
             jobs: { apiPath: nsPath('/apis/batch/v1', 'jobs'), setter: setJobs },
             cronjobs: { apiPath: nsPath('/apis/batch/v1', 'cronjobs'), setter: setCronJobs },
             // Network
-            services: { apiPath: nsPath('/api/v1', 'services'), setter: setServices },
             endpointslices: { apiPath: nsPath('/apis/discovery.k8s.io/v1', 'endpointslices'), setter: setEndpointSlices },
             endpoints: { apiPath: nsPath('/api/v1', 'endpoints'), setter: setEndpoints },
             ingresses: { apiPath: nsPath('/apis/networking.k8s.io/v1', 'ingresses'), setter: setIngresses },
@@ -570,9 +502,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             persistentvolumeclaims: { apiPath: nsPath('/api/v1', 'persistentvolumeclaims'), setter: setPvcs },
             persistentvolumes: { apiPath: () => '/api/v1/persistentvolumes', setter: setPvs },
             storageclasses: { apiPath: () => '/apis/storage.k8s.io/v1/storageclasses', setter: setStorageClasses },
-            // Config
-            configmaps: { apiPath: nsPath('/api/v1', 'configmaps'), setter: setConfigMaps },
-            secrets: { apiPath: nsPath('/api/v1', 'secrets'), setter: setSecrets },
+            // Config (configmaps and secrets are core kinds in the resource store)
             horizontalpodautoscalers: { apiPath: nsPath('/apis/autoscaling/v2', 'horizontalpodautoscalers'), setter: setHorizontalPodAutoscalers },
             poddisruptionbudgets: { apiPath: nsPath('/apis/policy/v1', 'poddisruptionbudgets'), setter: setPodDisruptionBudgets },
             mutatingwebhookconfigurations: { apiPath: () => '/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations', setter: setMutatingWebhookConfigurations },
@@ -588,7 +518,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         };
 
         // Check for CRD views: crd/{group}/{version}/{plural}
-        let watchKey = activeView;
+        const baseKey = activeView;
+        // Unique per effect run (D3): a late in-flight event from a previous cluster/run carries an
+        // old key and is dropped by the activeWatchKeys check. Main strips everything after '@'.
+        const watchKey = `${baseKey}@${clusterName}#${++watchNonceRef.current}`;
         let config = RESOURCE_WATCH_MAP[activeView];
         let shape = shapeResource[activeView];
 
@@ -601,7 +534,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 name: r.metadata?.name, namespace: r.metadata?.namespace,
                 age: r.metadata?.creationTimestamp, ...r
             });
-            watchKey = activeView; // Use full crd/group/version/plural as watch key
         }
 
         if (!config) return;
@@ -638,8 +570,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         }
 
         // Resource types that receive pre-transformed batch events from the worker thread
-        const WORKER_BATCH_TYPES = new Set(['replicasets', 'secrets', 'persistentvolumes', 'persistentvolumeclaims']);
-        const useWorkerBatch = WORKER_BATCH_TYPES.has(watchKey);
+        const WORKER_BATCH_TYPES = new Set(['replicasets', 'persistentvolumes', 'persistentvolumeclaims']);
+        const useWorkerBatch = WORKER_BATCH_TYPES.has(baseKey);
 
         const processBatch = () => {
             if (pendingUpdates.size === 0) {
@@ -763,7 +695,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             const nsFilter = selectedNamespaces;
             const promises: Promise<any>[] = [];
 
-            // Overview needs Events; pods/deployments come from watchers via useDashboardWatchers
+            // Overview needs Events; pods/deployments come from the background resource cache
             if (activeView === 'overview') {
                 promises.push(window.k8s.getEvents(clusterName, nsFilter).then(data => {
                     setEvents(data);
@@ -771,9 +703,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 }));
             }
 
-            // Pods and Deployments views: watchers (useDashboardWatchers) handle data via
-            // batched IPC, so we skip the bulk fetch here to avoid a blocking setPods/setDeployments.
-            // Only fetch supplementary data (metrics, nodes) that watchers don't provide.
+            // Pods and Deployments come from the background resource cache (resourceStore).
+            // Only fetch supplementary data (metrics, nodes) that the cache does not provide.
 
             // Individual Views
             if (activeView === 'nodes') {
@@ -803,12 +734,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             }
             // Replicasets, secrets, PVCs, PVs: watchers + worker thread handle data,
             // skip bulk fetch to avoid initial lag (same pattern as pods/deployments)
-            if (activeView === 'services') {
-                promises.push(window.k8s.getServices(clusterName, nsFilter).then(data => {
-                    setServices(data);
-                    setCachedData(cacheKey, data);
-                }));
-            }
             if (activeView === 'clusterrolebindings') {
                 promises.push(window.k8s.getClusterRoleBindings(clusterName).then(data => {
                     setClusterRoleBindings(data);
@@ -922,14 +847,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 });
             }
 
-            // Config
-            if (activeView === 'configmaps') {
-                window.k8s.getConfigMaps(clusterName, nsFilter).then(data => {
-                    setConfigMaps(data);
-                    setCachedData(cacheKey, data);
-                });
-            }
-            // Secrets populated by watchers + worker thread, skip bulk fetch
+            // Config: configmaps and secrets come from the background resource cache
             if (activeView === 'horizontalpodautoscalers') {
                 window.k8s.getHorizontalPodAutoscalers(clusterName, nsFilter).then(data => {
                     setHorizontalPodAutoscalers(data);
@@ -983,11 +901,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         loadResources();
     }, [clusterName, selectedNamespaces, activeView]);
 
-    const handleResourceClick = async (resource: any, type: 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'ec2instance' | 'other') => {
+    const handleResourceClick = async (resource: any, type: 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'ec2instance' | 'crossplane' | 'other') => {
+        const drawerSeq = ++crossplaneDrawerSeq.current;
         setSelectedResource({ ...resource, type });
         setIsDrawerOpen(true);
         setDetailedResource(null); // Clear previous details while loading
         setDrawerTab('details'); // Reset tab on new selection
+
+        if (type === 'crossplane') {
+            try {
+                const obj = await window.k8s.crossplane.getResource(clusterName, toCrossplaneRef(resource));
+                if (drawerSeq === crossplaneDrawerSeq.current) setDetailedResource(obj);
+            } catch (err) {
+                if (drawerSeq !== crossplaneDrawerSeq.current) return;
+                console.error('[Crossplane] Failed to load resource', err);
+                setDetailedResource({ error: `Failed to load details: ${err instanceof Error ? err.message : 'Unknown error'}` });
+            }
+            return;
+        }
 
         // Only fetch details for types we have specific detail fetching logic for
         // Config resources will use generic details component
@@ -1140,17 +1071,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (lowerKind === 'replicaset') {
             resource = replicaSets.find(r => r.name === name && (!currentNamespace || r.namespace === currentNamespace));
         } else if (lowerKind === 'deployment') {
-            resource = deployments.find(d => d.metadata.name === name && (!currentNamespace || d.metadata.namespace === currentNamespace));
+            // Non-reactive store read (no subscription from Dashboard)
+            for (const d of useResourceStore.getState().kinds.deployments.byId.values()) {
+                if (d.name === name && (!currentNamespace || d.namespace === currentNamespace)) { resource = d; break; }
+            }
         } else if (lowerKind === 'pod') {
-            const pod = pods.find(p => p.metadata.name === name && (!currentNamespace || p.metadata.namespace === currentNamespace));
-            if (pod) {
-                // Normalize pod structure to have flat namespace and name properties
-                resource = {
-                    ...pod,
-                    namespace: pod.metadata.namespace,
-                    name: pod.metadata.name,
-                    type: 'pod'
-                };
+            for (const p of useResourceStore.getState().kinds.pods.byId.values()) {
+                if (p.name === name && (!currentNamespace || p.namespace === currentNamespace)) {
+                    resource = { ...p, type: 'pod' };
+                    break;
+                }
             }
         } else if (lowerKind === 'node') {
             const node = nodes.find(n => n.metadata?.name === name);
@@ -1266,9 +1196,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 selectedResource.name,
                 replicas
             );
-            // Refresh data
-            await loadResources();
-            // Update detailed resource if currently viewed
+            // The deployments watch delivers the change; just refresh the drawer details
             handleResourceClick(selectedResource, selectedResource.type);
         } catch (err) {
             console.error("Failed to scale", err);
@@ -1276,12 +1204,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
     };
 
     const getResourceCount = () => {
-        if (activeView === 'deployments') return deployments.length;
-        if (activeView === 'pods') return podWorkerCount ?? pods.length;
+        if (coreKind !== null) return coreCount;
         if (activeView === 'replicasets') return replicaSets.length;
-        if (activeView === 'services') return services.length;
-        if (activeView === 'configmaps') return configMaps.length;
-        if (activeView === 'secrets') return secrets.length;
         if (activeView === 'ingresses') return ingresses.length;
         if (activeView === 'ingressclasses') return ingressClasses.length;
         if (activeView === 'persistentvolumeclaims') return pvcs.length;
@@ -1308,9 +1232,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
         if (activeView === 'validatingwebhookconfigurations') return validatingWebhookConfigurations.length;
         if (activeView === 'priorityclasses') return priorityClasses.length;
         if (activeView === 'runtimeclasses') return runtimeClasses.length;
-        if (activeView === 'helm-releases') return helmReleases.length;
         if (activeView === 'helm-charts') return 0;
         if (activeView.startsWith('helm-chart-detail/')) return 0;
+        if (activeView.startsWith(DEPLOYMENT_DETAIL_PREFIX)) return 0;
         if (activeView === 'crd-definitions') return crdDefinitions.length;
         if (activeView.startsWith('crd/')) return (customObjects && typeof customObjects === 'object' && 'items' in customObjects) ? (customObjects.items as any[]).length : (Array.isArray(customObjects) ? customObjects.length : 0);
         return 0;
@@ -1337,15 +1261,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
             />
 
             {/* Content Area */}
-            <div className="flex-1 overflow-y-auto p-6 pb-4">
+            <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-4">
                 <DashboardContent
                     activeView={activeView}
                     isCrdView={isCrdView}
                     currentCrdKind={currentCrdKind}
-                    pods={pods}
-                    deployments={deployments}
                     replicaSets={replicaSets}
-                    services={services}
                     nodes={nodes}
                     events={events}
                     namespacesList={namespacesList}
@@ -1355,8 +1276,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     statefulSets={statefulSets}
                     jobs={jobs}
                     cronJobs={cronJobs}
-                    configMaps={configMaps}
-                    secrets={secrets}
                     pvcs={pvcs}
                     pvs={pvs}
                     storageClasses={storageClasses}
@@ -1389,13 +1308,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     onNavigate={onNavigate}
                     onExec={onExec}
                     onOpenLogs={onOpenLogs}
+                    onOpenYaml={onOpenYaml}
                     getSortedData={getSortedData}
                     summariesEnabled={summariesEnabled}
-                    isUpdating={isUpdating}
-                    helmReleases={helmReleases}
-                    helmReleasesLoading={!helmReleasesLoaded}
                     showToast={showToast}
-                    onPodWorkerCount={setPodWorkerCount}
                 />
             </div>
             < Drawer
@@ -1406,29 +1322,47 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                     }
                 }}
                 title={selectedResource?.name || 'Details'}
+                titleActions={onOpenYaml && (
+                    <button
+                        onClick={() => {
+                            onOpenYaml(selectedResource);
+                            setIsDrawerOpen(false);
+                        }}
+                        className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-blue-400 rounded transition-colors"
+                        title="Edit YAML"
+                        aria-label="Edit YAML"
+                    >
+                        <PenTool size={18} />
+                    </button>
+                )}
                 headerActions={
                     <div className="flex items-center gap-2">
-                        {onOpenYaml && (
-                            <button
-                                onClick={() => {
-                                    onOpenYaml(selectedResource);
-                                    setIsDrawerOpen(false);
-                                }}
-                                className="p-1.5 hover:bg-white/10 text-gray-400 hover:text-blue-400 rounded transition-colors"
-                                title="Edit YAML"
-                            >
-                                <PenTool size={18} />
-                            </button>
-                        )}
 
                         {
                             selectedResource?.type === 'deployment' && (
                                 <button
                                     onClick={() => setIsScaleModalOpen(true)}
-                                    className="p-1 px-3 ml-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
+                                    className="p-1 px-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
                                     title="Scale Deployment"
                                 >
                                     <Activity size={14} /> Scale
+                                </button>
+                            )
+                        }
+
+                        {
+                            selectedResource?.type === 'deployment' && onNavigate && (
+                                <button
+                                    onClick={() => {
+                                        const ns = selectedResource.metadata?.namespace ?? selectedResource.namespace;
+                                        const name = selectedResource.metadata?.name ?? selectedResource.name;
+                                        onNavigate(buildDeploymentDetailViewId(ns, name));
+                                        setIsDrawerOpen(false);
+                                    }}
+                                    className="p-1 px-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
+                                    title="Open full deployment view"
+                                >
+                                    <Maximize2 size={14} /> Full View
                                 </button>
                             )
                         }
@@ -1455,7 +1389,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                             }
                                         }
                                     }}
-                                    className="p-1 px-3 ml-2 bg-orange-600/20 hover:bg-orange-600/30 text-orange-400 border border-orange-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
+                                    className="p-1 px-3 bg-orange-600/20 hover:bg-orange-600/30 text-orange-400 border border-orange-600/30 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-colors"
                                     title="Rolling Restart"
                                 >
                                     <RotateCcw size={14} /> Restart
@@ -1464,7 +1398,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                         }
 
                         {
-                            selectedResource?.type && selectedResource.type !== 'ec2instance' && (() => {
+                            selectedResource?.type && selectedResource.type !== 'ec2instance' && selectedResource.type !== 'crossplane' && (() => {
                                 try {
                                     const { kind } = resolveResourceMeta(selectedResource, selectedResource.type);
                                     return (
@@ -1485,7 +1419,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                 }
 
             >
-                <ErrorBoundary name="DrawerDetails" resetKey={`${selectedResource?.name}-${selectedResource?.type}-${selectedResource?.namespace}`}>
+                <ErrorBoundary name="DrawerDetails" resetKey={`${selectedResource?.name}-${selectedResource?.type}-${selectedResource?.namespace}-${selectedResource?.kind ?? ''}`}>
                     {detailedResource ? (
                         detailedResource.error ? (
                             <div className="p-4 text-red-400 bg-red-900/20 rounded border border-red-900/30">
@@ -1513,6 +1447,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ clusterName, activeView, o
                                             onTriggerCronJob={handleTriggerCronJob}
                                             onCordonDrain={onCordonDrain}
                                             onDeleteNode={onDeleteNode}
+                                            onOpenCrossplaneResource={(ref) => handleResourceClick(ref, 'crossplane')}
                                         />
                                         {/* Resource Events — shown for all types except pods (PodDetails has its own events section) */}
                                         {selectedResource?.type !== 'pod' && (

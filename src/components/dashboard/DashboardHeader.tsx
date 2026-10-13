@@ -2,6 +2,7 @@ import React from 'react';
 import { Layers, Network, Search, Square } from 'lucide-react';
 import { ToggleGroup } from '../shared/ToggleGroup';
 import { NamespaceSelector } from './NamespaceSelector';
+import { parseDeploymentDetailViewId } from '../../utils/view-labels';
 
 interface DashboardHeaderProps {
     clusterName: string;
@@ -27,6 +28,9 @@ const getViewTitle = (view: string): string => {
         const name = view.split('/')[2] ?? '';
         return `Helm Release: ${name}`;
     }
+
+    const deploymentDetail = parseDeploymentDetailViewId(view);
+    if (deploymentDetail) return `Deployment: ${deploymentDetail.name}`;
 
     if (view.startsWith('helm-chart-detail/')) {
         const chart = decodeURIComponent(view.split('/')[2] ?? '');
@@ -71,6 +75,11 @@ const getViewTitle = (view: string): string => {
         'helm-releases': 'Helm Releases',
         'helm-charts': 'Helm Charts',
         'aws': 'AWS',
+        'crossplane-overview': 'Crossplane',
+        'crossplane-packages': 'Crossplane Packages',
+        'crossplane-definitions': 'Crossplane Definitions',
+        'crossplane-composites': 'Crossplane Composites',
+        'crossplane-managed': 'Crossplane Managed Resources',
     };
 
     return titleMap[view] || view.charAt(0).toUpperCase() + view.slice(1);
@@ -94,6 +103,9 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
     podViewMode,
     onPodViewModeChange,
 }) => {
+    // Single-object page: search, namespace filter and count don't apply (and a namespace change would
+    // re-key the deployment watcher that drives the page's live refresh).
+    const isDeploymentDetail = parseDeploymentDetailViewId(activeView) !== null;
     return (
         <div className="flex-none px-6 py-4 sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 backdrop-blur-md">
             {/* Left Section - Title and Info */}
@@ -110,10 +122,14 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
                             <Network size={11} className="text-blue-400/60" />
                             {clusterName}
                         </span>
-                        <span className="text-gray-600">·</span>
-                        <span className="text-xs text-gray-500 whitespace-nowrap">
-                            {resourceCount} resources
-                        </span>
+                        {!isDeploymentDetail && (
+                            <>
+                                <span className="text-gray-600">·</span>
+                                <span className="text-xs text-gray-500 whitespace-nowrap">
+                                    {resourceCount} resources
+                                </span>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
@@ -121,18 +137,20 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
             {/* Right Section - Search and Controls */}
             <div className="flex items-center gap-3 flex-wrap flex-1 justify-end min-w-[200px]">
                 {/* Search Input */}
-                <div className="relative group w-full sm:w-64">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-gray-500 group-focus-within:text-blue-400 transition-colors" />
+                {!isDeploymentDetail && (
+                    <div className="relative group w-full sm:w-64">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Search className="h-4 w-4 text-gray-500 group-focus-within:text-blue-400 transition-colors" />
+                        </div>
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => onSearchChange(e.target.value)}
+                            placeholder="Search resources..."
+                            className="block w-full pl-10 pr-3 py-1.5 border border-white/5 rounded-lg leading-5 bg-white/5 text-gray-300 placeholder-gray-600 focus:outline-none focus:bg-white/5 focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/30 sm:text-sm transition-all"
+                        />
                     </div>
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => onSearchChange(e.target.value)}
-                        placeholder="Search resources..."
-                        className="block w-full pl-10 pr-3 py-1.5 border border-white/5 rounded-lg leading-5 bg-white/5 text-gray-300 placeholder-gray-600 focus:outline-none focus:bg-white/5 focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/30 sm:text-sm transition-all"
-                    />
-                </div>
+                )}
 
                 {/* Pod View Toggle - Only show for pods view */}
                 {activeView === 'pods' && podViewMode && onPodViewModeChange && (
@@ -149,13 +167,15 @@ export const DashboardHeader = React.memo<DashboardHeaderProps>(({
                 )}
 
                 {/* Namespace Selector */}
-                <div className="flex-none">
-                    <NamespaceSelector
-                        namespaces={namespaces}
-                        selected={selectedNamespaces}
-                        onChange={onNamespaceChange}
-                    />
-                </div>
+                {!isDeploymentDetail && (
+                    <div className="flex-none">
+                        <NamespaceSelector
+                            namespaces={namespaces}
+                            selected={selectedNamespaces}
+                            onChange={onNamespaceChange}
+                        />
+                    </div>
+                )}
 
                 {/* Stop All Port Forwards - Only show for services view */}
                 {activeView === 'services' && (

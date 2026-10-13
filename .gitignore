@@ -29,3 +29,7 @@ package-mac-signed.sh
 dist-electron
 .kirograph/*
 .dual-graph/
+
+# Docs
+docs/.next
+docs/out

@@ -1,24 +1,29 @@
 import React from 'react';
-import { DeploymentsView } from './views/DeploymentsView';
-import { PodsView } from './views/PodsView';
-import { OverviewView } from './views/OverviewView';
 import { NodesView } from './views/NodesView';
 import { CertManagerView } from './views/CertManagerView';
 import { AwsView } from './views/AwsView';
 import { KarpenterView } from './views/KarpenterView';
+import { CrossplaneView } from './views/crossplane/CrossplaneView';
 import { GenericResourceView } from './views/GenericResourceView';
-import { HelmReleasesView } from './views/HelmReleasesView';
 import { HelmChartsView } from './views/HelmChartsView';
 import { HelmChartDetailView } from './views/HelmChartDetailView';
 import { HelmReleaseDetail } from './views/HelmReleaseDetail';
+import {
+    ConnectedConfigMapsView,
+    ConnectedDeploymentFullView,
+    ConnectedDeploymentsView,
+    ConnectedHelmReleasesView,
+    ConnectedOverviewView,
+    ConnectedPodsView,
+    ConnectedSecretsView,
+    ConnectedServicesView,
+} from './views/CoreResourceViews';
 import { ViewSummary } from '../shared/ViewSummary';
 import { TimeAgo } from '../shared/TimeAgo';
-import { usePodWorker } from '../../hooks/usePodWorker';
-import { useResourceSorting } from '../../hooks/useResourceSorting';
-import type { PodStatusStats } from './OverviewCharts';
+import { buildDeploymentDetailViewId, parseDeploymentDetailViewId } from '../../utils/view-labels';
 
 // Resource type union matching Dashboard's handleResourceClick
-type ResourceType = 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'other';
+type ResourceType = 'deployment' | 'pod' | 'replicaset' | 'service' | 'clusterrole' | 'clusterrolebinding' | 'rolebinding' | 'serviceaccount' | 'role' | 'node' | 'crd-definition' | 'custom-resource' | 'daemonset' | 'statefulset' | 'job' | 'cronjob' | 'endpointslice' | 'endpoint' | 'ingress' | 'ingressclass' | 'networkpolicy' | 'persistentvolumeclaim' | 'persistentvolume' | 'storageclass' | 'configmap' | 'secret' | 'horizontalpodautoscaler' | 'poddisruptionbudget' | 'mutatingwebhookconfiguration' | 'validatingwebhookconfiguration' | 'priorityclass' | 'runtimeclass' | 'namespace' | 'crossplane' | 'other';
 
 interface DashboardContentProps {
     // View state
@@ -26,11 +31,9 @@ interface DashboardContentProps {
     isCrdView: boolean;
     currentCrdKind: string;
 
-    // Resource data
-    pods: any[];
-    deployments: any[];
+    // Resource data (deployments, pods, services, configmaps, secrets and helm releases come from the
+    // resource store through the Connected* views; DashboardContent subscribes to none of them)
     replicaSets: any[];
-    services: any[];
     nodes: any[];
     events: any[];
     namespacesList: any[];
@@ -40,8 +43,6 @@ interface DashboardContentProps {
     statefulSets: any[];
     jobs: any[];
     cronJobs: any[];
-    configMaps: any[];
-    secrets: any[];
     pvcs: any[];
     pvs: any[];
     storageClasses: any[];
@@ -80,13 +81,10 @@ interface DashboardContentProps {
     onNavigate?: (view: string) => void;
     onExec?: (pod: any, containerName: string) => void;
     onOpenLogs?: (pod: any, containerName: string) => void;
+    onOpenYaml?: (resource: unknown) => void;
     getSortedData: (data: any[]) => any[];
     summariesEnabled?: boolean;
-    isUpdating?: boolean;
-    helmReleases?: any[];
-    helmReleasesLoading?: boolean;
     showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
-    onPodWorkerCount?: (count: number) => void;
 }
 
 // Stable no-op callback to avoid breaking React.memo on child components
@@ -101,10 +99,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     activeView,
     isCrdView,
     currentCrdKind,
-    pods,
-    deployments,
     replicaSets,
-    services,
     nodes,
     events,
     namespacesList,
@@ -114,8 +109,6 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     statefulSets,
     jobs,
     cronJobs,
-    configMaps,
-    secrets,
     pvcs: _pvcs,
     pvs: _pvs,
     storageClasses: _storageClasses,
@@ -136,82 +129,68 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     priorityClasses: _priorityClasses,
     runtimeClasses: _runtimeClasses,
     podMetrics,
-    loading,
+    loading: _loading,
     watcherReady,
     podViewMode,
-    sortConfig,
+    sortConfig: _sortConfig,
     searchQuery,
     clusterName,
     selectedNamespaces,
-    onSort,
+    onSort: _onSort,
     onResourceClick,
     onNavigate,
     onExec,
     onOpenLogs,
-    getSortedData,
+    onOpenYaml,
+    getSortedData: _getSortedData,
     summariesEnabled = false,
-    isUpdating,
-    helmReleases = [],
-    helmReleasesLoading = false,
     showToast,
-    onPodWorkerCount,
 }) => {
-    // Pod worker hook — runs continuously regardless of active view so tab switches are instant
-    const podWorker = usePodWorker({
-        context: clusterName,
-        namespaces: selectedNamespaces,
-        enabled: true,
-    });
+    // Deployment Full View: top-level hooks (route branches below must stay hook-free).
+    // latest-ref so the callbacks are stable even though App.handleViewChange is re-created every render
+    const onNavigateRef = React.useRef(onNavigate);
+    onNavigateRef.current = onNavigate;
+    const deploymentDetail = React.useMemo(() => parseDeploymentDetailViewId(activeView), [activeView]);
+    // Stable per-type row handlers (latest-ref: Dashboard re-creates onResourceClick every render),
+    // so the React.memo'd Connected* views skip re-renders caused by node/event/metrics updates.
+    const onResourceClickRef = React.useRef(onResourceClick);
+    onResourceClickRef.current = onResourceClick;
+    const rowClick = React.useMemo(() => {
+        const make = (type: ResourceType) => (item: unknown) => onResourceClickRef.current(item, type);
+        return { deployment: make('deployment'), pod: make('pod'), service: make('service'), configmap: make('configmap'), secret: make('secret') };
+    }, []);
+    const onNodeClick = React.useCallback((nodeName: string) => {
+        const node = nodes.find((n: any) => n.name === nodeName);
+        if (node) onResourceClick(node, 'node');
+    }, [nodes, onResourceClick]);
+    const handleOpenDeploymentFullView = React.useCallback(
+        (ns: string, n: string) => onNavigateRef.current?.(buildDeploymentDetailViewId(ns, n)), []);
+    const handleBackToDeployments = React.useCallback(() => onNavigateRef.current?.('deployments'), []);
 
-    // Report pod worker count back to parent for header resource count
-    React.useEffect(() => {
-        if (podWorker.isSynced && onPodWorkerCount) {
-            onPodWorkerCount(podWorker.podCount);
-        }
-    }, [podWorker.isSynced, podWorker.podCount, onPodWorkerCount]);
-
-    // Local sorting for pod-worker pods
-    const { sortConfig: workerSortConfig, handleSort: workerHandleSort, getSortedData: workerGetSortedData } = useResourceSorting();
-
-    // Use pod-worker data when synced, fall back to prop-passed pods
-    const usePodWorkerData = activeView === 'pods' && podWorker.isSynced;
-
-    // Pre-compute pod status stats for the overview chart.
-    // This is a lightweight O(n) pass that produces a stable object reference
-    // (only changes when actual status counts change), preventing the overview
-    // from re-rendering on every pod delta in large clusters.
-    const prevStatsRef = React.useRef<PodStatusStats>({ Running: 0, Pending: 0, Failed: 0, Succeeded: 0, Unknown: 0 });
-    const podStatusStats = React.useMemo<PodStatusStats>(() => {
-        const stats: PodStatusStats = { Running: 0, Pending: 0, Failed: 0, Succeeded: 0, Unknown: 0 };
-        const source = podWorker.isSynced ? podWorker.pods : pods;
-        for (const pod of source) {
-            const status = pod.status || 'Unknown';
-            if (status in stats) {
-                stats[status as keyof PodStatusStats]++;
-            } else {
-                stats.Unknown++;
-            }
-        }
-        // Return the previous reference if counts haven't changed (stabilizes downstream renders)
-        const prev = prevStatsRef.current;
-        if (prev.Running === stats.Running && prev.Pending === stats.Pending &&
-            prev.Failed === stats.Failed && prev.Succeeded === stats.Succeeded &&
-            prev.Unknown === stats.Unknown) {
-            return prev;
-        }
-        prevStatsRef.current = stats;
-        return stats;
-    }, [podWorker.isSynced, podWorker.pods, pods]);
+    // Deployment Full View (tab `deployment-detail/<ns>/<name>`); keyed by cluster so a cluster switch remounts
+    if (deploymentDetail) {
+        return (
+            <ConnectedDeploymentFullView
+                key={`${clusterName}|${activeView}`}
+                clusterName={clusterName}
+                namespace={deploymentDetail.namespace}
+                name={deploymentDetail.name}
+                onBack={handleBackToDeployments}
+                onResourceClick={onResourceClick}
+                onOpenLogs={onOpenLogs}
+                onOpenYaml={onOpenYaml}
+                showToast={showToast}
+            />
+        );
+    }
 
     // Overview View
     if (activeView === 'overview') {
         return (
             <div className="mb-8">
-                <OverviewView
-                    podStatusStats={podStatusStats}
-                    deployments={deployments}
+                <ConnectedOverviewView
+                    selectedNamespaces={selectedNamespaces}
                     events={events}
-                    isLoading={loading && !podWorker.isSynced}
                     onNavigate={onNavigate}
                     onSwitchToVisualPods={noopCallback}
                 />
@@ -242,6 +221,20 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     // Karpenter View
     if (activeView === 'karpenter') {
         return <KarpenterView clusterName={clusterName} searchQuery={searchQuery} />;
+    }
+
+    // Crossplane views (crossplane-overview, -packages, -definitions, -composites, -managed)
+    if (activeView.startsWith('crossplane-')) {
+        return (
+            <CrossplaneView
+                subView={activeView.slice('crossplane-'.length)}
+                clusterName={clusterName}
+                searchQuery={searchQuery}
+                selectedNamespaces={selectedNamespaces}
+                onResourceClick={onResourceClick}
+                onNavigate={onNavigate}
+            />
+        );
     }
 
     // Backgrounds View (empty)
@@ -320,14 +313,12 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
         return (
             <>
                 <ViewSummary resourceType="Deployment" enabled={summariesEnabled} />
-                <DeploymentsView
-                    deployments={deployments}
-                    isLoading={loading}
+                <ConnectedDeploymentsView
                     clusterName={clusterName}
                     selectedNamespaces={selectedNamespaces}
                     searchQuery={searchQuery}
-                    onRowClick={(dep) => onResourceClick(dep, 'deployment')}
-                    isUpdating={isUpdating}
+                    onRowClick={rowClick.deployment}
+                    onOpenFullView={handleOpenDeploymentFullView}
                 />
             </>
         );
@@ -335,50 +326,20 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
 
     // Pods View
     if (activeView === 'pods') {
-        // Choose data source: pod worker when synced, otherwise legacy props
-        const sourcePods = usePodWorkerData ? podWorker.pods : pods;
-        const activeSortConfig = usePodWorkerData ? workerSortConfig : sortConfig;
-        const activeOnSort = usePodWorkerData ? workerHandleSort : onSort;
-        const activeGetSortedData = usePodWorkerData ? workerGetSortedData : getSortedData;
-
-        // Enrich pods with metrics BEFORE sorting so cpu/memory columns sort correctly
-        const enrichedPods = sourcePods.map(pod => {
-            const key = `${pod.namespace}/${pod.name}`;
-            const metrics = podMetrics[key];
-            return {
-                ...pod,
-                cpu: metrics?.cpu || '',
-                memory: metrics?.memory || ''
-            };
-        });
         return (
             <>
                 <ViewSummary resourceType="Pod" enabled={summariesEnabled} />
-                <PodsView
+                <ConnectedPodsView
                     viewMode={podViewMode}
-                    pods={enrichedPods}
-                    sortedPods={activeGetSortedData(enrichedPods)}
                     nodes={nodes}
-                    sortConfig={activeSortConfig}
-                    onSort={activeOnSort}
-                    onRowClick={(pod: any) => onResourceClick(pod, 'pod')}
-                    onNodeClick={(nodeName: string) => {
-                        const node = nodes.find((n: any) => n.name === nodeName);
-                        if (node) onResourceClick(node, 'node');
-                    }}
+                    podMetrics={podMetrics}
+                    onRowClick={rowClick.pod}
+                    onNodeClick={onNodeClick}
                     searchQuery={searchQuery}
                     selectedNamespaces={selectedNamespaces}
-                    isLoading={usePodWorkerData ? podWorker.isLoading : loading}
-                    isSynced={usePodWorkerData ? podWorker.isSynced : undefined}
-                    error={usePodWorkerData ? podWorker.error : undefined}
-                    podMetrics={podMetrics}
                     onExec={onExec}
                     onOpenLogs={onOpenLogs}
                     clusterName={clusterName}
-                    isUpdating={isUpdating}
-                    onDeletePods={async (pods) => {
-                        await Promise.all(pods.map(p => window.k8s.deletePod(clusterName, p.namespace, p.name)));
-                    }}
                 />
             </>
         );
@@ -409,24 +370,7 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
 
     // Services View
     if (activeView === 'services') {
-        return (
-            <GenericResourceView
-                viewKey="services"
-                description="Network services for your application components."
-                columns={[
-                    { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                    { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                    { label: 'Type', dataKey: 'type', width: 120, flexGrow: 0, cellRenderer: (t) => <span className="text-gray-400">{t}</span> },
-                    { label: 'Cluster IP', dataKey: 'clusterIP', width: 120, flexGrow: 0, cellRenderer: (ip) => <span className="text-gray-400 font-mono text-xs">{ip}</span> },
-                    { label: 'Ports', dataKey: 'ports', flexGrow: 1, cellRenderer: (p) => <span className="text-gray-400 font-mono text-xs">{p}</span> },
-                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                ]}
-                data={services}
-                onRowClick={(svc: any) => onResourceClick(svc, 'service')}
-                searchQuery={searchQuery}
-                selectedNamespaces={selectedNamespaces}
-            />
-        );
+        return <ConnectedServicesView onRowClick={rowClick.service} searchQuery={searchQuery} selectedNamespaces={selectedNamespaces} />;
     }
 
     // DaemonSets View
@@ -519,44 +463,12 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
 
     // ConfigMaps View
     if (activeView === 'configmaps') {
-        return (
-            <GenericResourceView
-                viewKey="configmaps"
-                description="Store non-confidential configuration data in key-value pairs."
-                columns={[
-                    { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                    { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                    { label: 'Data', dataKey: 'data', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d} keys</span> },
-                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                ]}
-                data={configMaps}
-                onRowClick={(cm: any) => onResourceClick(cm, 'configmap')}
-                searchQuery={searchQuery}
-                selectedNamespaces={selectedNamespaces}
-            />
-        );
+        return <ConnectedConfigMapsView onRowClick={rowClick.configmap} searchQuery={searchQuery} selectedNamespaces={selectedNamespaces} />;
     }
 
     // Secrets View
     if (activeView === 'secrets') {
-        return (
-            <GenericResourceView
-                viewKey="secrets"
-                description="Store sensitive information such as passwords, tokens, or keys."
-                columns={[
-                    { label: 'Name', dataKey: 'name', sortable: true, flexGrow: 2, cellRenderer: (name) => <span className="font-medium text-gray-200">{name}</span> },
-                    { label: 'Namespace', dataKey: 'namespace', sortable: true, flexGrow: 1, cellRenderer: (ns) => <span className="text-gray-400">{ns}</span> },
-                    { label: 'Type', dataKey: 'type', flexGrow: 1, cellRenderer: (t) => <span className="text-gray-400 text-xs">{t}</span> },
-                    { label: 'Data', dataKey: 'data', width: 80, flexGrow: 0, cellRenderer: (d) => <span className="text-gray-400">{d} keys</span> },
-                    { label: 'Age', dataKey: 'age', sortable: true, width: 120, flexGrow: 0, cellRenderer: (age) => <span className="text-gray-400"><TimeAgo timestamp={age} /></span> }
-                ]}
-                data={secrets}
-                onRowClick={(secret: any) => onResourceClick(secret, 'secret')}
-                searchQuery={searchQuery}
-                selectedNamespaces={selectedNamespaces}
-                isLoading={secrets.length === 0 && !watcherReady}
-            />
-        );
+        return <ConnectedSecretsView onRowClick={rowClick.secret} searchQuery={searchQuery} selectedNamespaces={selectedNamespaces} />;
     }
 
     // PVCs View
@@ -946,14 +858,12 @@ export const DashboardContent = React.memo<DashboardContentProps>(({
     // Helm Releases View
     if (activeView === 'helm-releases') {
         return (
-            <HelmReleasesView
+            <ConnectedHelmReleasesView
                 clusterName={clusterName}
                 selectedNamespaces={selectedNamespaces}
                 searchQuery={searchQuery}
                 onNavigateToDetail={(namespace, name) => onNavigate?.(`helm-release-detail/${namespace}/${name}`)}
                 showToast={showToast || (() => { })}
-                helmReleases={helmReleases}
-                isLoading={helmReleasesLoading}
             />
         );
     }

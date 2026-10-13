@@ -1,0 +1,38 @@
+# Cluster Management
+
+Lumen supports managing multiple Kubernetes clusters with seamless context switching.
+
+## Cluster Discovery
+
+Lumen reads your kubeconfig file and lists all available contexts. Clusters are displayed in the sidebar with their connection status.
+
+## Context Switching
+
+Click any cluster in the sidebar to switch contexts. Lumen will:
+
+1. Disconnect from the current cluster
+2. Stop all active watchers
+3. Connect to the new cluster
+4. Start resource watchers for the new context
+
+## Pinned Clusters
+
+Pin frequently used clusters for quick access. Pinned clusters appear at the top of the cluster list and persist across sessions.
+
+## Namespace Filtering
+
+Use the namespace selector to filter resources by namespace:
+
+- **All Namespaces** — View resources across all namespaces
+- **Specific Namespace** — Filter to a single namespace
+- **System Namespaces** — Optionally show/hide `kube-system`, `kube-public`, etc.
+
+The default namespace can be configured in Settings.
+
+## EKS Cluster Detection
+
+Lumen automatically detects EKS clusters and enables AWS-specific features:
+
+- EC2 instance details for nodes
+- CloudTrail access logs
+- EKS-specific metadata and configuration

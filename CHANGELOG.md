@@ -2,6 +2,40 @@
 
 All notable changes to **Lumen** are documented here.
 
+## [0.0.9] — 2026-10-13
+### Highlights
+- **Background resource cache** — deployments, pods, secrets, configmaps, services and Helm releases load once per cluster and stay live; tab and namespace switches no longer reload or restart watches
+- **Crossplane section** — read-only sidebar group (shown only when Crossplane is detected) with Overview, Packages, Definitions, Composites and Managed views, a detail drawer and a Claim → XR → MR graph
+- **Deployment Full View** — 12-section full-page deployment view with revision diff and security posture, opened from the drawer
+- **Rename cluster contexts** — right-click a cluster → Rename; kubeconfig, pins, tabs, watchers and terminals follow
+- **Live kubeconfig refresh** — contexts added to the kubeconfig appear without restarting Lumen
+- **Multiple context-bound terminals** — independent terminal tabs, each bound to the cluster context it was opened with
+### Resource Cache
+- Main-process LIST+WATCH streams per cluster with 650 ms coalesced batches into a normalized store
+- Cluster-wide watches with client-side namespace filtering; automatic per-namespace fallback on 403
+- Status banners for reconnecting, error and forbidden states while keeping rows visible
+- Resync on window focus and system wake
+- Helm releases derived from the secrets stream; release blobs never reach the renderer
+- Removed legacy per-event watch IPC and the old pod worker hook
+### Nodes
+- New architecture distribution donut (ARM / non-ARM / unknown) that follows the search filter
+- Fixed the Nodes table being hidden or clipped with Stats expanded or in short windows
+### Bottom Panel & Terminals
+- Unsaved YAML edits persist per tab across tab switches, pop-out and refreshes; discard confirmation on close
+- YAML tab ids are cluster-scoped (fixes saving to the wrong cluster)
+- Terminals bound to their opening context via a per-terminal override kubeconfig; context shown in tab subtitle, badge and banner
+- Multiple terminal tabs with a "+" action and Cmd+Shift+`
+- Cordon/drain use an explicit `--context` instead of switching the global context
+- PTYs are cleaned up on window close and quit
+### Fixes
+- Preload event subscriptions now remove only their own listeners
+- Multi-namespace selection and stale generic watcher leaks fixed
+- Custom kubeconfig path in Settings is now honored
+### Dependencies
+- Electron 42.x (`fix:pty` targets 42.2.0)
+- Added crossview Apache-2.0 license notice
+See [release notes](./release-notes/v0.0.9.md) for prose detail.
+---
 ## [0.0.8] — 2026-04-29
 
 ### Highlights

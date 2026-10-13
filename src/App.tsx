@@ -20,9 +20,14 @@ import { AnimatePresence } from 'framer-motion'
 
 import { AuthView } from './components/features/auth/AuthView';
 import { useAuthStore } from './stores/authStore';
+import { useClusterContexts } from './hooks/useClusterContexts';
+import { useResourceSync } from './hooks/useResourceSync';
+import { renameMapKey, remapPanelTab } from './utils/cluster-rename-utils';
 import { ConnectionErrorCard } from './components/dashboard/ConnectionErrorCard';
 import { isEksCluster } from './utils/cluster-utils';
 import { RESOURCE_TYPE_MAP } from './utils/resource-utils';
+import { buildYamlTabId } from './utils/yaml-draft-utils';
+import { createLocalTerminalTab, findReusableLocalTerminal } from './utils/terminal-tab-utils';
 import { AIPanel } from './components/features/ai/AIPanel';
 import { ViewTabBar, ViewTab } from './components/dashboard/ViewTabBar';
 import { getViewLabel } from './utils/view-labels';
@@ -37,10 +42,14 @@ import {
 function App() {
     const [activeView, setActiveView] = useState<'clusters' | 'dashboard' | 'settings' | 'editor' | 'user'>('clusters')
     const [selectedCluster, setSelectedCluster] = useState<string | null>(null)
+    // Bumped on every connect attempt (success or failure) so the resource sync effect re-runs once
+    const [syncEpoch, setSyncEpoch] = useState(0)
     const [isEks, setIsEks] = useState(false);
     const [theme, setTheme] = useState<'blue' | 'charcoal' | 'red'>('charcoal');
     const [hasCertManager, setHasCertManager] = useState(false);
     const [hasKarpenter, setHasKarpenter] = useState(false);
+    const [hasCrossplane, setHasCrossplane] = useState(false);
+    const crossplaneDetectSeq = useRef(0);
 
     // Connection State
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
@@ -72,8 +81,16 @@ function App() {
     const [resourceView, setResourceView] = useState<string>('overview')
     const lastResourceViewRef = useRef<string>('overview');
 
-    // Cluster list for StatusBar quick-switcher
-    const [clustersList, setClustersList] = useState<Array<{ name: string }>>([]);
+    // Shared kube context list (sidebar, status bar). Stays in sync with the kubeconfig file on disk.
+    const { clusters: clustersList, applyClusters } = useClusterContexts((payload) => {
+        // The connected cluster's context was removed from the kubeconfig: leave it and return to the list
+        // (the hook keeps the latest callback in a ref, so `selectedCluster` here is never stale)
+        if (selectedCluster && payload.removed.includes(selectedCluster)) {
+            showToastRef.current?.(`Context "${selectedCluster}" was removed from your kubeconfig.`, 'info');
+            setSelectedCluster(null);
+            setActiveView('clusters');
+        }
+    });
 
     // AWS Profile state for StatusBar indicator
     const [awsProfile, setAwsProfile] = useState<string>('default');
@@ -118,11 +135,6 @@ function App() {
     // Restore auth session on app mount
     useEffect(() => {
         useAuthStore.getState().initialize();
-    }, []);
-
-    // Fetch clusters list for StatusBar quick-switcher
-    useEffect(() => {
-        window.k8s.getClusters().then(setClustersList).catch(console.error);
     }, []);
 
     // Fetch AWS profiles for StatusBar indicator
@@ -537,6 +549,55 @@ function App() {
         }
     };
 
+    // old context name -> new name, for closures that outlive a rename (see resolveContext)
+    const renamedContextsRef = useRef(new Map<string, string>());
+    const resolveContext = (name: string): string => {
+        let current = name;
+        for (let i = 0; i < 10; i++) {
+            const next = renamedContextsRef.current.get(current);
+            if (!next) break;
+            current = next;
+        }
+        return current;
+    };
+
+    // Renames a kube context. Returns null on success or the error message (so the modal stays open).
+    const handleRenameCluster = async (oldName: string, newName: string): Promise<string | null> => {
+        let result: Awaited<ReturnType<typeof window.k8s.renameCluster>>;
+        try {
+            result = await window.k8s.renameCluster(oldName, newName);
+        } catch (err) {
+            const message = `Failed to rename context: ${err instanceof Error ? err.message : String(err)}`;
+            showToast(message, 'error');
+            return message;
+        }
+        if (!result.ok) {
+            showToast(result.error, 'error');
+            return result.error;
+        }
+
+        const renamed = result.newName;
+        setPinnedClusters(result.pinnedClusters);
+        applyClusters(result.clusters);
+        // Changing selectedCluster makes Dashboard restart its watchers under the new name
+        setSelectedCluster(prev => (prev === oldName ? renamed : prev));
+        setAttemptedCluster(prev => (prev === oldName ? renamed : prev));
+        // Same cluster under a new name, not a cluster switch: keep the active editor tab / view
+        if (prevClusterRef.current === oldName) prevClusterRef.current = renamed;
+        // Long-lived closures (YAML save handlers) captured the old name; let them resolve it
+        renamedContextsRef.current.delete(renamed);
+        renamedContextsRef.current.set(oldName, renamed);
+        if (renameMapKey(viewTabsByClusterRef.current, oldName, renamed)) bumpViewTabs();
+        if (renameMapKey(editorTabsByClusterRef.current, oldName, renamed)) {
+            const moved = editorTabsByClusterRef.current.get(renamed) ?? [];
+            editorTabsByClusterRef.current.set(renamed, moved.map(t => remapPanelTab(t, oldName, renamed)));
+            bumpEditorTabs();
+        }
+        setPanelTabs(prev => prev.map(t => remapPanelTab(t, oldName, renamed)));
+        showToast(`Renamed ${oldName} to ${renamed}`, 'success');
+        return null;
+    };
+
     const handlePinClick = (e: React.MouseEvent, cluster: string) => {
         e.stopPropagation(); // Prevent cluster selection
         setClusterToUnpin(cluster);
@@ -577,6 +638,53 @@ function App() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [selectedCluster, editorTabsVersion]
     );
+
+    // Unsaved YAML drafts per tab id. Kept in a ref (no re-render per keystroke); the
+    // dirty-id Set only changes when a tab flips between clean and dirty.
+    const yamlDraftsRef = useRef(new Map<string, string>());
+    const [dirtyYamlTabIds, setDirtyYamlTabIds] = useState<ReadonlySet<string>>(() => new Set());
+    const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+
+    const handleYamlDraftChange = useCallback((tabId: string, draft: string | undefined) => {
+        if (draft === undefined) {
+            yamlDraftsRef.current.delete(tabId);
+        } else {
+            yamlDraftsRef.current.set(tabId, draft);
+        }
+        const isDirty = draft !== undefined;
+        setDirtyYamlTabIds(prev => {
+            if (prev.has(tabId) === isDirty) return prev;
+            const next = new Set(prev);
+            if (isDirty) next.add(tabId); else next.delete(tabId);
+            return next;
+        });
+    }, []);
+
+    const getYamlDraft = useCallback((id: string) => yamlDraftsRef.current.get(id), []);
+
+    const sidebarYamlTabs = useMemo(
+        () => editorTabs.map(t => ({ ...t, isDirty: dirtyYamlTabIds.has(t.id) })),
+        [editorTabs, dirtyYamlTabIds]
+    );
+
+    // Local terminals: each is its own tab + PTY, bound to the context selected when opened
+    const terminalCounterRef = useRef(0);
+    const openTerminal = useCallback(({ forceNew = false }: { forceNew?: boolean } = {}) => {
+        const existing = forceNew ? undefined : findReusableLocalTerminal(panelTabs, selectedCluster);
+        let tabId: string;
+        if (existing) {
+            tabId = existing.id;
+        } else {
+            terminalCounterRef.current += 1;
+            const tab = createLocalTerminalTab(terminalCounterRef.current, selectedCluster);
+            tabId = tab.id;
+            setPanelTabs(prev => [...prev, tab]);
+        }
+        setActiveTabId(tabId);
+        setIsBottomPanelOpen(true);
+    }, [panelTabs, selectedCluster]);
+
+    const handleNewTerminal = useCallback(() => openTerminal({ forceNew: true }), [openTerminal]);
 
     // When switching clusters, reset the active editor tab to the last one for that cluster (or null)
     const prevClusterRef = useRef<string | null>(null);
@@ -623,25 +731,23 @@ function App() {
                 setActiveView('settings');
             }
 
+            // Cmd+Shift+` — Always open a new terminal
+            if (e.code === 'Backquote' && e.shiftKey) {
+                e.preventDefault();
+                openTerminal({ forceNew: true });
+                return;
+            }
+
             // Cmd+` — Toggle Terminal
             if (e.key === '`') {
                 e.preventDefault();
-                // If bottom panel is open and terminal is active, close it
-                // Otherwise open terminal
-                const terminalTabId = 'local-terminal';
-                const hasTerminal = panelTabs.find(t => t.id === terminalTabId);
-                if (isBottomPanelOpen && activeTabId === terminalTabId) {
+                // If bottom panel is open and a terminal is active, close it.
+                // Otherwise focus (or create) a terminal for the selected cluster.
+                const activeTab = panelTabs.find(t => t.id === activeTabId);
+                if (isBottomPanelOpen && activeTab?.type === 'terminal') {
                     setIsBottomPanelOpen(false);
                 } else {
-                    if (!hasTerminal) {
-                        setPanelTabs(prev => [...prev, {
-                            id: terminalTabId,
-                            type: 'terminal' as const,
-                            title: 'Terminal'
-                        }]);
-                    }
-                    setActiveTabId(terminalTabId);
-                    setIsBottomPanelOpen(true);
+                    openTerminal();
                 }
             }
 
@@ -664,7 +770,7 @@ function App() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isBottomPanelOpen, activeTabId, panelTabs]);
+    }, [isBottomPanelOpen, activeTabId, panelTabs, openTerminal]);
 
     // Toast State
     const [toasts, setToasts] = useState<{ id: string; message: string; type?: 'success' | 'error' | 'info'; action?: { label: string; onClick: () => void } }[]>([]);
@@ -674,6 +780,8 @@ function App() {
         setToasts(prev => [...prev, { id, message, type, action }]);
     };
     showToastRef.current = showToast;
+    // Background resource cache for the six core kinds (lives here so Dashboard remounts keep it warm)
+    const reportNamespaces = useResourceSync(selectedCluster, syncEpoch, showToast);
 
     const removeToast = (id: string) => {
         setToasts(prev => prev.filter(t => t.id !== id));
@@ -732,6 +840,10 @@ function App() {
             setIsNotificationsPanelOpen(false);
         }).catch(() => { });
 
+        // Crossplane detection guard: a slow detection for the previous cluster must not land after a switch
+        const seq = ++crossplaneDetectSeq.current;
+        setHasCrossplane(false);
+
         try {
             // Pre-flight check: Try to list namespaces
             // This ensures the kubeconfig is valid and we have access
@@ -740,6 +852,7 @@ function App() {
             // Success
             setSelectedCluster(clusterName);
             setConnectionStatus('connected');
+            setSyncEpoch(e => e + 1);
             setResourceView('overview');
             setActiveView('dashboard');
 
@@ -772,6 +885,15 @@ function App() {
                 console.warn("Failed to check Karpenter status", e);
                 setHasKarpenter(false);
             });
+
+            // Check Crossplane status (sequence-guarded against cluster switches)
+            window.k8s.crossplane.detect(clusterName)
+                .then(d => { if (seq === crossplaneDetectSeq.current) setHasCrossplane(d.installed); })
+                .catch(e => {
+                    if (seq !== crossplaneDetectSeq.current) return;
+                    console.warn('Failed to check Crossplane status', e);
+                    setHasCrossplane(false);
+                });
         } catch (err: any) {
             console.error("Connection failed", err);
             // Failure
@@ -781,6 +903,8 @@ function App() {
                 timestamp: Date.now()
             });
             setConnectionStatus('error');
+            // Re-run the resource sync for the still-selected cluster (keeps its batch listener alive)
+            setSyncEpoch(e => e + 1);
 
             // Show toast notification with error details
             showToast(`Authentication Failed: ${errorMessage}`, 'error');
@@ -814,7 +938,8 @@ function App() {
                 podName: name,
                 containerName,
                 allContainers,
-                logs: []
+                logs: [],
+                clusterContext: selectedCluster,
             };
             setPanelTabs(prev => [...prev, newTab]);
             window.k8s.streamPodLogs(selectedCluster, namespace, name, containerName);
@@ -829,41 +954,25 @@ function App() {
         setIsBottomPanelOpen(true); // Open the panel
     };
 
-    const handleOpenTerminal = () => {
-        // Check if we already have a terminal tab or create a new one?
-        // Let's create one if none exists, or focus existing one if active.
-        // User asked for "a terminal tab", implying one.
-        const terminalTabId = 'local-terminal';
-        const existing = panelTabs.find(t => t.id === terminalTabId);
-
-        if (!existing) {
-            setPanelTabs(prev => [...prev, {
-                id: terminalTabId,
-                type: 'terminal',
-                title: 'Terminal'
-            }]);
-        }
-
-        setActiveTabId(terminalTabId);
-        setIsBottomPanelOpen(true);
-    };
-
     const handleCordonDrain = (nodeName: string) => {
         const tabId = `cordon-drain-${nodeName}`;
 
         // Remove existing tab if any (to get a fresh terminal)
         setPanelTabs(prev => prev.filter(t => t.id !== tabId));
 
-        // Set kube context first, then cordon and drain
-        const contextCmd = selectedCluster ? `kubectl config use-context ${selectedCluster} && ` : '';
-        const command = `${contextCmd}kubectl cordon ${nodeName} && kubectl drain ${nodeName} --ignore-daemonsets --delete-emptydir-data`;
+        // The terminal is bound to selectedCluster via its per-terminal kubeconfig, and the
+        // command also passes --context explicitly so it can never hit another cluster even if
+        // the user's shell rc overrides KUBECONFIG. The global current-context is not changed.
+        const contextFlag = selectedCluster ? ` --context '${selectedCluster.replace(/'/g, `'\\''`)}'` : '';
+        const command = `kubectl${contextFlag} cordon ${nodeName} && kubectl${contextFlag} drain ${nodeName} --ignore-daemonsets --delete-emptydir-data`;
 
         setPanelTabs(prev => [...prev, {
             id: tabId,
             type: 'terminal',
             title: `Drain: ${nodeName}`,
-            subtitle: 'cordon & drain',
+            subtitle: selectedCluster ? `cordon & drain · ${selectedCluster}` : 'cordon & drain',
             initialCommand: command,
+            clusterContext: selectedCluster ?? undefined,
         }]);
 
         setActiveTabId(tabId);
@@ -899,7 +1008,8 @@ function App() {
                     namespace,
                     podName: name,
                     containerName
-                }
+                },
+                clusterContext: selectedCluster,
             };
             setPanelTabs(prev => [...prev, newTab]);
         }
@@ -928,7 +1038,19 @@ function App() {
         }
     };
 
+    // Closing a tab with unsaved YAML edits asks for confirmation first
     const handleCloseLogTab = (id: string) => {
+        if (dirtyYamlTabIds.has(id)) {
+            setPendingCloseTabId(id);
+            return;
+        }
+        closeTabNow(id);
+    };
+
+    const closeTabNow = (id: string) => {
+        // Discard any unsaved YAML draft for this tab
+        handleYamlDraftChange(id, undefined);
+
         const tab = panelTabs.find(t => t.id === id);
         if (tab && tab.type === 'log' && tab.namespace && tab.podName && tab.containerName) {
             window.k8s.stopStreamPodLogs(tab.namespace, tab.podName, tab.containerName);
@@ -1057,6 +1179,8 @@ function App() {
             let onSaveYaml: (newContent: string) => Promise<void>;
             let resolvedKind: string;
             let resolvedApiVersion: string;
+            // Cluster-scoped tab id: computed once and shared by the save closure and the tab
+            let tabId: string;
 
             // Check if we have a mapping for this resource type
             const resourceInfo = RESOURCE_TYPE_MAP[type];
@@ -1070,19 +1194,21 @@ function App() {
 
                     yamlContent = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, isNamespaced ? namespace : undefined);
 
-                    const tabId = `yaml-${resolvedKind}-${namespace || 'global'}-${name}`;
+                    tabId = buildYamlTabId(selectedCluster, resolvedKind, namespace, name);
                     onSaveYaml = async (newContent: string) => {
                         try {
-                            await window.k8s.updateResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, newContent, isNamespaced ? namespace : undefined);
-                            const latestYaml = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, isNamespaced ? namespace : undefined);
+                            // The context may have been renamed since this tab was opened
+                            const ctx = resolveContext(selectedCluster);
+                            await window.k8s.updateResourceYaml(ctx, resolvedApiVersion, resolvedKind, name, newContent, isNamespaced ? namespace : undefined);
+                            const latestYaml = await window.k8s.getResourceYaml(ctx, resolvedApiVersion, resolvedKind, name, isNamespaced ? namespace : undefined);
 
                             const updater = (t: PanelTab) => t.id === tabId ? { ...t, yamlContent: latestYaml } : t;
                             setPanelTabs(prev => prev.map(updater));
                             // Also update if tab has been popped out to editor
-                            const clusterTabs = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
+                            const clusterTabs = editorTabsByClusterRef.current.get(ctx) ?? [];
                             const updated = clusterTabs.map(updater);
                             if (updated !== clusterTabs) {
-                                editorTabsByClusterRef.current.set(selectedCluster, updated);
+                                editorTabsByClusterRef.current.set(ctx, updated);
                                 bumpEditorTabs();
                             }
 
@@ -1104,19 +1230,21 @@ function App() {
 
                 yamlContent = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, namespaced ? namespace : undefined);
 
-                const tabId = `yaml-${resolvedKind}-${namespace || 'global'}-${name}`;
+                tabId = buildYamlTabId(selectedCluster, resolvedKind, namespace, name);
                 onSaveYaml = async (newContent: string) => {
                     try {
-                        await window.k8s.updateResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, newContent, namespaced ? namespace : undefined);
-                        const latestYaml = await window.k8s.getResourceYaml(selectedCluster, resolvedApiVersion, resolvedKind, name, namespaced ? namespace : undefined);
+                        // The context may have been renamed since this tab was opened
+                        const ctx = resolveContext(selectedCluster);
+                        await window.k8s.updateResourceYaml(ctx, resolvedApiVersion, resolvedKind, name, newContent, namespaced ? namespace : undefined);
+                        const latestYaml = await window.k8s.getResourceYaml(ctx, resolvedApiVersion, resolvedKind, name, namespaced ? namespace : undefined);
 
                         const updater = (t: PanelTab) => t.id === tabId ? { ...t, yamlContent: latestYaml } : t;
                         setPanelTabs(prev => prev.map(updater));
                         // Also update if tab has been popped out to editor
-                        const clusterTabs = editorTabsByClusterRef.current.get(selectedCluster) ?? [];
+                        const clusterTabs = editorTabsByClusterRef.current.get(ctx) ?? [];
                         const updated = clusterTabs.map(updater);
                         if (updated !== clusterTabs) {
-                            editorTabsByClusterRef.current.set(selectedCluster, updated);
+                            editorTabsByClusterRef.current.set(ctx, updated);
                             bumpEditorTabs();
                         }
 
@@ -1128,7 +1256,6 @@ function App() {
                 };
             }
 
-            const tabId = `yaml-${resolvedKind!}-${namespace || 'global'}-${name}`;
             const tabSubtitle = [resolvedKind!, namespace || 'global'].join(' · ');
 
             // Check if tab exists
@@ -1139,7 +1266,8 @@ function App() {
                     title: `${name}.yaml`,
                     subtitle: tabSubtitle,
                     yamlContent,
-                    onSaveYaml
+                    onSaveYaml,
+                    clusterContext: selectedCluster,
                 }]);
             }
 
@@ -1613,22 +1741,27 @@ function App() {
 
                             <SecondarySidebar
                                 mode={activeView === 'settings' ? 'settings' : activeView === 'user' ? 'user' : activeView === 'clusters' ? 'clusters' : activeView === 'editor' ? 'editor' : 'resources'}
-                                activeView={resourceView}
+                                activeView={resourceView.startsWith('deployment-detail/') ? 'deployments' : resourceView}
                                 onSelectView={handleViewChange}
                                 selectedCluster={selectedCluster}
                                 onSelectCluster={handleClusterSelect}
                                 connectionStatus={connectionStatus}
                                 attemptedCluster={attemptedCluster}
+                                clusters={clustersList}
                                 pinnedClusters={pinnedClusters}
                                 onTogglePin={handleTogglePin}
+                                onRenameCluster={handleRenameCluster}
                                 isEks={isEks}
                                 hasCertManager={hasCertManager}
                                 hasKarpenter={hasKarpenter}
+                                hasCrossplane={hasCrossplane}
                                 onBack={() => {
                                     setActiveView('clusters');
                                     setSelectedCluster(null);
+                                    crossplaneDetectSeq.current++;
+                                    setHasCrossplane(false);
                                 }}
-                                yamlTabs={editorTabs}
+                                yamlTabs={sidebarYamlTabs}
                                 activeYamlTabId={editorActiveTabId}
                                 onSelectYamlTab={(tabId) => setEditorActiveTabId(tabId)}
                                 onCloseYamlTab={handleCloseLogTab}
@@ -1657,7 +1790,7 @@ function App() {
                                 ) : activeView === 'editor' ? (
                                     (() => {
                                         // Read directly from the ref (not the memoized snapshot) so we always
-                                        // get the latest yamlContent including unsaved edits written by onContentChange
+                                        // get the latest saved yamlContent. Unsaved edits live in yamlDraftsRef.
                                         const cluster = selectedCluster ?? '__local__';
                                         const liveTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
                                         const tab = editorActiveTabId ? liveTabs.find(t => t.id === editorActiveTabId) : null;
@@ -1666,28 +1799,27 @@ function App() {
                                             const saveHandler = tab.onSaveYaml ?? (async (content: string) => {
                                                 const savedPath = await window.k8s.dialog.saveYamlFile(tab.filePath ?? null, content);
                                                 if (!savedPath) throw new Error('Save cancelled');
-                                                // Update filePath and title if this was an untitled file
-                                                if (!tab.filePath) {
-                                                    const fileName = savedPath.split('/').pop() ?? savedPath;
-                                                    const clusterTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
-                                                    editorTabsByClusterRef.current.set(cluster, clusterTabs.map(t =>
-                                                        t.id === tab.id ? { ...t, filePath: savedPath, title: fileName, subtitle: savedPath } : t
-                                                    ));
-                                                    bumpEditorTabs();
-                                                }
+                                                // The saved content becomes the new base; also update filePath
+                                                // and title if this was an untitled file
+                                                const fileName = savedPath.split('/').pop() ?? savedPath;
+                                                const clusterTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
+                                                editorTabsByClusterRef.current.set(cluster, clusterTabs.map(t => {
+                                                    if (t.id !== tab.id) return t;
+                                                    return tab.filePath
+                                                        ? { ...t, yamlContent: content }
+                                                        : { ...t, yamlContent: content, filePath: savedPath, title: fileName, subtitle: savedPath };
+                                                }));
+                                                bumpEditorTabs();
                                             });
                                             return (
                                                 <div className="h-full w-full rounded-xl overflow-hidden border border-white/10">
                                                     <YamlEditor
+                                                        key={tab.id}
                                                         initialYaml={tab.yamlContent ?? ''}
+                                                        initialDraft={getYamlDraft(tab.id)}
                                                         onSave={saveHandler}
-                                                        onContentChange={(content) => {
-                                                            const clusterTabs = editorTabsByClusterRef.current.get(cluster) ?? [];
-                                                            editorTabsByClusterRef.current.set(
-                                                                cluster,
-                                                                clusterTabs.map(t => t.id === tab.id ? { ...t, yamlContent: content } : t)
-                                                            );
-                                                        }}
+                                                        onDraftChange={(draft) => handleYamlDraftChange(tab.id, draft)}
+                                                        contextLabel={tab.clusterContext}
                                                     />
                                                 </div>
                                             );
@@ -1725,6 +1857,7 @@ function App() {
                                             onCordonDrain={handleCordonDrain}
                                             onDeleteNode={handleDeleteNode}
                                             showToast={showToast}
+                                            onNamespacesChange={reportNamespaces}
                                         />
                                     ) : (
                                         <div className="flex items-center justify-center h-full text-gray-500">
@@ -1757,6 +1890,11 @@ function App() {
                                 onChangeContainer={handleChangeContainer}
                                 onAnalyzeWithAI={handleAnalyzeLogsWithAI}
                                 onPopOutTab={handlePopOutTab}
+                                getYamlDraft={getYamlDraft}
+                                onYamlDraftChange={handleYamlDraftChange}
+                                dirtyTabIds={dirtyYamlTabIds}
+                                onNewTerminal={handleNewTerminal}
+                                currentCluster={selectedCluster}
                             />
                         </BottomPanel>
                     </div>
@@ -1780,10 +1918,10 @@ function App() {
                                         if (activeTab?.type === 'terminal') {
                                             setIsBottomPanelOpen(false);
                                         } else {
-                                            handleOpenTerminal();
+                                            openTerminal();
                                         }
                                     } else {
-                                        handleOpenTerminal();
+                                        openTerminal();
                                     }
                                 }}
                                 isPanelOpen={isBottomPanelOpen}
@@ -1819,7 +1957,7 @@ function App() {
                     </div>
 
                     {/* Toast Notifications */}
-                    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 ">
+                    <div className="fixed top-4 right-4 z-[300] flex flex-col gap-2 ">
                         <AnimatePresence>
                             {toasts.map(toast => (
                                 <ToastNotification
@@ -1872,6 +2010,20 @@ function App() {
                 title="Unpin Cluster"
                 message={`Are you sure you want to unpin "${clusterToUnpin}" from the top bar?`}
                 confirmText="Unpin"
+                cancelText="Cancel"
+                variant="warning"
+            />
+
+            {/* Discard unsaved YAML changes confirmation */}
+            <ConfirmModal
+                isOpen={pendingCloseTabId !== null}
+                onClose={() => setPendingCloseTabId(null)}
+                onConfirm={() => {
+                    if (pendingCloseTabId) closeTabNow(pendingCloseTabId);
+                }}
+                title="Discard unsaved changes?"
+                message={`"${(panelTabs.find(t => t.id === pendingCloseTabId) ?? editorTabs.find(t => t.id === pendingCloseTabId))?.title ?? 'This tab'}" has unsaved changes. Closing it will discard them.`}
+                confirmText="Discard"
                 cancelText="Cancel"
                 variant="warning"
             />

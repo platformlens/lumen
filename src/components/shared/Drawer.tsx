@@ -29,9 +29,11 @@ interface DrawerProps {
   title: string;
   children: React.ReactNode;
   headerActions?: React.ReactNode;
+  /** Compact icon actions shown in the title row, immediately left of the close button. */
+  titleActions?: React.ReactNode;
 }
 
-export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children, headerActions }) => {
+export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children, headerActions, titleActions }) => {
   const drawerRef = useRef<HTMLDivElement>(null);
   // Track whether the panel exit animation is still running
   const [isAnimatingOut, setIsAnimatingOut] = useState(false);
@@ -76,18 +78,27 @@ export const Drawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children
             className="absolute top-2 right-2 w-[600px] bg-gradient-to-l from-zinc-950/95 to-black/95 backdrop-blur-2xl border border-white/10 shadow-2xl z-[60] flex flex-col rounded-lg overflow-hidden bottom-4"
           >
             {/* Header */}
-            <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-white/5">
-              <div className="flex items-center gap-2 flex-1 mr-4 overflow-hidden">
-                <h2 className="text-xl font-bold text-white truncate">{title}</h2>
+            {/* Title row gets the full width; actions live on their own toolbar row so they never squeeze the title. */}
+            <div className="border-b border-white/10 bg-white/5">
+              <div className="h-14 flex items-center gap-2 px-6">
+                <h2 className="text-xl font-bold text-white truncate min-w-0" title={title}>{title}</h2>
                 <CopyButton text={title} />
-              </div>
-
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {headerActions}
-                <button onClick={onClose} className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white transition-colors ml-2">
+                {titleActions && <div className="ml-auto flex items-center gap-1 flex-shrink-0">{titleActions}</div>}
+                <button
+                  onClick={onClose}
+                  className={`${titleActions ? '' : 'ml-auto '}flex-shrink-0 p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white transition-colors`}
+                  aria-label="Close drawer"
+                  title="Close"
+                >
                   <X size={20} />
                 </button>
               </div>
+
+              {headerActions && (
+                <div className="flex items-center justify-end flex-wrap gap-2 px-6 py-2 border-t border-white/5 [&>*]:flex-wrap [&>*]:justify-end">
+                  {headerActions}
+                </div>
+              )}
             </div>
 
             {/* Content */}

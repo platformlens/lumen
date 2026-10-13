@@ -1,0 +1,25 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "NIT",
+      "file": "src/components/dashboard/views/deployment-details/RevisionTimeline.tsx:52, src/components/dashboard/views/deployment-details/RevisionDetailPanel.tsx:113",
+      "summary": "TimeAgo shows an absolute date after 48 h, so the hard-coded ' ago' suffix renders e.g. '13/10/2025 ago' for older revisions. Drop the suffix or render relativeTimeText() instead."
+    },
+    {
+      "severity": "NIT",
+      "file": "src/components/dashboard/views/deployment-details/DeploymentFullView.tsx:93,151-175",
+      "summary": "onOpenLogs/onOpenYaml/showToast come from plain App.tsx functions (lines 778, 920, 1172) that are re-created on every App render. That rebuilds usePodLogsHandler, handleEditYaml and handleScale/handleRestart and re-renders the memoized PodDistribution, DeploymentPodsTable and DeploymentHeader. Hold them in latest-refs like onResourceClickRef."
+    },
+    {
+      "severity": "NIT",
+      "file": "src/components/dashboard/views/deployment-details/config-refs.ts:43, status-classes.ts:54, SecurityPosture.tsx:47",
+      "summary": "Pure logic in the component folder has no tests: collectConfigRefs (decides which Secret/ConfigMap names are shown), podStatusColor and buildMatrix. Move collectConfigRefs and podStatusColor to src/utils/ and add *.test.ts covering env/envFrom/volume/projected/imagePullSecrets collection and the status colour mapping."
+    },
+    {
+      "severity": "NIT",
+      "file": "src/components/dashboard/views/deployment-details/DeploymentPodsTable.tsx:43,91",
+      "summary": "getSortedData(rows) re-sorts on every render, and handleSort from useResourceSorting is never stable, so handleSortClick changes on every render. Use useMemo(() => sortResourceData(rows, sortConfig), [rows, sortConfig])."
+    }
+  ]
+}

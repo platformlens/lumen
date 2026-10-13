@@ -448,7 +448,7 @@ export const KarpenterView: React.FC<KarpenterViewProps> = ({ clusterName, searc
                                             cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                                             contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '8px' }}
                                             itemStyle={{ color: '#E5E7EB' }}
-                                            formatter={(value: any, name?: string) => [name === 'cpu' ? `${value} vCPU` : `${value} GiB`, name === 'cpu' ? 'CPU' : 'Memory']}
+                                            formatter={(value: any, name?: string | number) => [name === 'cpu' ? `${value} vCPU` : `${value} GiB`, name === 'cpu' ? 'CPU' : 'Memory']}
                                         />
                                         <Legend />
                                         <Bar dataKey="cpu" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={14} name="CPU (vCPU)" />

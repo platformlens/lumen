@@ -1,0 +1,37 @@
+# Getting Started
+
+## Prerequisites
+
+- macOS (arm64)
+- A valid kubeconfig file (default: `~/.kube/config`)
+- Node.js 18+ (for development)
+
+## Installation
+
+Download the latest `.dmg` from the releases page and drag Lumen to your Applications folder.
+
+## First Launch
+
+On first launch, Lumen will:
+
+1. Detect your kubeconfig and list available clusters
+2. Show the onboarding modal with a quick tour of features
+3. Connect to your default Kubernetes context
+
+## Connecting to a Cluster
+
+Lumen reads your kubeconfig file and lists all available contexts. Click any cluster in the sidebar to connect. You can pin frequently used clusters for quick access.
+
+### Custom Kubeconfig Path
+
+If your kubeconfig is not at the default location, go to **Settings → General** and set a custom path.
+
+## AWS Integration
+
+For AWS-managed clusters (EKS), Lumen supports multiple credential sources:
+
+1. **Granted (recommended)** — Auto-detects credentials from your shell environment
+2. **Manual credentials** — Enter AWS access keys directly in Settings
+3. **AWS provider chain** — Falls back to SSO, shared credentials, and instance metadata
+
+See the [Configuration](/configuration) section for detailed AWS setup instructions.

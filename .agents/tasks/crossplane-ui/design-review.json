@@ -1,0 +1,48 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "MEDIUM",
+      "title": "Revisions and other core-group kinds have no category, but health rules, Needs attention and drawer classification depend on one",
+      "location": "B.6 rule 4, B.4.1 item 4, B.9 Drawer data flow, B.10",
+      "fix": "Add 'packageRevision' and 'compositionRevision' to CROSSPLANE_CATEGORIES. Map deriveHealth rules to them. Add RevisionRow extends CrossplaneRowBase, replacing PackageRevisionSummary. Define NeedsAttentionRow = CrossplaneRowBase. classifyCrossplaneObject returns null for other core-group kinds (MRD, ImageConfig, Lock), and the drawer falls back to generic sections, not 'managed'. Add tests."
+    },
+    {
+      "id": 2,
+      "severity": "MEDIUM",
+      "title": "Per-category drawer sections and name-only reference resolution are unspecified",
+      "location": "FR-8, AC 11, AC 24, B.9 CrossplaneDetailSections.tsx",
+      "fix": "Add a 'Drawer sections per category' table listing sections, clickable refs and apiVersion resolution: kindVersions for core refs; providerConfigRef resolved via the getPackages providerConfig rows matched by providerName, kind and name; compositeTypeRef resolved to the XRD; Usage resourceSelector shown as text. Build all links with a tested pure resolveDrawerRefs() helper. Secret refs and refs that fail refSchema render as text, not links."
+    },
+    {
+      "id": 3,
+      "severity": "NIT",
+      "title": "scanManaged's kind-index dependency and force/in-flight semantics are implicit",
+      "location": "B.5 MR scan and items, cache table",
+      "fix": "scanManaged always calls getManagedKinds(ctx, {force:false}). force on scanManaged bypasses only the scan-summary cache. force skips the cached value but joins any in-flight promise for the same key."
+    },
+    {
+      "id": 4,
+      "severity": "NIT",
+      "title": "Small conflicts and unspecified UI behaviour",
+      "location": "AC 4 vs B.5 200 cap, B.4.1 warning events, B.4 healthColumn JSX vs createElement, AC 22 column list",
+      "fix": "Reword AC 4 for the 200-item MR cap and add a '+N more' footer. Clicking a Warning event opens the drawer when toCrossplaneRef(involvedObject) parses. Show healthColumn in createElement form. Add Running, Count and Deps to AC 22."
+    },
+    {
+      "id": 5,
+      "severity": "NIT",
+      "title": "Definitions view refreshes full composites snapshots only for instance counts",
+      "location": "B.11 view/query table",
+      "fix": "Use minIntervalMs 120_000 for composites in the Definitions view. Optionally raise the composites TTL to 30 s when there are more than 20 XR+claim sections."
+    },
+    {
+      "id": 6,
+      "severity": "NIT",
+      "title": "useResourceSorting extraction wording",
+      "location": "B.9 file plan, useResourceSorting row",
+      "fix": "Keep the returned property name getSortedData and the special-key order before the numeric branch. No Crossplane column may use dataKey 'status' or 'replicas'."
+    }
+  ],
+  "reviewDoc": "/Users/MohammedRashid.Matin/Development/lumen/.agents/tasks/crossplane-ui/design-review.md"
+}

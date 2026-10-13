@@ -2,7 +2,7 @@
   "name": "k8ptain",
   "productName": "Lumen",
   "private": true,
-  "version": "0.0.8",
+  "version": "0.0.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps && npm run fix:pty",
-    "fix:pty": "npm rebuild node-pty --runtime=electron --target=40.2.1 --dist-url=https://electronjs.org/headers --build-from-source",
+    "fix:pty": "npm rebuild node-pty --runtime=electron --target=42.2.0 --dist-url=https://electronjs.org/headers --build-from-source",
     "rebuild": "electron-rebuild -f -w node-pty --arch=arm64"
   },
   "dependencies": {
@@ -60,12 +60,17 @@
     "fix-path": "^5.0.0",
     "framer-motion": "^11.0.0",
     "js-yaml": "^4.1.1",
+    "keytar": "^7.9.0",
     "lucide-react": "^0.562.0",
+    "monaco-editor": "^0.55.1",
     "motion": "^12.38.0",
     "nanoid": "^5.1.9",
+    "next": "^16.2.6",
+    "nextra": "^4.6.1",
+    "nextra-theme-docs": "^4.6.1",
     "node-pty": "^1.1.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
     "react-virtualized": "^9.22.6",
     "react-virtuoso": "^4.18.4",
@@ -112,16 +117,7 @@
   },
   "main": "dist-electron/main.js",
   "build": {
-    "appId": "io.platformlens.lumen",
-    "productName": "Lumen",
-    "protocols": [
-      {
-        "name": "Lumen OAuth",
-        "schemes": [
-          "io.platformlens.lumen"
-        ]
-      }
-    ]
+    "extends": "electron-builder.json5"
   },
   "overrides": {
     "node-gyp": "^10.0.0"

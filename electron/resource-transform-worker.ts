@@ -25,6 +25,8 @@ export interface TransformResponse {
     resourceType: string;
     events: BatchEvent<K8sObject>[];
     error?: string;
+    /** Per-event failures (index into the request's events, plus the object's uid when known). */
+    failures?: Array<{ index: number; uid?: string; message: string }>;
 }
 
 // --- Helpers ---
@@ -257,17 +259,21 @@ function transformHelmRelease(apiObj: K8sObject): K8sObject {
         lastUpdated: (prop(info, 'last_deployed') as string) || '',
         description: (prop(info, 'description') as string) || '',
         secretName: (prop(metadata, 'name') as string) || '',
+        secretUid: (prop(metadata, 'uid') as string) || '',
+        secretResourceVersion: (prop(metadata, 'resourceVersion') as string) || '',
     };
 }
 
 // --- Request Handler ---
 
-function handleRequest(request: TransformRequest): TransformResponse {
+export function handleRequest(request: TransformRequest): TransformResponse {
     const { id, resourceType, events } = request;
     const transformedEvents: BatchEvent<K8sObject>[] = [];
     const errors: string[] = [];
+    const failures: NonNullable<TransformResponse['failures']> = [];
 
-    for (const event of events) {
+    for (let index = 0; index < events.length; index++) {
+        const event = events[index];
         try {
             let transformed: K8sObject;
             if (resourceType === 'pod') {
@@ -294,6 +300,8 @@ function handleRequest(request: TransformRequest): TransformResponse {
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : 'unknown error';
             errors.push(`Failed to transform ${resourceType}: ${message}`);
+            const uid = prop(prop(event.resource, 'metadata'), 'uid');
+            failures.push({ index, uid: typeof uid === 'string' ? uid : undefined, message });
         }
     }
 
@@ -305,6 +313,7 @@ function handleRequest(request: TransformRequest): TransformResponse {
 
     if (errors.length > 0) {
         response.error = errors.join('; ');
+        response.failures = failures;
     }
 
     return response;

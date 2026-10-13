@@ -1,0 +1,7 @@
+{
+  "task_id": "task-rename-cluster",
+  "task_description": "Allow renaming a kube context from a RIGHT-CLICK 'Rename' item in the existing cluster-list context menu (SecondarySidebar.tsx), updating the real kubeconfig (incl. current-context) and app state (pinnedClusters, selected cluster, tabs, watchers, terminals); and fix the bug where contexts added to the kubeconfig while the app runs need a full reload (main-process file watcher + fresh getClusters + renderer refresh). Full plan: /Users/MohammedRashid.Matin/Development/lumen/.agents/tasks/rename-cluster-plan.md",
+  "status": "completed",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}

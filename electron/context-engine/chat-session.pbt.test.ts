@@ -4,11 +4,24 @@
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { ChatSessionManager, SessionStore } from './chat-session';
+import { ChatSessionManager, EncryptedSessionStore, LegacySessionStore } from './chat-session';
 import { ChatMessage, ChatSession } from './types';
 
-/** In-memory mock of electron-store for testing. */
-function createMockStore(): SessionStore {
+/** In-memory mock of EncryptedSessionStore for testing. */
+function createMockEncryptedStore(): EncryptedSessionStore {
+    const data: Record<string, unknown> = {};
+    return {
+        encryptAndStore(key: string, value: unknown) { data[key] = JSON.parse(JSON.stringify(value)); },
+        decryptAndRetrieve<T = unknown>(key: string): T | null {
+            const val = data[key];
+            if (val === undefined || val === null) return null;
+            return val as T;
+        },
+    };
+}
+
+/** In-memory mock of LegacySessionStore for testing. */
+function createMockLegacyStore(): LegacySessionStore {
     const data: Record<string, unknown> = {};
     return {
         get(key: string) { return data[key]; },
@@ -41,8 +54,8 @@ describe('Property 10: Chat session save/load round-trip', () => {
     it('saved sessions can be loaded with identical messages', () => {
         fc.assert(
             fc.property(arbChatSession(), (session) => {
-                const store = createMockStore();
-                const manager = new ChatSessionManager(store);
+                const encryptedStore = createMockEncryptedStore();
+                const manager = new ChatSessionManager({ encryptedStore });
 
                 // Manually set the current session to our generated one
                 manager.startSession(undefined, session.model, session.provider);
@@ -72,8 +85,8 @@ describe('Property 10: Chat session save/load round-trip', () => {
 
 describe('resumeSession', () => {
     it('activates a stored session so follow-up messages append to the same id', () => {
-        const store = createMockStore();
-        const manager = new ChatSessionManager(store);
+        const encryptedStore = createMockEncryptedStore();
+        const manager = new ChatSessionManager({ encryptedStore });
         manager.startSession(undefined, 'gemini', 'google');
         manager.addMessage('user', 'hello');
         manager.addMessage('assistant', 'hi');
@@ -102,8 +115,8 @@ describe('Property 11: Follow-up messages include full conversation history', ()
                 fc.array(arbChatMessage(), { minLength: 1, maxLength: 10 }),
                 fc.string({ minLength: 1, maxLength: 100 }),
                 (existingMessages, followUpContent) => {
-                    const store = createMockStore();
-                    const manager = new ChatSessionManager(store);
+                    const encryptedStore = createMockEncryptedStore();
+                    const manager = new ChatSessionManager({ encryptedStore });
                     manager.startSession();
 
                     // Add existing messages
@@ -142,8 +155,8 @@ describe('Property 12: Context change starts new session and saves previous', ()
                 fc.array(arbChatMessage(), { minLength: 1, maxLength: 5 }),
                 fc.string({ minLength: 1, maxLength: 20 }),
                 (messages, newContextName) => {
-                    const store = createMockStore();
-                    const manager = new ChatSessionManager(store);
+                    const encryptedStore = createMockEncryptedStore();
+                    const manager = new ChatSessionManager({ encryptedStore });
 
                     // Start first session and add messages
                     manager.startSession({ name: 'resource-a', type: 'Pod' });
@@ -199,9 +212,10 @@ describe('Property 13: Legacy history migration produces valid ChatSession', () 
                     );
                     if (uniqueItems.length === 0) return;
 
-                    const store = createMockStore();
-                    store.set('aiHistory', uniqueItems);
-                    const manager = new ChatSessionManager(store);
+                    const encryptedStore = createMockEncryptedStore();
+                    const legacyStore = createMockLegacyStore();
+                    legacyStore.set('aiHistory', uniqueItems);
+                    const manager = new ChatSessionManager({ encryptedStore, legacyStore });
 
                     manager.migrateLegacyHistory();
 
@@ -215,7 +229,7 @@ describe('Property 13: Legacy history migration produces valid ChatSession', () 
                     }
 
                     // Legacy key should be cleared
-                    expect(store.get('aiHistory')).toEqual([]);
+                    expect(legacyStore.get('aiHistory')).toEqual([]);
                 }
             ),
             { numRuns: 100 }
@@ -231,8 +245,8 @@ describe('Property 14: History enforces 50-session limit', () => {
             fc.property(
                 fc.nat({ max: 10 }), // extra sessions beyond 50
                 (extra) => {
-                    const store = createMockStore();
-                    const manager = new ChatSessionManager(store);
+                    const encryptedStore = createMockEncryptedStore();
+                    const manager = new ChatSessionManager({ encryptedStore });
 
                     const totalToCreate = 50 + extra + 1;
                     const sessionIds: string[] = [];

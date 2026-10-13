@@ -1,0 +1,13 @@
+{
+  "task_id": "task-deployment-full-view",
+  "task_description": "Full-page Deployment details view in Lumen: drawer keeps opening on click plus a 'Full View' button/row action opening a ViewTabBar tab (deployment-detail/<ns>/<name>) with header/actions, interactive revision timeline (hover card, click -> details + embedded Monaco diff + change summary), rollout/replicas/HPA/PDB, pod distribution per node/zone with risk flags, pods table, containers with ports, security posture (runs-as-root, approx PSS level), networking, config & storage, events, topology, and change-based live refresh with the cross-cluster race fix. Authoritative design: /Users/MohammedRashid.Matin/Development/lumen/.agents/tasks/deployment-full-view/design.md (rev 4); ordered plan: /Users/MohammedRashid.Matin/Development/lumen/.agents/tasks/deployment-full-view/plan.md.",
+  "status": "completed",
+  "feature_order": [
+    "FEAT-001",
+    "FEAT-002",
+    "FEAT-003",
+    "FEAT-004",
+    "FEAT-005"
+  ],
+  "blocked_reason": null
+}

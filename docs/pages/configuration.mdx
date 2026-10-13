@@ -1,0 +1,54 @@
+# Configuration
+
+Lumen stores all settings persistently using `electron-store`. Configure settings via **Settings** in the sidebar.
+
+## General Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| Refresh Interval | 30s | How often watchers refresh resource data |
+| Default Namespace | All | Default namespace filter on launch |
+| Show System Namespaces | Off | Show `kube-system`, `kube-public`, etc. |
+| Enable Notifications | On | Desktop notifications for resource events |
+| Max Log Lines | 1000 | Maximum log lines per stream |
+| Kubeconfig Path | `~/.kube/config` | Path to your kubeconfig file |
+
+## Editor Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| Font Size | 14px | YAML editor font size |
+| Word Wrap | On | Wrap long lines in the editor |
+
+## Terminal Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| Font Size | 13px | Terminal font size |
+
+## AI Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| Provider | Google | `google` (Gemini) or `bedrock` (AWS) |
+| Model | gemini-1.5-flash | Model ID for the selected provider |
+| API Key | — | Required for Google Gemini |
+
+## AWS Credentials
+
+Lumen resolves AWS credentials with the following priority:
+
+### 1. Granted (Recommended)
+
+[Granted](https://docs.commonfate.io/granted/getting-started) provides seamless multi-account AWS access. Lumen detects Granted credentials automatically:
+
+- **Launch-time** — If launched from a shell where `assume <profile>` was run
+- **Live detection** — Watches `~/.aws/credentials` for changes when `ExportCredsToAWS=true` is set in Granted config
+
+### 2. Manual Credentials
+
+Enter AWS access keys directly in **Settings → AWS**.
+
+### 3. AWS Provider Chain
+
+Falls back to SSO, shared credentials/config files, and instance metadata via `fromNodeProviderChain`.

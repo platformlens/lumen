@@ -3,8 +3,26 @@ import ReactMarkdown from 'react-markdown';
 import { Box, Activity, Tag, List, Edit, History, GitCompare, ChevronDown, ChevronUp, Clock, Image as ImageIcon } from 'lucide-react';
 import { ResourceTopology } from '../visualizers/ResourceTopology';
 import { ContainerResources } from './ContainerResources';
-import { RevisionDiffModal } from './RevisionDiffModal';
+import { RevisionDiffModal, type RevisionDiffSide } from './RevisionDiffModal';
 import { motion, AnimatePresence } from 'framer-motion';
+import { revisionToYaml } from '../../../utils/deployment-history-utils';
+import type { PodTemplate } from '../../../types/deployment-details';
+
+/** Shape returned by k8s.getDeploymentRevisions. */
+interface DrawerRevision {
+    name: string; revision: string;
+    creationTimestamp: string | Date;   // client-node returns Date; structured clone keeps it a Date over IPC
+    spec?: { replicas?: number; selector?: unknown; template?: PodTemplate };
+}
+
+const toSide = (rev: DrawerRevision): RevisionDiffSide => ({
+    label: `Revision ${rev.revision}`, createdAt: String(rev.creationTimestamp),
+    // passed through unchanged so js-yaml dumps a Date exactly as before (byte-identical output)
+    yaml: revisionToYaml({
+        revision: rev.revision, name: rev.name, createdAt: rev.creationTimestamp,
+        replicas: rev.spec?.replicas, selector: rev.spec?.selector, template: rev.spec?.template,
+    }),
+});
 
 interface DeploymentDetailsProps {
     deployment: any;
@@ -23,7 +41,7 @@ export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment
     const [revisionsExpanded, setRevisionsExpanded] = useState(false);
     const [selectedRevisions, setSelectedRevisions] = useState<Set<string>>(new Set());
     const [diffModalOpen, setDiffModalOpen] = useState(false);
-    const [diffPair, setDiffPair] = useState<{ left: any; right: any } | null>(null);
+    const [diffPair, setDiffPair] = useState<{ left: RevisionDiffSide; right: RevisionDiffSide } | null>(null);
 
     const loadRevisions = useCallback(async () => {
         if (!clusterName || !deployment?.metadata?.namespace || !deployment?.metadata?.name) return;
@@ -83,9 +101,9 @@ export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment
         const rightRev = parseInt(right.revision, 10);
 
         if (leftRev > rightRev) {
-            setDiffPair({ left: right, right: left });
+            setDiffPair({ left: toSide(right), right: toSide(left) });
         } else {
-            setDiffPair({ left, right });
+            setDiffPair({ left: toSide(left), right: toSide(right) });
         }
         setDiffModalOpen(true);
     };
@@ -469,8 +487,8 @@ export const DeploymentDetails: React.FC<DeploymentDetailsProps> = ({ deployment
                         setDiffModalOpen(false);
                         setDiffPair(null);
                     }}
-                    leftRevision={diffPair.left}
-                    rightRevision={diffPair.right}
+                    left={diffPair.left}
+                    right={diffPair.right}
                 />
             )}
         </div>
