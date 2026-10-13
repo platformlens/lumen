@@ -168,3 +168,16 @@ Verification run from repo root:
 Commit scope: `electron/main.ts` has many unrelated uncommitted edits; only the four SETTINGS_ALLOWLIST/settings:set hunks were staged and committed.
 
 Not addressed (out of scope / noted): the Local API Save button's `await settings.set(...)` calls still have no try/catch; `isSaved` still flips all Save buttons together; `localLmStudioApiToken` is stored in plain electron-store (existing design).
+
+---
+## Implementation record (coder, iteration 2: review fixes)
+Review findings addressed (review.json / review.md):
+- BLOCKING 1 (corrupted main.ts commit): fixed in commit cad3a2b. The allowlist entries, `AI_TOOL_MODES`/`APP_THEMES`/`GEMINI_SERVICE_TIERS` consts and key validation were moved out of `ai:startSession` / `ai:getCurrentSession` and into the `SETTINGS_ALLOWLIST` block and the top of the `settings:set` handler. The fixed blob was built from the HEAD blob and staged with `git update-index`, so the unrelated uncommitted edits in the working-tree `main.ts` were not touched. `git diff HEAD~2 HEAD -- electron/main.ts` now shows only the allowlist/consts/schema/validation hunks.
+- BLOCKING 2 (verification on the wrong tree): re-ran against the committed tree in a clean `git worktree` of cad3a2b (node_modules symlinked):
+  - `npx tsc --noEmit`: 1 error, `src/components/dashboard/views/KarpenterView.tsx:451` (recharts formatter typing). It is pre-existing: the same single error appears at bfaa988 (before this task). No errors in `electron/main.ts` or `Settings.tsx`. Earlier "clean" was the dirty working tree, where that file has uncommitted edits.
+  - `npx eslint electron/main.ts src/components/features/settings/Settings.tsx --ext ts,tsx`: 20 errors, all pre-existing `no-explicit-any` etc. Same count as before. Full `npm run lint` skipped as noisy.
+  - Worktree removed afterwards. App not run (`npm run dev` not run).
+- Non-blocking, deliberately not changed (any change alters behavior or is out of scope):
+  - Provider switch with an unloaded model list keeps the current model (the plan's stated fallback). Alternative would be to block the switch or clear the model, which changes the UI.
+  - Local API Save `settings.set` has no try/catch and `isSaved` is shared across Save buttons (pre-existing, out of scope).
+  - Overlapping rapid saves could revert to a stale value on failure (possible, unlikely).
