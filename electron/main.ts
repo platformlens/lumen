@@ -2492,15 +2492,8 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:startSession', async (_, context, model, provider) => {
-    'aiToolMode', 'aiTrustedCommands', 'localModelEndpoint',
-    'localUseLmStudioNative', 'localLmStudioApiToken', 'theme',
-    'notificationsMuted', 'geminiServiceTier',
     chatSessionManager.saveCurrentSession(); // save previous if any
     return chatSessionManager.startSession(context || undefined, model || '', provider || '');
-  const AI_TOOL_MODES = ['off', 'read', 'read-write'] as const;
-  const APP_THEMES = ['blue', 'charcoal', 'red'] as const;
-  const GEMINI_SERVICE_TIERS = ['flex', 'standard'] as const;
-
   });
 
   ipcMain.handle('ai:loadSession', async (_, id) => {
@@ -2514,19 +2507,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('ai:getCurrentSession', async () => {
-    // Key-specific validation: these values gate command execution / UI state.
-    if (key === 'aiToolMode' && !(AI_TOOL_MODES as readonly unknown[]).includes(value)) {
-      throw new Error('Invalid aiToolMode');
-    }
-    if (key === 'aiTrustedCommands' && !Array.isArray(value)) {
-      throw new Error('Invalid aiTrustedCommands');
-    }
-    if (key === 'theme' && !(APP_THEMES as readonly unknown[]).includes(value)) {
-      throw new Error('Invalid theme');
-    }
-    if (key === 'geminiServiceTier' && !(GEMINI_SERVICE_TIERS as readonly unknown[]).includes(value)) {
-      throw new Error('Invalid geminiServiceTier');
-    }
     return chatSessionManager.getCurrentSession();
   });
 
@@ -2648,7 +2628,14 @@ function registerIpcHandlers() {
     'enableLocalTerminal', 'enableAiHistory', 'zoomFactor',
     'fontFamily', 'tableFontSize', 'sidebarFontSize',
     'pinnedFontSize', 'headingSize', 'dateFormat', 'aiTraceAnalytics',
+    'aiToolMode', 'aiTrustedCommands', 'localModelEndpoint',
+    'localUseLmStudioNative', 'localLmStudioApiToken', 'theme',
+    'notificationsMuted', 'geminiServiceTier',
   ] as const;
+
+  const AI_TOOL_MODES = ['off', 'read', 'read-write'] as const;
+  const APP_THEMES = ['blue', 'charcoal', 'red'] as const;
+  const GEMINI_SERVICE_TIERS = ['flex', 'standard'] as const;
 
   safeHandle('settings:get', z.enum(SETTINGS_ALLOWLIST), async (_event, key) => {
     return store.get(`settings_${key}`) ?? null;
@@ -2663,6 +2650,19 @@ function registerIpcHandlers() {
       z.array(z.string().max(256)).max(200),
     ]),
   ]), async (_event, [key, value]) => {
+    // Key-specific validation: these values gate command execution / UI state.
+    if (key === 'aiToolMode' && !(AI_TOOL_MODES as readonly unknown[]).includes(value)) {
+      throw new Error('Invalid aiToolMode');
+    }
+    if (key === 'aiTrustedCommands' && !Array.isArray(value)) {
+      throw new Error('Invalid aiTrustedCommands');
+    }
+    if (key === 'theme' && !(APP_THEMES as readonly unknown[]).includes(value)) {
+      throw new Error('Invalid theme');
+    }
+    if (key === 'geminiServiceTier' && !(GEMINI_SERVICE_TIERS as readonly unknown[]).includes(value)) {
+      throw new Error('Invalid geminiServiceTier');
+    }
     store.set(`settings_${key}`, value);
     if (key === 'aiTraceAnalytics') {
       syncLangfuseOtelWithStore();
